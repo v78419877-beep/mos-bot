@@ -1,6 +1,3 @@
-import os
-import threading
-from flask import Flask
 import asyncio
 import sqlite3
 import random
@@ -11,6 +8,10 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from io import BytesIO
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -104,7 +105,6 @@ def init_db():
             chat_id INTEGER, user_id INTEGER, reason TEXT,
             banned_by INTEGER, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             until_date TIMESTAMP)""")
-        # Сетка
         c.execute("""CREATE TABLE IF NOT EXISTS grids (
             id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE,
             creator_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
@@ -122,7 +122,6 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS grid_mutes (
             grid_id INTEGER, user_id INTEGER, until_date TIMESTAMP,
             muted_by INTEGER, UNIQUE(grid_id, user_id))""")
-        # Браки
         c.execute("""CREATE TABLE IF NOT EXISTS marriages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER, user1_id INTEGER, user2_id INTEGER,
@@ -139,7 +138,6 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER, from_id INTEGER, to_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-        # Заметки
         c.execute("""CREATE TABLE IF NOT EXISTS notes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             chat_id INTEGER, name TEXT, text TEXT,
@@ -273,11 +271,72 @@ async def resolve_target(message):
     return None, None
 
 async def get_chat_link(chat_id):
+    """Пытается получить ссылку на чат. Если приватный — создаёт инвайт."""
     try:
-        link = await bot.create_chat_invite_link(chat_id, member_limit=1)
+        chat = await bot.get_chat(chat_id)
+        if chat.username:
+            return f"https://t.me/{chat.username}"
+    except:
+        pass
+    try:
+        link = await bot.create_chat_invite_link(chat_id)
         return link.invite_link
     except:
         return None
+
+# ================= ГРАФИК =================
+def generate_activity_chart(user_id, chat_id, days=30):
+    """Генерирует PNG с графиком активности пользователя за N дней"""
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT date, count FROM messages_stats 
+            WHERE user_id = ? AND chat_id = ?
+            ORDER BY date DESC LIMIT ?
+        """, (user_id, chat_id, days))
+        rows = c.fetchall()
+    
+    if not rows:
+        return None
+    
+    rows = rows[::-1]
+    today = datetime.now().date()
+    date_counts = {}
+    for d, cnt in rows:
+        date_counts[d] = cnt
+    
+    full_dates = []
+    full_counts = []
+    for i in range(days - 1, -1, -1):
+        day = (today - timedelta(days=i)).isoformat()
+        full_dates.append(day)
+        full_counts.append(date_counts.get(day, 0))
+    
+    fig, ax = plt.subplots(figsize=(10, 4.5))
+    x_labels = [d[5:] for d in full_dates]
+    bars = ax.bar(range(len(full_dates)), full_counts, color='#a6e22e', width=0.7)
+    
+    step = max(1, len(full_dates) // 10)
+    ax.set_xticks(range(0, len(full_dates), step))
+    ax.set_xticklabels([x_labels[i] for i in range(0, len(x_labels), step)], fontsize=8)
+    ax.set_title("Активность по дням", fontsize=12, pad=15)
+    ax.set_ylabel("Сообщений", fontsize=9)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
+    ax.set_axisbelow(True)
+    
+    for bar, cnt in zip(bars, full_counts):
+        if cnt > 0:
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                    str(cnt), ha='center', va='bottom', fontsize=7)
+    
+    plt.tight_layout()
+    buf = BytesIO()
+    plt.savefig(buf, format='png', dpi=90, bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
 
 # ================= ВАРНЫ =================
 def add_warn(user_id, chat_id, reason, warned_by):
@@ -456,6 +515,14 @@ def clear_chat_ban(chat_id, user_id):
         c = conn.cursor()
         c.execute("DELETE FROM chat_bans WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
         conn.commit()
+
+def get_expired_bans():
+    """Возвращает список банов, у которых истёк срок"""
+    now = datetime.now().isoformat()
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT chat_id, user_id FROM chat_bans WHERE until_date IS NOT NULL AND until_date <= ?", (now,))
+        return c.fetchall()
 
 # ================= ПРИВЕТСТВИЕ =================
 def get_greeting(chat_id):
@@ -774,7 +841,6 @@ def reset_all_marriages(chat_id):
         conn.commit()
 
 def format_marriage_duration(married_at_str, extra_days=0):
-    """Считает, сколько времени пара вместе + купленные дни"""
     try:
         married_at = datetime.strptime(married_at_str[:19], "%Y-%m-%d %H:%M:%S")
     except:
@@ -848,7 +914,27 @@ def delete_note(chat_id, note_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("DELETE FROM notes WHERE chat_id = ? AND id = ?", (chat_id, note_id))
-        conn.commit() # ================= ОБЩИЕ КОМАНДЫ =================
+        conn.commit()
+
+# ================= АВТОРАЗБАН =================
+async def auto_unban_loop():
+    """Каждые 5 минут проверяет и разбанивает истёкшие баны"""
+    while True:
+        try:
+            expired = get_expired_bans()
+            for chat_id, user_id in expired:
+                try:
+                    await bot.unban_chat_member(chat_id, user_id)
+                    clear_chat_ban(chat_id, user_id)
+                    try:
+                        await bot.send_message(chat_id, f"♻️ {mention_by_id(user_id, 'Пользователь')} разбанен (срок истёк).", parse_mode="HTML")
+                    except:
+                        pass
+                except:
+                    pass
+        except Exception as e:
+            print(f"Ошибка в auto_unban_loop: {e}")
+        await asyncio.sleep(300) # ================= ОБЩИЕ КОМАНДЫ =================
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     await message.reply(
@@ -884,6 +970,7 @@ async def help_cmd(message: types.Message):
                 agents_text += f"  • {mention_by_id(uid, user.first_name)}\n"
             except:
                 agents_text += f"  • ID: <code>{uid}</code>\n"
+
     help_text = (
         f"{em('sos', '🆘')} <b>Помощь по боту {BOT_NAME}</b>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n{agents_text}\n━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -917,7 +1004,10 @@ async def info_cmd(message: types.Message):
     chat_title = message.chat.title or "Без названия"
     code = get_chat_code(chat_id)
     link = await get_chat_link(chat_id)
-    link_text = f'<a href="{link}">Чат-ссылка</a>' if link else "Чат-ссылка недоступна"
+    if link:
+        link_text = f'<a href="{link}">Чат-ссылка</a>'
+    else:
+        link_text = "Ссылка недоступна (дайте боту право «Приглашать по ссылке»)"
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         today = datetime.now().date().isoformat()
@@ -1102,6 +1192,16 @@ async def profile_full_cmd(message: types.Message):
         f"{em('shield', '🛡')} Статус: {status}"
     )
     await message.reply(text, parse_mode="HTML")
+    # График активности
+    try:
+        chart_buf = generate_activity_chart(target.id, message.chat.id, days=30)
+        if chart_buf:
+            await message.reply_photo(
+                photo=types.BufferedInputFile(chart_buf.getvalue(), filename="activity.png"),
+                caption=f"📊 Активность {target.first_name} за 30 дней"
+            )
+    except Exception as e:
+        print(f"Ошибка графика: {e}")
 
 @dp.message(Command("мойид", prefix="."))
 async def myid_cmd(message: types.Message):
@@ -1393,12 +1493,14 @@ async def ban_cmd(message: types.Message):
         reason = parts[1].strip()
     try:
         if duration_seconds:
-            await bot.ban_chat_member(message.chat.id, target.id, until_date=datetime.now() + timedelta(seconds=duration_seconds))
+            until = datetime.now() + timedelta(seconds=duration_seconds)
+            await bot.ban_chat_member(message.chat.id, target.id, until_date=until)
+            add_chat_ban(message.chat.id, target.id, reason, message.from_user.id, until.isoformat())
             ban_type = f"на <b>{duration_text}</b>"
         else:
             await bot.ban_chat_member(message.chat.id, target.id)
+            add_chat_ban(message.chat.id, target.id, reason, message.from_user.id, None)
             ban_type = "<b>навсегда</b>"
-        add_chat_ban(message.chat.id, target.id, reason, message.from_user.id)
         await message.reply(
             f"{em('ban', '🚫')} {mention(target)} получает бан {ban_type}\n"
             f"👮 Модератор: {mention(message.from_user)}\n"
@@ -2324,7 +2426,15 @@ async def list_grid_chats(message: types.Message):
         try:
             chat = await bot.get_chat(chat_id)
             title = chat.title or f"Чат {chat_id}"
-            link = f"https://t.me/{chat.username}" if chat.username else ""
+            link = None
+            if chat.username:
+                link = f"https://t.me/{chat.username}"
+            else:
+                try:
+                    invite = await bot.create_chat_invite_link(chat_id)
+                    link = invite.invite_link
+                except:
+                    link = None
             if link:
                 text += f"• <a href='{link}'>{title}</a>\n"
             else:
@@ -3297,21 +3407,10 @@ async def on_bot_added(event: types.ChatMemberUpdated):
             pass
 
 # ================= ЗАПУСК =================
-app = Flask(__name__)
-
-@app.route('/')
-@app.route('/health')
-def health():
-    return "Bot is running", 200
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
-
 async def main():
     init_db()
     print("✅ Бот запущен!")
-    threading.Thread(target=run_flask, daemon=True).start()
+    asyncio.create_task(auto_unban_loop())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
