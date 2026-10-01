@@ -490,6 +490,7 @@ def get_top_users(chat_id, period="today", limit=10):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute(query, params)
+        
         return c.fetchall()мм# ================= КОНФЕТКИ =================
 def get_balance(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
