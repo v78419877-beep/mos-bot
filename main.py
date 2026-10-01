@@ -2361,23 +2361,14 @@ async def delete_message_cmd(message: types.Message):
     except:
         pass
 
-    # ================= .ПИН / .ЗАКРЕПИТЬ =================
+# ================= .ПИН / .ЗАКРЕПИТЬ =================
 @dp.message(Command("пин", prefix="."))
 @dp.message(Command("закрепить", prefix="."))
 async def pin_message_cmd(message: types.Message):
-    """
-    .пин           — закрепить сообщение, на которое ответили
-    .пин тихо      — закрепить без уведомления
-    """
-    # Только модераторы (ранг 1+) и админы чата
     if not has_permission(message.chat.id, message.from_user.id, 1):
         if not await is_tg_admin(message.chat.id, message.from_user.id):
-            return await message.reply(
-                f"{em('cross', '❌')} Недостаточно прав.",
-                parse_mode="HTML"
-            )
+            return await message.reply("❌ Недостаточно прав.")
 
-    # Нужно ответить на сообщение
     if not message.reply_to_message:
         return await message.reply(
             "📌 <b>Как использовать:</b>\n"
@@ -2386,23 +2377,15 @@ async def pin_message_cmd(message: types.Message):
             parse_mode="HTML"
         )
 
-    # Проверяем права бота
     try:
         bot_member = await bot.get_chat_member(message.chat.id, bot.id)
         if bot_member.status not in ['administrator', 'creator']:
-            return await message.reply(
-                f"{em('cross', '❌')} Я не админ — не могу закрепить.",
-                parse_mode="HTML"
-            )
+            return await message.reply("❌ Я не админ — не могу закрепить.")
         if bot_member.status == 'administrator' and not bot_member.can_pin_messages:
-            return await message.reply(
-                f"{em('cross', '❌')} Нет права закреплять сообщения.",
-                parse_mode="HTML"
-            )
+            return await message.reply("❌ Нет права закреплять сообщения.")
     except:
         return
 
-    # Тихо или с уведомлением
     args = message.text.split()
     silent = len(args) >= 2 and args[1].lower() in ["тихо", "silent", "s", "тих"]
     notify = not silent
@@ -2418,17 +2401,14 @@ async def pin_message_cmd(message: types.Message):
             await message.delete()
         except:
             pass
-        # Отправляем подтверждение и сразу удаляем
-        confirm = await message.answer(
-            f"{em('check', '✅')} Закреплено ({mode})"
-        )
+        confirm = await message.answer(f"✅ Закреплено ({mode})")
         await asyncio.sleep(3)
         try:
             await confirm.delete()
         except:
             pass
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
+        await message.reply(f"❌ Ошибка: {e}")
 
 
 # ================= .АНПИН / .ОТКРЕПИТЬ =================
