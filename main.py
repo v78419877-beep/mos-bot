@@ -19,7 +19,6 @@ from io import BytesIO
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 OWNER_ID = 7305320918
-# Railway — используйте /app/data/bot.db (см. инструкцию ниже)
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "bot.db")
 BOT_NAME = "Mos | Чат-менеджер"
 SUPPORT_CHAT_LINK = "https://t.me/mospodd"
@@ -32,32 +31,18 @@ BOT_START_TIME = datetime.now()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ================= ПРЕМИУМ-ЭМОДЗИ =================
-EMOJI = {
-    "mute": "5239939553720041034", "pencil": "5395444784611480792",
-    "wave": "5215248074498128418", "stats": "5884161133174067365",
-    "ban": "5472267631979405211", "id": "5014902839575577394",
-    "check": "5429501538806548545", "ping": "5269563867305879894",
-    "cross": "5269666272211148094", "calendar": "5413879192267805083",
-    "alien": "5267401355567345688", "sos": "5238025132177369293",
-    "gear": "4904936030232117798", "shield": "5251203410396458957",
-    "key": "5330115548900501467", "user": "5373012449597335010",
-    "write": "5197269100878907942", "pin": "5291893917673868928",
-}
-
-UNICODE_TO_KEY = {
-    "🔇": "mute", "✏️": "pencil", "👋": "wave", "📊": "stats",
-    "🚫": "ban", "🆔": "id", "✅": "check", "🏓": "ping",
-    "❌": "cross", "🗓": "calendar", "🆘": "sos", "⚙️": "gear",
-    "🛡": "shield", "🔑": "key", "👤": "user", "✍️": "write",
-    "📌": "pin",
+# ================= ОБЫЧНЫЕ ЭМОДЗИ (без Premium) =================
+FALLBACKS = {
+    "mute": "🔇", "pencil": "✏️", "wave": "👋", "stats": "📊",
+    "ban": "🚫", "id": "🆔", "check": "✅", "ping": "🏓",
+    "cross": "❌", "calendar": "🗓", "sos": "🆘", "gear": "⚙️",
+    "shield": "🛡", "key": "🔑", "user": "👤", "write": "✍️",
+    "pin": "📌", "alien": "👽",
 }
 
 def em(name, fallback="•"):
-    eid = EMOJI.get(name)
-    if not eid:
-        return fallback
-    return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>'
+    """Возвращает обычный эмодзи (без tg-emoji)"""
+    return FALLBACKS.get(name, fallback)
 
 def mention(user):
     return f'<a href="tg://user?id={user.id}">{user.first_name}</a>'
@@ -66,12 +51,7 @@ def mention_by_id(user_id, first_name):
     return f'<a href="tg://user?id={user_id}">{first_name}</a>'
 
 def auto_premium(text: str) -> str:
-    if not text:
-        return text
-    for uni, key in UNICODE_TO_KEY.items():
-        eid = EMOJI.get(key)
-        if eid and uni in text:
-            text = text.replace(uni, f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>')
+    """Отключено — возвращает текст как есть"""
     return text
 
 # ================= РАНГИ ЧАТА =================
@@ -141,10 +121,23 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS vip_users (user_id INTEGER PRIMARY KEY, expires_at TIMESTAMP, emoji TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS rp_commands (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, name TEXT, emoji TEXT, text TEXT, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(chat_id, name))")
         c.execute("CREATE TABLE IF NOT EXISTS global_rp_commands (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, emoji TEXT, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, name))")
-        # НОВОЕ: настройки антиспама для чата
         c.execute("""CREATE TABLE IF NOT EXISTS chat_antispam_settings (
             chat_id INTEGER PRIMARY KEY,
             antispam_enabled INTEGER DEFAULT 1
+        )""")
+        # ===== TELEGRAM STARS =====
+        c.execute("""CREATE TABLE IF NOT EXISTS stars_settings (
+            chat_id INTEGER PRIMARY KEY,
+            stars_per_candy INTEGER DEFAULT 15
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS stars_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            chat_id INTEGER,
+            amount_candies INTEGER,
+            stars_paid INTEGER,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
         conn.commit()
 
@@ -219,7 +212,7 @@ def has_agent_rank(user_id, min_rank):
         return True
     return get_agent_rank(user_id) >= min_rank
 
-# ================= АНТИСПАМ / ИГНОР =================
+# ================= АНТИСПАМ =================
 def is_in_antispam(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -251,7 +244,6 @@ def set_antispam_enabled(chat_id, enabled):
         conn.commit()
 
 def get_all_antispam_chats():
-    """Все чаты где бот есть и антиспам включён"""
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("""SELECT DISTINCT sub.chat_id FROM (
@@ -347,9 +339,7 @@ async def get_chat_link(chat_id):
     except:
         return None
 
-# ================= ФУНКЦИИ ДЛЯ КИКА ПО ВСЕМ ЧАТАМ =================
 async def kick_in_all_antispam_chats(target_id, max_parallel=10):
-    """Кикает юзера во всех чатах где включён антиспам. Возвращает (success, failed)"""
     all_chats = get_all_antispam_chats()
     sem = asyncio.Semaphore(max_parallel)
     results = {"success": 0, "failed": 0}
@@ -366,6 +356,47 @@ async def kick_in_all_antispam_chats(target_id, max_parallel=10):
     if all_chats:
         await asyncio.gather(*[kick(cid) for cid in all_chats])
     return results["success"], results["failed"], len(all_chats)
+
+# ================= TELEGRAM STARS =================
+def get_stars_per_candy(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT stars_per_candy FROM stars_settings WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        if not r:
+            c.execute("INSERT INTO stars_settings (chat_id, stars_per_candy) VALUES (?, 15)", (chat_id,))
+            conn.commit()
+            return 15
+        return r[0]
+
+def set_stars_per_candy(chat_id, value):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO stars_settings (chat_id, stars_per_candy) VALUES (?, ?)", (chat_id, value))
+        conn.commit()
+
+def create_stars_payment(user_id, chat_id, amount_candies, stars):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""INSERT INTO stars_payments (user_id, chat_id, amount_candies, stars_paid, status)
+            VALUES (?, ?, ?, ?, 'pending')""", (user_id, chat_id, amount_candies, stars))
+        conn.commit()
+        return c.lastrowid
+
+def complete_stars_payment(payment_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT user_id, chat_id, amount_candies, stars_paid, status FROM stars_payments WHERE id = ?", (payment_id,))
+        r = c.fetchone()
+        if not r:
+            return None
+        user_id, chat_id, amount_candies, stars_paid, status = r
+        if status == "completed":
+            return None
+        c.execute("UPDATE stars_payments SET status = 'completed' WHERE id = ?", (payment_id,))
+        conn.commit()
+    add_candies(user_id, amount_candies, 0)
+    return (user_id, chat_id, amount_candies, stars_paid)
 
 # ================= ГРАФИКИ =================
 def generate_user_activity_chart(user_id, days=30):
@@ -440,9 +471,7 @@ def generate_chat_activity_chart(chat_id, days=30):
     plt.savefig(buf, format='png', dpi=90, bbox_inches='tight')
     buf.seek(0)
     plt.close()
-    return buf
-
-# ================= ВАРНЫ =================
+    return buf# ================= ВАРНЫ =================
 def add_warn(user_id, chat_id, reason, warned_by):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -490,10 +519,9 @@ def get_top_users(chat_id, period="today", limit=10):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute(query, params)
-        
         return c.fetchall()
-        
-        # ================= КОНФЕТКИ =================
+
+# ================= КОНФЕТКИ =================
 def get_balance(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1520,11 +1548,12 @@ async def start_cmd(message: types.Message):
 
     text += (
         f"\n⚜️ <b>Владелец:</b> <a href='tg://user?id={OWNER_ID}'>Mos</a>\n\n"
-        f"{em('sos', '🆘')} <b>Поддержка:</b> {SUPPORT_CHAT_LINK}"
+        f"🆘 <b>Поддержка:</b> {SUPPORT_CHAT_LINK}"
     )
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить бота в чат", url=add_url)],
+        [InlineKeyboardButton(text="🍬 Купить ириски", callback_data="buy_candies_menu")],
         [
             InlineKeyboardButton(text="🆘 Поддержка", url=SUPPORT_CHAT_LINK),
             InlineKeyboardButton(text="📢 Канал", url=SUPPORT_CHANNEL_LINK)
@@ -1538,6 +1567,21 @@ async def start_cmd(message: types.Message):
         reply_markup=keyboard
     )
 
+# ================= КУПИТЬ ИРИСКИ (меню) =================
+@dp.callback_query(lambda c: c.data == "buy_candies_menu")
+async def buy_candies_menu(callback: types.CallbackQuery):
+    price = get_stars_per_candy(callback.message.chat.id)
+    await callback.message.answer(
+        f"🍬 <b>Купить ириски за ⭐ Stars</b>\n\n"
+        f"💰 Курс: <b>{price} ⭐ = 1 🍬</b>\n\n"
+        f"📌 Напишите:\n"
+        f"<code>.купитьириски 10</code> → {price * 10} ⭐\n"
+        f"<code>.купитьириски 50</code> → {price * 50} ⭐\n"
+        f"<code>.купитьириски 100</code> → {price * 100} ⭐",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
 # ================= ПОМОЩЬ =================
 @dp.message(Command("помощь", prefix="."))
 @dp.message(Command("помощь"))
@@ -1545,7 +1589,7 @@ async def help_cmd(message: types.Message):
     online, offline = get_agents_status()
     agents_text = ""
     if online:
-        agents_text += f"{em('check', '✅')} <b>В сети:</b>\n"
+        agents_text += "✅ <b>В сети:</b>\n"
         for uid in online:
             try:
                 user = await bot.get_chat(uid)
@@ -1556,9 +1600,9 @@ async def help_cmd(message: types.Message):
             except:
                 agents_text += f"  • ID: <code>{uid}</code>\n"
     else:
-        agents_text += f"{em('cross', '❌')} <b>В сети:</b> нет\n"
+        agents_text += "❌ <b>В сети:</b> нет\n"
     if offline:
-        agents_text += f"\n{em('cross', '❌')} <b>Не в сети:</b>\n"
+        agents_text += f"\n❌ <b>Не в сети:</b>\n"
         for uid in offline:
             try:
                 user = await bot.get_chat(uid)
@@ -1566,10 +1610,10 @@ async def help_cmd(message: types.Message):
             except:
                 agents_text += f"  • ID: <code>{uid}</code>\n"
     help_text = (
-        f"{em('sos', '🆘')} <b>Помощь по боту {BOT_NAME}</b>\n\n"
+        f"🆘 <b>Помощь по боту {BOT_NAME}</b>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n{agents_text}\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📖 <b>Команды:</b> <a href='{TELETYPE_URL}'>Mos-command</a>\n"
-        f"{em('sos', '🆘')} <b>Поддержка:</b> <a href=\"{SUPPORT_CHAT_LINK}\">Перейти</a>\n"
+        f"🆘 <b>Поддержка:</b> <a href=\"{SUPPORT_CHAT_LINK}\">Перейти</a>\n"
         f"📢 <b>Канал:</b> <a href=\"{SUPPORT_CHANNEL_LINK}\">Перейти</a>"
     )
     await message.reply(help_text, parse_mode="HTML", disable_web_page_preview=True)
@@ -1577,7 +1621,7 @@ async def help_cmd(message: types.Message):
 @dp.message(Command("пинг", prefix="."))
 @dp.message(Command("пинг"))
 async def ping_cmd(message: types.Message):
-    await message.reply(f"{em('ping', '🏓')} Понг!", parse_mode="HTML")
+    await message.reply("🏓 Понг!", parse_mode="HTML")
 
 @dp.message(Command("инфо", prefix="."))
 @dp.message(Command("инфо"))
@@ -1598,10 +1642,10 @@ async def info_cmd(message: types.Message):
         c.execute("SELECT SUM(count) FROM messages_stats WHERE chat_id = ?", (chat_id,))
         all_count = c.fetchone()[0] or 0
     await message.reply(
-        f"{em('stats', '📊')} <b>{chat_title}</b>\n"
-        f"{em('key', '🔑')} {link_text} | Код: <code>{code}</code>\n"
-        f"{em('calendar', '🗓')} {datetime.now().strftime('%d.%m.%Y')}\n\n"
-        f"{em('stats', '📊')} Сегодня: {today_count} | Всего: {all_count}",
+        f"📊 <b>{chat_title}</b>\n"
+        f"🔑 {link_text} | Код: <code>{code}</code>\n"
+        f"🗓 {datetime.now().strftime('%d.%m.%Y')}\n\n"
+        f"📊 Сегодня: {today_count} | Всего: {all_count}",
         parse_mode="HTML"
     )
 
@@ -1676,23 +1720,23 @@ async def profile_cmd(message: types.Message):
                 elif args[1].isdigit():
                     target = await bot.get_chat(int(args[1]))
             except:
-                return await message.reply(f"{em('cross', '❌')} Пользователь не найден", parse_mode="HTML")
+                return await message.reply("❌ Пользователь не найден", parse_mode="HTML")
     if not target:
         target = message.from_user
     today_count, all_count = get_user_stats(target.id, message.chat.id)
     in_antispam = is_in_antispam(target.id)
     in_ignore = is_ignored(message.chat.id, target.id)
     if in_antispam and in_ignore:
-        status = f"{em('ban', '🚫')} В антиспаме + {em('mute', '🔇')} В игноре"
+        status = "🚫 В антиспаме + 🔇 В игноре"
     elif in_antispam:
-        status = f"{em('ban', '🚫')} В антиспаме"
+        status = "🚫 В антиспаме"
     elif in_ignore:
-        status = f"{em('mute', '🔇')} В игноре"
+        status = "🔇 В игноре"
     else:
-        status = f"{em('check', '✅')} Чист"
+        status = "✅ Чист"
     if is_agent(target.id):
         ar = get_agent_rank(target.id)
-        status += f" | {em('shield', '🛡')} {AGENT_RANKS.get(ar, 'Агент')}"
+        status += f" | 🛡 {AGENT_RANKS.get(ar, 'Агент')}"
     rank = get_rank(message.chat.id, target.id)
     rank_name = RANK_NAMES.get(rank, "👤 Участник")
     nick = get_user_nick(target.id, message.chat.id)
@@ -1711,15 +1755,15 @@ async def profile_cmd(message: types.Message):
         cit_line = f"\n🏠 Гражданин чата «{cit_title}» {cit_duration}"
     vip_emoji = get_vip_emoji(target.id)
     text = (
-        f"{em('user', '👤')} <b>Профиль {vip_emoji}{mention(target)}{vip_emoji}</b>\n\n"
-        f"{em('id', '🆔')} ID: <code>{target.id}</code>\n"
+        f"👤 <b>Профиль {vip_emoji}{mention(target)}{vip_emoji}</b>\n\n"
+        f"🆔 ID: <code>{target.id}</code>\n"
         f"📛 Имя: {target.first_name}\n"
         f"🔤 Ник: {nick or '—'}\n"
         f"📌 Звание: {rank_text or '—'}\n"
         f"🏆 Ранг: {rank_name}\n"
-        f"{em('stats', '📊')} Сегодня: {today_count}\n"
-        f"{em('stats', '📊')} Всего: {all_count}\n"
-        f"{em('shield', '🛡')} Статус: {status}"
+        f"📊 Сегодня: {today_count}\n"
+        f"📊 Всего: {all_count}\n"
+        f"🛡 Статус: {status}"
         f"{cit_line}"
     )
     user_ach = get_user_achievements(target.id, message.chat.id)
@@ -1756,7 +1800,7 @@ async def profile_full_cmd(message: types.Message):
                 elif args[1].isdigit():
                     target = await bot.get_chat(int(args[1]))
             except:
-                return await message.reply(f"{em('cross', '❌')} Пользователь не найден", parse_mode="HTML")
+                return await message.reply("❌ Пользователь не найден", parse_mode="HTML")
     if not target:
         target = message.from_user
     register_user(target.id, target.first_name, target.username or "")
@@ -1771,16 +1815,8 @@ async def profile_full_cmd(message: types.Message):
     profile = get_user_profile(target.id)
     gender, birth_date, city, bio, is_hidden, birth_visibility, motto, show_cit = profile
     stars = 0
-    try:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            c = conn.cursor()
-            c.execute("SELECT stars FROM user_stars WHERE user_id = ?", (target.id,))
-            r = c.fetchone()
-            stars = r[0] if r else 0
-    except:
-        pass
-    stars_title = get_stars_title(stars)
     day, week, month, total = get_activity_stats(target.id)
+    stars_title = get_stars_title(stars)
     cit = get_citizenship_info(target.id)
     cit_line = ""
     if cit and show_cit:
@@ -1845,7 +1881,7 @@ async def my_stats_cmd(message: types.Message):
     try:
         chart_buf = generate_user_activity_chart(target.id, days=30)
     except Exception as e:
-        return await message.reply(f"{em('cross', '❌')} Ошибка графика: {e}", parse_mode="HTML")
+        return await message.reply(f"❌ Ошибка графика: {e}", parse_mode="HTML")
     if not chart_buf:
         return await message.reply("📭 Нет данных для графика.", parse_mode="HTML")
     await message.reply_photo(
@@ -1856,30 +1892,30 @@ async def my_stats_cmd(message: types.Message):
 
 @dp.message(Command("мойид", prefix="."))
 async def myid_cmd(message: types.Message):
-    await message.reply(f"{em('id', '🆔')} Ваш ID: <code>{message.from_user.id}</code>", parse_mode="HTML")
+    await message.reply(f"🆔 Ваш ID: <code>{message.from_user.id}</code>", parse_mode="HTML")
 
 @dp.message(Command("кодчата", prefix="."))
 async def chat_code_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
     if len(args) >= 2:
         if message.from_user.id != OWNER_ID:
-            return await message.reply(f"{em('cross', '❌')} Только владелец бота.", parse_mode="HTML")
+            return await message.reply("❌ Только владелец бота.", parse_mode="HTML")
         new_code = args[1].strip().upper()
         if len(new_code) < 3 or len(new_code) > 20:
-            return await message.reply(f"{em('cross', '❌')} Код от 3 до 20 символов.", parse_mode="HTML")
+            return await message.reply("❌ Код от 3 до 20 символов.", parse_mode="HTML")
         if not re.match(r'^[A-ZА-Я0-9_]+$', new_code):
-            return await message.reply(f"{em('cross', '❌')} Только буквы, цифры и <code>_</code>.", parse_mode="HTML")
+            return await message.reply("❌ Только буквы, цифры и <code>_</code>.", parse_mode="HTML")
         chat_id = message.chat.id
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT chat_id FROM chat_codes WHERE code = ? AND chat_id != ?", (new_code, chat_id))
             if c.fetchone():
-                return await message.reply(f"{em('cross', '❌')} Код занят.", parse_mode="HTML")
+                return await message.reply("❌ Код занят.", parse_mode="HTML")
             c.execute("INSERT OR REPLACE INTO chat_codes (chat_id, code) VALUES (?, ?)", (chat_id, new_code))
             conn.commit()
-        return await message.reply(f"{em('check', '✅')} Код изменён на <code>{new_code}</code>", parse_mode="HTML")
+        return await message.reply(f"✅ Код изменён на <code>{new_code}</code>", parse_mode="HTML")
     code = get_chat_code(message.chat.id)
-    await message.reply(f"{em('key', '🔑')} Код чата: <code>{code}</code>", parse_mode="HTML")
+    await message.reply(f"🔑 Код чата: <code>{code}</code>", parse_mode="HTML")
 
 @dp.message(Command("ид", prefix="."))
 async def get_id_cmd(message: types.Message):
@@ -1900,17 +1936,17 @@ async def get_id_cmd(message: types.Message):
                         c.execute("SELECT first_name, username FROM users WHERE user_id = ?", (user_id,))
                         r = c.fetchone()
                         if r:
-                            return await message.reply(f"{em('id', '🆔')} ID: <code>{user_id}</code>\n📛 Имя: {r[0]}", parse_mode="HTML")
-                    return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML")
+                            return await message.reply(f"🆔 ID: <code>{user_id}</code>\n📛 Имя: {r[0]}", parse_mode="HTML")
+                    return await message.reply("❌ Не найден", parse_mode="HTML")
             elif arg.startswith('@'):
                 try:
                     target = await bot.get_chat(arg)
                 except:
-                    return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML")
+                    return await message.reply("❌ Не найден", parse_mode="HTML")
     if not target:
         target = message.from_user
     await message.reply(
-        f"{em('id', '🆔')} <b>Информация</b>\n\n👤 Имя: {mention(target)}\n🆔 ID: <code>{target.id}</code>\n👤 Username: @{target.username if target.username else '—'}",
+        f"🆔 <b>Информация</b>\n\n👤 Имя: {mention(target)}\n🆔 ID: <code>{target.id}</code>\n👤 Username: @{target.username if target.username else '—'}",
         parse_mode="HTML"
     )
 
@@ -1919,11 +1955,11 @@ async def get_chat_id_cmd(message: types.Message):
     if message.reply_to_message and message.reply_to_message.forward_from_chat:
         fwd = message.reply_to_message.forward_from_chat
         return await message.reply(
-            f"{em('id', '🆔')} <b>ID пересланного чата</b>\n\n📛 Название: <b>{fwd.title or 'Без названия'}</b>\n🆔 ID: <code>{fwd.id}</code>\n👤 Username: @{fwd.username if fwd.username else '—'}",
+            f"🆔 <b>ID пересланного чата</b>\n\n📛 Название: <b>{fwd.title or 'Без названия'}</b>\n🆔 ID: <code>{fwd.id}</code>\n👤 Username: @{fwd.username if fwd.username else '—'}",
             parse_mode="HTML"
         )
     await message.reply(
-        f"{em('id', '🆔')} <b>Информация о чате</b>\n\n📛 Название: <b>{message.chat.title or 'Личный чат'}</b>\n🆔 ID: <code>{message.chat.id}</code>\n👤 Username: @{message.chat.username if message.chat.username else '—'}",
+        f"🆔 <b>Информация о чате</b>\n\n📛 Название: <b>{message.chat.title or 'Личный чат'}</b>\n🆔 ID: <code>{message.chat.id}</code>\n👤 Username: @{message.chat.username if message.chat.username else '—'}",
         parse_mode="HTML"
     )
 
@@ -1940,7 +1976,7 @@ async def top_cmd(message: types.Message):
     top_users = get_top_users(message.chat.id, period, limit=10)
     if not top_users:
         return await message.reply(f"📭 Нет данных {period_name}.")
-    text = f"{em('stats', '📊')} <b>Топ {period_name}:</b>\n\n"
+    text = f"📊 <b>Топ {period_name}:</b>\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for i, (user_id, count) in enumerate(top_users, 1):
         try:
@@ -1955,7 +1991,7 @@ async def top_cmd(message: types.Message):
 async def add_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
     if actor_id != OWNER_ID and not has_agent_rank(actor_id, 4):
-        return await message.reply(f"{em('cross', '❌')} Только Гл. Агент (4).", parse_mode="HTML")
+        return await message.reply("❌ Только Гл. Агент (4).", parse_mode="HTML")
 
     target, _ = await resolve_target(message)
     if not target:
@@ -1985,7 +2021,7 @@ async def add_agent_cmd(message: types.Message):
 
     actor_rank = get_agent_rank(actor_id)
     if actor_id != OWNER_ID and rank >= actor_rank:
-        return await message.reply(f"{em('cross', '❌')} Нельзя выдать ранг ≥ твоего.", parse_mode="HTML")
+        return await message.reply("❌ Нельзя выдать ранг ≥ твоего.", parse_mode="HTML")
 
     target_was_agent = is_agent(target.id)
     set_agent_rank(target.id, rank, actor_id)
@@ -1994,7 +2030,7 @@ async def add_agent_cmd(message: types.Message):
     if target_was_agent:
         chat_msg = f"🎖 {mention(target)} повышен: <b>{rank_name}</b>"
     else:
-        chat_msg = f"{em('check', '✅')} {mention(target)} теперь <b>{rank_name}</b>!"
+        chat_msg = f"✅ {mention(target)} теперь <b>{rank_name}</b>!"
     await message.reply(chat_msg, parse_mode="HTML")
 
     try:
@@ -2006,7 +2042,7 @@ async def add_agent_cmd(message: types.Message):
             )
         else:
             text_ls = (
-                f"{em('shield', '🛡')} <b>Вас назначили агентом Mos!</b>\n\n"
+                f"🛡 <b>Вас назначили агентом Mos!</b>\n\n"
                 f"📊 Ранг: <b>{rank_name}</b>\n\n"
                 f"Пользуйтесь своими полномочиями на славу <b>Mos</b>! 🛡"
             )
@@ -2018,7 +2054,7 @@ async def add_agent_cmd(message: types.Message):
 async def remove_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
     if actor_id != OWNER_ID and not has_agent_rank(actor_id, 4):
-        return await message.reply(f"{em('cross', '❌')} Только Гл. Агент (4).", parse_mode="HTML")
+        return await message.reply("❌ Только Гл. Агент (4).", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
         return await message.reply("📌 <code>-Агент @user</code>", parse_mode="HTML")
@@ -2027,9 +2063,9 @@ async def remove_agent_cmd(message: types.Message):
     if not is_agent(target.id):
         return await message.reply("⚠️ Не агент.", parse_mode="HTML")
     remove_agent(target.id)
-    await message.reply(f"{em('cross', '❌')} {mention(target)} больше не агент.", parse_mode="HTML")
+    await message.reply(f"❌ {mention(target)} больше не агент.", parse_mode="HTML")
     try:
-        await bot.send_message(target.id, f"❌ <b>Вас сняли с должности агента Mos.</b>\n\nСпасибо за службу! 🛡", parse_mode="HTML")
+        await bot.send_message(target.id, "❌ <b>Вас сняли с должности агента Mos.</b>\n\nСпасибо за службу! 🛡", parse_mode="HTML")
     except:
         pass
 
@@ -2045,7 +2081,7 @@ async def list_agents_cmd(message: types.Message):
         rows = c.fetchall()
     if not rows:
         return await message.reply("📭 Нет агентов.", parse_mode="HTML")
-    text = f"{em('shield', '🛡')} <b>Агенты Mos:</b>\n\n"
+    text = "🛡 <b>Агенты Mos:</b>\n\n"
     for uid, rank in rows:
         try:
             u = await bot.get_chat(uid)
@@ -2062,12 +2098,12 @@ async def list_agents_cmd(message: types.Message):
 async def promote_cmd(message: types.Message):
     actor_rank = get_rank(message.chat.id, message.from_user.id)
     if actor_rank < 3:
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if not can_manage(message.chat.id, message.from_user.id, target.id):
-        return await message.reply(f"{em('cross', '❌')} Нельзя управлять.", parse_mode="HTML")
+        return await message.reply("❌ Нельзя управлять.", parse_mode="HTML")
     current_rank = get_rank(message.chat.id, target.id)
     if current_rank >= 5:
         return await message.reply("⚠️ Это владелец.")
@@ -2079,14 +2115,14 @@ async def promote_cmd(message: types.Message):
 async def demote_cmd(message: types.Message):
     actor_rank = get_rank(message.chat.id, message.from_user.id)
     if actor_rank < 3:
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if target.id == OWNER_ID:
-        return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML")
+        return await message.reply("❌ Нельзя.", parse_mode="HTML")
     if not can_manage(message.chat.id, message.from_user.id, target.id):
-        return await message.reply(f"{em('cross', '❌')} Нельзя управлять.", parse_mode="HTML")
+        return await message.reply("❌ Нельзя управлять.", parse_mode="HTML")
     current_rank = get_rank(message.chat.id, target.id)
     if current_rank == 0:
         return await message.reply("⚠️ И так участник.")
@@ -2103,21 +2139,21 @@ async def demote_all_cmd(message: types.Message):
     actor_id = message.from_user.id
     actor_rank = get_rank(message.chat.id, actor_id)
     if actor_id != OWNER_ID and actor_rank < 3:
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if target.id == OWNER_ID:
-        return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML")
+        return await message.reply("❌ Нельзя.", parse_mode="HTML")
     target_rank = get_rank(message.chat.id, target.id)
     if target_rank == 0:
-        return await message.reply(f"⚠️ И так без прав.", parse_mode="HTML")
+        return await message.reply("⚠️ И так без прав.", parse_mode="HTML")
     if target_rank == 5 and actor_id != OWNER_ID:
-        return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML")
+        return await message.reply("❌ Нельзя.", parse_mode="HTML")
     if actor_id != OWNER_ID and target_rank >= actor_rank:
-        return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML")
+        return await message.reply("❌ Нельзя.", parse_mode="HTML")
     remove_rank(message.chat.id, target.id)
-    await message.reply(f"{em('cross', '❌')} {mention(target)} разжалован.", parse_mode="HTML")
+    await message.reply(f"❌ {mention(target)} разжалован.", parse_mode="HTML")
 
 @dp.message(Command("админы", prefix="."))
 async def list_admins_cmd(message: types.Message):
@@ -2131,7 +2167,7 @@ async def list_admins_cmd(message: types.Message):
             name = mention_by_id(user_id, user.first_name)
         except:
             name = f"ID: {user_id}"
-        agent_badge = f" {em('shield', '🛡')}" if is_agent(user_id) else ""
+        agent_badge = " 🛡" if is_agent(user_id) else ""
         text += f"{RANK_NAMES.get(rank, '👤 Участник')} — {name}{agent_badge}\n"
     text += f"\n⚜️ Владелец бота: <code>{OWNER_ID}</code>"
     await message.reply(text, parse_mode="HTML")
@@ -2143,31 +2179,31 @@ async def restore_creator_cmd(message: types.Message):
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status != "creator":
-            return await message.reply(f"{em('cross', '❌')} Только создатель.", parse_mode="HTML")
+            return await message.reply("❌ Только создатель.", parse_mode="HTML")
     except:
-        return await message.reply(f"{em('cross', '❌')} Ошибка.", parse_mode="HTML")
+        return await message.reply("❌ Ошибка.", parse_mode="HTML")
     current_rank = get_rank(chat_id, user_id)
     if current_rank == 5:
-        return await message.reply(f"ℹ️ Вы уже владелец.", parse_mode="HTML")
+        return await message.reply("ℹ️ Вы уже владелец.", parse_mode="HTML")
     set_rank(chat_id, user_id, 5, user_id)
-    await message.reply(f"{em('check', '✅')} Вы владелец чата!", parse_mode="HTML")
+    await message.reply("✅ Вы владелец чата!", parse_mode="HTML")
 
 @dp.message(Command("админ", prefix="+"))
 async def grant_admin_cmd(message: types.Message):
     actor_rank = get_rank(message.chat.id, message.from_user.id)
     if actor_rank < 3:
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     try:
         bot_member = await bot.get_chat_member(message.chat.id, bot.id)
         if bot_member.status not in ['administrator', 'creator']:
-            return await message.reply(f"{em('cross', '❌')} Я не админ.", parse_mode="HTML")
+            return await message.reply("❌ Я не админ.", parse_mode="HTML")
         if bot_member.status == 'administrator' and not bot_member.can_promote_members:
-            return await message.reply(f"{em('cross', '❌')} Нет права добавлять админов.", parse_mode="HTML")
+            return await message.reply("❌ Нет права добавлять админов.", parse_mode="HTML")
     except:
-        return await message.reply(f"{em('cross', '❌')} Ошибка.", parse_mode="HTML")
+        return await message.reply("❌ Ошибка.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if target.id == OWNER_ID:
         return await message.reply("⛔ Владелец и так имеет все права.")
     target_rank = get_rank(message.chat.id, target.id)
@@ -2181,15 +2217,15 @@ async def grant_admin_cmd(message: types.Message):
             can_invite_users=True, can_pin_messages=True
         )
         mark_bot_promoted(target.id, message.chat.id, message.from_user.id)
-        await message.reply(f"{em('check', '✅')} {mention(target)} теперь админ Telegram!", parse_mode="HTML")
+        await message.reply(f"✅ {mention(target)} теперь админ Telegram!", parse_mode="HTML")
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
+        await message.reply(f"❌ Ошибка: {e}", parse_mode="HTML")
 
 # ================= МОДЕРАЦИЯ =================
 @dp.message(Command("бан", prefix="."))
 async def ban_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     args = message.text.split()
     duration_seconds = None
     duration_text = "навсегда"
@@ -2204,13 +2240,13 @@ async def ban_cmd(message: types.Message):
             elif unit in ['неделя', 'недели', 'недель', 'н']: duration_seconds, duration_text = amount * 604800, f"{amount} нед."
             elif unit in ['месяц', 'месяца', 'месяцев']: duration_seconds, duration_text = amount * 30 * 86400, f"{amount} мес."
     if duration_seconds and duration_seconds > 366 * 86400:
-        return await message.reply(f"{em('cross', '❌')} Максимум 366 дней.", parse_mode="HTML")
+        return await message.reply("❌ Максимум 366 дней.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if get_rank(message.chat.id, target.id) >= get_rank(message.chat.id, message.from_user.id):
         if message.from_user.id != OWNER_ID:
-            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML")
+            return await message.reply("❌ Нельзя.", parse_mode="HTML")
     reason = "Без причины"
     parts = message.text.split('\n', 1)
     if len(parts) > 1:
@@ -2226,31 +2262,31 @@ async def ban_cmd(message: types.Message):
             add_chat_ban(message.chat.id, target.id, reason, message.from_user.id, None)
             ban_type = "<b>навсегда</b>"
         await message.reply(
-            f"{em('ban', '🚫')} {mention(target)} получает бан {ban_type}\n"
+            f"🚫 {mention(target)} получает бан {ban_type}\n"
             f"👮 Модератор: {mention(message.from_user)}\n📝 Причина: {reason}",
             parse_mode="HTML"
         )
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
+        await message.reply(f"❌ Ошибка: {e}", parse_mode="HTML")
 
 @dp.message(Command("разбан", prefix="."))
 async def unban_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     try:
         await bot.unban_chat_member(message.chat.id, target.id)
         clear_chat_ban(message.chat.id, target.id)
-        await message.reply(f"{em('check', '✅')} {mention(target)} разбанен", parse_mode="HTML")
+        await message.reply(f"✅ {mention(target)} разбанен", parse_mode="HTML")
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
+        await message.reply(f"❌ Ошибка: {e}", parse_mode="HTML")
 
 @dp.message(Command("мут", prefix="."))
 async def mute_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     args = message.text.split()
     duration_seconds = 1800
     duration_text = "30 мин."
@@ -2264,13 +2300,13 @@ async def mute_cmd(message: types.Message):
             elif unit in ['день', 'дня', 'дней', 'д']: duration_seconds, duration_text = amount * 86400, f"{amount} дн."
             elif unit in ['неделя', 'недели', 'недель', 'н']: duration_seconds, duration_text = amount * 604800, f"{amount} нед."
     if duration_seconds > 366 * 86400:
-        return await message.reply(f"{em('cross', '❌')} Максимум 366 дней.", parse_mode="HTML")
+        return await message.reply("❌ Максимум 366 дней.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if get_rank(message.chat.id, target.id) >= get_rank(message.chat.id, message.from_user.id):
         if message.from_user.id != OWNER_ID:
-            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML")
+            return await message.reply("❌ Нельзя.", parse_mode="HTML")
     reason = "Без причины"
     parts = message.text.split('\n', 1)
     if len(parts) > 1:
@@ -2282,20 +2318,20 @@ async def mute_cmd(message: types.Message):
             until_date=datetime.now() + timedelta(seconds=duration_seconds)
         )
         await message.reply(
-            f"{em('mute', '🔇')} {mention(target)} замучен на <b>{duration_text}</b>\n"
+            f"🔇 {mention(target)} замучен на <b>{duration_text}</b>\n"
             f"👮 Модератор: {mention(message.from_user)}\n📝 Причина: {reason}",
             parse_mode="HTML"
         )
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
+        await message.reply(f"❌ Ошибка: {e}", parse_mode="HTML")
 
 @dp.message(Command("размут", prefix="."))
 async def unmute_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     try:
         await bot.restrict_chat_member(
             message.chat.id, target.id,
@@ -2303,24 +2339,24 @@ async def unmute_cmd(message: types.Message):
         )
         await message.reply(f"🔈 {mention(target)} размучен", parse_mode="HTML")
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
+        await message.reply(f"❌ Ошибка: {e}", parse_mode="HTML")
 
 @dp.message(Command("кик", prefix="."))
 async def kick_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if get_rank(message.chat.id, target.id) >= get_rank(message.chat.id, message.from_user.id):
         if message.from_user.id != OWNER_ID:
-            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML")
+            return await message.reply("❌ Нельзя.", parse_mode="HTML")
     try:
         await bot.ban_chat_member(message.chat.id, target.id)
         await bot.unban_chat_member(message.chat.id, target.id)
         await message.reply(f"👢 {mention(target)} кикнут", parse_mode="HTML")
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
+        await message.reply(f"❌ Ошибка: {e}", parse_mode="HTML")
 
 @dp.message(Command("смс", prefix="-"))
 async def delete_message_cmd(message: types.Message):
@@ -2361,14 +2397,13 @@ async def delete_message_cmd(message: types.Message):
     except:
         pass
 
-# ================= .ПИН / .ЗАКРЕПИТЬ =================
+# ================= ПИН / АНПИН =================
 @dp.message(Command("пин", prefix="."))
 @dp.message(Command("закрепить", prefix="."))
 async def pin_message_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
         if not await is_tg_admin(message.chat.id, message.from_user.id):
             return await message.reply("❌ Недостаточно прав.")
-
     if not message.reply_to_message:
         return await message.reply(
             "📌 <b>Как использовать:</b>\n"
@@ -2376,7 +2411,6 @@ async def pin_message_cmd(message: types.Message):
             "🔕 <b>Тихо:</b> <code>.пин тихо</code>",
             parse_mode="HTML"
         )
-
     try:
         bot_member = await bot.get_chat_member(message.chat.id, bot.id)
         if bot_member.status not in ['administrator', 'creator']:
@@ -2385,11 +2419,9 @@ async def pin_message_cmd(message: types.Message):
             return await message.reply("❌ Нет права закреплять сообщения.")
     except:
         return
-
     args = message.text.split()
     silent = len(args) >= 2 and args[1].lower() in ["тихо", "silent", "s", "тих"]
     notify = not silent
-
     try:
         await bot.pin_chat_message(
             chat_id=message.chat.id,
@@ -2410,17 +2442,13 @@ async def pin_message_cmd(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
 
-
-# ================= .АНПИН / .ОТКРЕПИТЬ =================
 @dp.message(Command("анпин", prefix="."))
 @dp.message(Command("открепить", prefix="."))
 @dp.message(Command("унпин", prefix="."))
 async def unpin_message_cmd(message: types.Message):
-    """Открепить сообщение (по реплаю или все)"""
     if not has_permission(message.chat.id, message.from_user.id, 1):
         if not await is_tg_admin(message.chat.id, message.from_user.id):
             return
-
     try:
         bot_member = await bot.get_chat_member(message.chat.id, bot.id)
         if bot_member.status not in ['administrator', 'creator']:
@@ -2429,42 +2457,39 @@ async def unpin_message_cmd(message: types.Message):
             return
     except:
         return
-
     try:
         if message.reply_to_message:
-            # Открепить конкретное
             await bot.unpin_chat_message(
                 chat_id=message.chat.id,
                 message_id=message.reply_to_message.message_id
             )
-            await message.reply(f"{em('check', '✅')} Откреплено.")
+            await message.reply("✅ Откреплено.")
         else:
-            # Открепить все
             await bot.unpin_all_chat_messages(chat_id=message.chat.id)
-            await message.reply(f"{em('check', '✅')} Все закрепы сняты.")
+            await message.reply("✅ Все закрепы сняты.")
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
-        
+        await message.reply(f"❌ Ошибка: {e}")
+
 # ================= ВАРНЫ =================
 @dp.message(Command("варн", prefix="."))
 async def warn_cmd(message: types.Message):
     actor_id = message.from_user.id
     actor_rank = get_rank(message.chat.id, actor_id)
     if actor_rank < 1:
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     target_rank = get_rank(message.chat.id, target.id)
     target_is_tg_admin = await is_tg_admin(message.chat.id, target.id)
     if actor_rank == 5:
         pass
     elif actor_rank == 4:
         if target_rank >= 4:
-            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML")
+            return await message.reply("❌ Нельзя.", parse_mode="HTML")
     else:
         if target_rank >= actor_rank:
-            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML")
+            return await message.reply("❌ Нельзя.", parse_mode="HTML")
         if target_is_tg_admin:
             return await message.reply("⛔ Нельзя варнить ТГ-админа.", parse_mode="HTML")
     reason = "Без причины"
@@ -2495,59 +2520,59 @@ async def warn_cmd(message: types.Message):
                 until_date=datetime.now() + timedelta(seconds=3600)
             )
             clear_warns(target.id, message.chat.id)
-            result_text = f"{em('pencil', '✏️')} {mention(target)} получил 3-й варн!\n"
+            result_text = f"✏️ {mention(target)} получил 3-й варн!\n"
             if removed_admin:
                 result_text += "👑 ТГ-админка снята.\n"
-            result_text += f"{em('mute', '🔇')} Мут на 1 час.\n📝 Причина: {reason}"
+            result_text += f"🔇 Мут на 1 час.\n📝 Причина: {reason}"
             await message.reply(result_text, parse_mode="HTML")
             return
         except Exception as e:
-            await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
+            await message.reply(f"❌ Ошибка: {e}", parse_mode="HTML")
             return
     await message.reply(
-        f"{em('pencil', '✏️')} {mention(target)} получил предупреждение!\n📝 Причина: {reason}\n{em('stats', '📊')} Всего: {warns_count}/3",
+        f"✏️ {mention(target)} получил предупреждение!\n📝 Причина: {reason}\n📊 Всего: {warns_count}/3",
         parse_mode="HTML"
     )
 
 @dp.message(Command("варны", prefix="."))
 async def warns_list_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     warns = get_warns(target.id, message.chat.id)
     if not warns:
-        return await message.reply(f"{em('check', '✅')} У {mention(target)} нет варнов.", parse_mode="HTML")
-    text = f"{em('pencil', '✏️')} <b>Варны {mention(target)}:</b> ({len(warns)}/3)\n\n"
+        return await message.reply(f"✅ У {mention(target)} нет варнов.", parse_mode="HTML")
+    text = f"✏️ <b>Варны {mention(target)}:</b> ({len(warns)}/3)\n\n"
     for i, (warn_id, reason, warned_at) in enumerate(warns, 1):
-        text += f"{i}. {reason}\n   {em('calendar', '🗓')} {warned_at[:10]}\n"
+        text += f"{i}. {reason}\n   🗓 {warned_at[:10]}\n"
     await message.reply(text, parse_mode="HTML")
 
 @dp.message(Command("снятьварн", prefix="."))
 async def unwarn_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     warns = get_warns(target.id, message.chat.id)
     if not warns:
-        return await message.reply(f"{em('check', '✅')} Нет варнов.", parse_mode="HTML")
+        return await message.reply("✅ Нет варнов.", parse_mode="HTML")
     remove_last_warn(target.id, message.chat.id)
     new_count = count_warns(target.id, message.chat.id)
-    await message.reply(f"{em('check', '✅')} Снят последний варн. Осталось: {new_count}/3", parse_mode="HTML")
+    await message.reply(f"✅ Снят последний варн. Осталось: {new_count}/3", parse_mode="HTML")
 
 @dp.message(Command("сбросварнов", prefix="."))
 async def clear_warns_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     count = count_warns(target.id, message.chat.id)
     if count == 0:
-        return await message.reply(f"{em('check', '✅')} Нет варнов.", parse_mode="HTML")
+        return await message.reply("✅ Нет варнов.", parse_mode="HTML")
     clear_warns(target.id, message.chat.id)
     await message.reply(f"♻️ Все варны ({count}) сброшены.", parse_mode="HTML")
 
@@ -2566,9 +2591,9 @@ async def show_punishments(message: types.Message):
                 if args[1].startswith('@'): target = await bot.get_chat(args[1])
                 elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
             except:
-                return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML")
+                return await message.reply("❌ Не найден", parse_mode="HTML")
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     chat_id = message.chat.id
     user_id = target.id
     name = mention(target)
@@ -2583,9 +2608,9 @@ async def show_punishments(message: types.Message):
                     mod = await bot.get_chat(banned_by)
                     mod_name = mention_by_id(banned_by, mod.first_name)
                 except: mod_name = f"ID {banned_by}"
-                blocks.append(f"{em('ban', '🚫')} <b>Забанен</b>\n📝 {reason}\n👮 {mod_name}")
+                blocks.append(f"🚫 <b>Забанен</b>\n📝 {reason}\n👮 {mod_name}")
             else:
-                blocks.append(f"{em('ban', '🚫')} <b>Забанен</b>\n📝 <i>неизвестна</i>")
+                blocks.append(f"🚫 <b>Забанен</b>\n📝 <i>неизвестна</i>")
     except: pass
     grid_id = get_chat_grid(chat_id)
     if grid_id:
@@ -2599,16 +2624,16 @@ async def show_punishments(message: types.Message):
                     mod = await bot.get_chat(banned_by)
                     mod_name = mention_by_id(banned_by, mod.first_name)
                 except: mod_name = f"ID {banned_by}"
-                blocks.append(f"{em('ban', '🚫')} <b>Забанен в сетке</b>\n📝 {reason}\n👮 {mod_name}")
+                blocks.append(f"🚫 <b>Забанен в сетке</b>\n📝 {reason}\n👮 {mod_name}")
     if is_in_antispam(user_id):
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT reason FROM antispam WHERE user_id = ?", (user_id,))
             r = c.fetchone()
-            if r: blocks.append(f"{em('shield', '🛡')} <b>В антиспаме MOS</b>\n📝 {r[0]}")
+            if r: blocks.append(f"🛡 <b>В антиспаме MOS</b>\n📝 {r[0]}")
     if not blocks:
-        return await message.reply(f"{em('check', '✅')} {name} <b>чист</b>", parse_mode="HTML")
-    text = f"{em('calendar', '🗓')} <b>Наказания {name}</b>\n\n" + "\n\n".join(blocks)
+        return await message.reply(f"✅ {name} <b>чист</b>", parse_mode="HTML")
+    text = f"🗓 <b>Наказания {name}</b>\n\n" + "\n\n".join(blocks)
     await message.reply(text, parse_mode="HTML")
 
 @dp.message(Command("баны", prefix="."))
@@ -2617,27 +2642,27 @@ async def show_bans(message: types.Message):
         return
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if not is_in_antispam(target.id):
-        return await message.reply(f"{em('check', '✅')} {mention(target)} чист", parse_mode="HTML")
+        return await message.reply(f"✅ {mention(target)} чист", parse_mode="HTML")
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT reason, added_at FROM antispam WHERE user_id = ?", (target.id,))
         r = c.fetchone()
-    await message.reply(f"{em('ban', '🚫')} {mention(target)} в антиспаме\n📝 {r[0]}\n{em('calendar', '🗓')} {r[1][:10]}", parse_mode="HTML")# ================= АЧИВКИ =================
+    await message.reply(f"🚫 {mention(target)} в антиспаме\n📝 {r[0]}\n🗓 {r[1][:10]}", parse_mode="HTML")# ================= АЧИВКИ =================
 @dp.message(lambda m: m.text and m.text.lower().startswith("+ачивка создать"))
 async def create_achievement_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 3):
         return
     parts = message.text.split(maxsplit=4)
     if len(parts) < 4:
-        return await message.reply(f"📌 <code>+Ачивка создать Название 🏅 Описание</code>", parse_mode="HTML")
+        return await message.reply("📌 <code>+Ачивка создать Название 🏅 Описание</code>", parse_mode="HTML")
     name = parts[2]
     emoji = parts[3]
     description = parts[4] if len(parts) >= 5 else ""
     aid = create_achievement(name, emoji, description)
     if not aid:
-        return await message.reply(f"{em('cross', '❌')} Ачивка уже есть.", parse_mode="HTML")
+        return await message.reply("❌ Ачивка уже есть.", parse_mode="HTML")
     await message.reply(f"✅ Ачивка создана!\n{emoji} <b>{name}</b>\n📝 {description or '—'}", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and m.text.lower().startswith("+ачивка"))
@@ -2657,12 +2682,12 @@ async def add_achievement_cmd(message: types.Message):
             try:
                 target = await bot.get_chat(args[1])
                 achievement_name = " ".join(args[2:])
-            except: return await message.reply(f"{em('cross', '❌')} Не найден.", parse_mode="HTML")
+            except: return await message.reply("❌ Не найден.", parse_mode="HTML")
     if not target or not achievement_name:
-        return await message.reply(f"📌 <code>+Ачивка @user Название</code>", parse_mode="HTML")
+        return await message.reply("📌 <code>+Ачивка @user Название</code>", parse_mode="HTML")
     ach = get_achievement_by_name(achievement_name)
     if not ach:
-        return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML")
+        return await message.reply("❌ Не найдена.", parse_mode="HTML")
     aid, name, emoji, desc = ach
     ok = give_achievement(target.id, message.chat.id, aid, message.from_user.id)
     if not ok:
@@ -2679,9 +2704,9 @@ async def delete_achievement_cmd(message: types.Message):
     name = " ".join(args[2:])
     ach = get_achievement_by_name(name)
     if not ach:
-        return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML")
+        return await message.reply("❌ Не найдена.", parse_mode="HTML")
     delete_achievement(ach[0])
-    await message.reply(f"🗑 Удалена.", parse_mode="HTML")
+    await message.reply("🗑 Удалена.", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and m.text.lower().startswith("-ачивка"))
 async def remove_achievement_cmd(message: types.Message):
@@ -2702,10 +2727,10 @@ async def remove_achievement_cmd(message: types.Message):
                 achievement_name = " ".join(args[2:])
             except: return
     if not target or not achievement_name:
-        return await message.reply(f"📌 <code>-Ачивка @user Название</code>", parse_mode="HTML")
+        return await message.reply("📌 <code>-Ачивка @user Название</code>", parse_mode="HTML")
     ach = get_achievement_by_name(achievement_name)
     if not ach:
-        return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML")
+        return await message.reply("❌ Не найдена.", parse_mode="HTML")
     remove_achievement(target.id, message.chat.id, ach[0])
     await message.reply(f"❌ С {mention(target)} снята {ach[2]} <b>{ach[1]}</b>.", parse_mode="HTML")
 
@@ -2789,6 +2814,116 @@ async def top_candies_cmd(message: types.Message):
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {name} — <b>{balance}</b> 🍬\n"
     await message.reply(text, parse_mode="HTML")
+
+# ================= TELEGRAM STARS =================
+@dp.message(Command("купитьириски", prefix="."))
+@dp.message(Command("купить-ириски", prefix="."))
+@dp.message(Command("buycandies", prefix="."))
+async def buy_candies_stars_cmd(message: types.Message):
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        price = get_stars_per_candy(message.chat.id)
+        return await message.reply(
+            f"🍬 <b>Покупка ирисок за Telegram Stars</b>\n\n"
+            f"💰 Курс: <b>{price} ⭐ = 1 🍬</b>\n\n"
+            f"📌 <b>Формат:</b>\n"
+            f"<code>.купитьириски 10</code> — купить 10 ирисок за {price * 10} ⭐\n"
+            f"<code>.купитьириски 50</code> — купить 50 ирисок за {price * 50} ⭐\n"
+            f"<code>.купитьириски 100</code> — купить 100 ирисок за {price * 100} ⭐",
+            parse_mode="HTML"
+        )
+    amount = int(args[1])
+    if amount < 1 or amount > 10000:
+        return await message.reply("❌ Количество от 1 до 10 000.", parse_mode="HTML")
+    price = get_stars_per_candy(message.chat.id)
+    total_stars = amount * price
+    payment_id = create_stars_payment(
+        user_id=message.from_user.id,
+        chat_id=message.chat.id,
+        amount_candies=amount,
+        stars=total_stars
+    )
+    try:
+        await bot.send_invoice(
+            chat_id=message.chat.id,
+            title=f"🍬 {amount} ирисок",
+            description=f"Покупка {amount} ирисок за {total_stars} ⭐ Telegram Stars",
+            payload=f"candies_{payment_id}",
+            provider_token="",
+            currency="XTR",
+            prices=[types.LabeledPrice(label=f"{amount} ирисок", amount=total_stars)],
+            start_parameter=f"buy_candies_{payment_id}"
+        )
+    except Exception as e:
+        return await message.reply(f"❌ Ошибка: {e}", parse_mode="HTML")
+
+@dp.message(Command("курс", prefix="."))
+async def change_stars_price_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        price = get_stars_per_candy(message.chat.id)
+        return await message.reply(
+            f"💰 <b>Текущий курс:</b> {price} ⭐ = 1 🍬\n\n"
+            f"📌 <code>.курс 15</code> — изменить на 15 ⭐",
+            parse_mode="HTML"
+        )
+    if not args[1].isdigit():
+        return await message.reply("❌ Введите число.", parse_mode="HTML")
+    new_price = int(args[1])
+    if new_price < 1 or new_price > 1000:
+        return await message.reply("❌ Курс от 1 до 1000.", parse_mode="HTML")
+    set_stars_per_candy(message.chat.id, new_price)
+    await message.reply(f"✅ Курс изменён: <b>{new_price} ⭐ = 1 🍬</b>", parse_mode="HTML")
+
+@dp.pre_checkout_query()
+async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
+    try:
+        await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+    except Exception as e:
+        print(f"Ошибка pre_checkout: {e}")
+        try:
+            await bot.answer_pre_checkout_query(
+                pre_checkout_query.id,
+                ok=False,
+                error_message="Ошибка обработки платежа"
+            )
+        except:
+            pass
+
+@dp.message(lambda m: m.successful_payment is not None)
+async def successful_payment_handler(message: types.Message):
+    payment = message.successful_payment
+    payload = payment.invoice_payload
+    try:
+        payment_id = int(payload.split("_")[1])
+    except:
+        return await message.reply("❌ Ошибка идентификации платежа.")
+    result = complete_stars_payment(payment_id)
+    if not result:
+        return await message.reply("⚠️ Этот платёж уже был обработан.", parse_mode="HTML")
+    user_id, chat_id, amount_candies, stars_paid = result
+    await message.reply(
+        f"✅ <b>Покупка успешна!</b>\n\n"
+        f"🍬 Получено ирисок: <b>+{amount_candies}</b>\n"
+        f"💰 Оплачено: <b>{stars_paid} ⭐</b>\n"
+        f"💼 Баланс: <b>{get_balance(user_id)} 🍬</b>\n\n"
+        f"Спасибо за покупку! 🎉",
+        parse_mode="HTML"
+    )
+    try:
+        await bot.send_message(
+            OWNER_ID,
+            f"💎 <b>Новая покупка ирисок!</b>\n\n"
+            f"👤 {mention_by_id(user_id, 'Покупатель')} (<code>{user_id}</code>)\n"
+            f"🍬 {amount_candies} ирисок\n"
+            f"⭐ {stars_paid} звёзд\n"
+            f"📍 Чат: <code>{chat_id}</code>",
+            parse_mode="HTML"
+        )
+    except:
+        pass
 
 # ================= КОИНЫ =================
 @dp.message(Command("коины", prefix="."))
@@ -2901,45 +3036,25 @@ async def coins_top_cmd(message: types.Message):
 # ================= +АНТИСПАМ / -АНТИСПАМ =================
 @dp.message(Command("антиспам", prefix="+"))
 async def enable_antispam_cmd(message: types.Message):
-    """Включить антиспам в этом чате"""
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML")
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Только агенты.", parse_mode="HTML")
-
+        return await message.reply("❌ Только агенты.", parse_mode="HTML")
     if is_antispam_enabled(message.chat.id):
-        return await message.reply(
-            f"ℹ️ Антиспам уже <b>включён</b> в этом чате.",
-            parse_mode="HTML"
-        )
-
+        return await message.reply("ℹ️ Антиспам уже <b>включён</b> в этом чате.", parse_mode="HTML")
     set_antispam_enabled(message.chat.id, True)
-    await message.reply(
-        f"{em('check', '✅')} <b>Антиспам включён</b> в этом чате!\n\n"
-        f"🚫 Юзеры из базы будут <b>автоматически баниться</b> при входе.",
-        parse_mode="HTML"
-    )
+    await message.reply("✅ <b>Антиспам включён</b>!\n\n🚫 Юзеры из базы будут баниться при входе.", parse_mode="HTML")
 
 @dp.message(Command("антиспам", prefix="-"))
 async def disable_antispam_cmd(message: types.Message):
-    """Выключить антиспам в этом чате"""
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML")
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Только агенты.", parse_mode="HTML")
-
+        return await message.reply("❌ Только агенты.", parse_mode="HTML")
     if not is_antispam_enabled(message.chat.id):
-        return await message.reply(
-            f"ℹ️ Антиспам уже <b>выключен</b> в этом чате.",
-            parse_mode="HTML"
-        )
-
+        return await message.reply("ℹ️ Антиспам уже <b>выключен</b>.", parse_mode="HTML")
     set_antispam_enabled(message.chat.id, False)
-    await message.reply(
-        f"{em('check', '✅')} <b>Антиспам выключен</b> в этом чате.\n\n"
-        f"✅ Юзеры из базы <b>будут впускаться</b> без блокировки.",
-        parse_mode="HTML"
-    )
+    await message.reply("✅ <b>Антиспам выключен</b>.\n\n✅ Юзеры из базы <b>будут впускаться</b>.", parse_mode="HTML")
 
 @dp.message(Command("антиспам", prefix="."))
 async def antispam_status_cmd(message: types.Message):
@@ -2955,48 +3070,40 @@ async def antispam_status_cmd(message: types.Message):
         parse_mode="HTML"
     )
 
-# ================= +АК (КИК ПО ВСЕМ ЧАТАМ) =================
+# ================= +АК / +АКИ =================
 @dp.message(Command("ак", prefix="+"))
 async def add_antispam_kick(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
         return
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     reason = "Без причины"
     parts = message.text.split('\n', 1)
     if len(parts) > 1: reason = parts[1].strip()
-
-    # Добавляем в базу
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)",
                   (target.id, reason, message.from_user.id))
         conn.commit()
-
-    # Кикаем во всех чатах с антиспамом
     success, failed, total = await kick_in_all_antispam_chats(target.id)
-
     await message.reply(
-        f"{em('check', '✅')} {mention(target)} в «Антиспам»\n"
+        f"✅ {mention(target)} в «Антиспам»\n"
         f"👢 Кикнут в <b>{success}</b> из <b>{total}</b> чатов" + (f" (ошибок: {failed})" if failed else "") + "\n"
         f"📝 {reason}",
         parse_mode="HTML"
     )
 
-# ================= +АКИ (КИК + ИГНОР ПО ВСЕМ ЧАТАМ) =================
 @dp.message(Command("аки", prefix="+"))
 async def add_antispam_kick_ignore(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
         return
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     reason = "Без причины"
     parts = message.text.split('\n', 1)
     if len(parts) > 1: reason = parts[1].strip()
-
-    # Добавляем в базу + игнор
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)",
@@ -3004,25 +3111,21 @@ async def add_antispam_kick_ignore(message: types.Message):
         c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)",
                   (target.id, message.chat.id, reason, message.from_user.id))
         conn.commit()
-
-    # Кикаем во всех чатах с антиспамом
     success, failed, total = await kick_in_all_antispam_chats(target.id)
-
     await message.reply(
-        f"{em('check', '✅')} {mention(target)} в «Антиспам» + игнор\n"
+        f"✅ {mention(target)} в «Антиспам» + игнор\n"
         f"👢 Кикнут в <b>{success}</b> из <b>{total}</b> чатов" + (f" (ошибок: {failed})" if failed else "") + "\n"
         f"📝 {reason}",
         parse_mode="HTML"
     )
 
-# ================= +АС / +АИГН (просто добавить) =================
 @dp.message(Command("аигн", prefix="+"))
 async def add_antispam_ignore(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
         return
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     reason = "Без причины"
     parts = message.text.split('\n', 1)
     if len(parts) > 1: reason = parts[1].strip()
@@ -3031,7 +3134,7 @@ async def add_antispam_ignore(message: types.Message):
         c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)", (target.id, reason, message.from_user.id))
         c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)", (target.id, message.chat.id, reason, message.from_user.id))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} {mention(target)} в «Антиспам»\n{em('mute', '🔇')} Игнор\n📝 {reason}", parse_mode="HTML")
+    await message.reply(f"✅ {mention(target)} в «Антиспам»\n🔇 Игнор\n📝 {reason}", parse_mode="HTML")
 
 @dp.message(Command("ас", prefix="+"))
 async def add_antispam(message: types.Message):
@@ -3039,7 +3142,7 @@ async def add_antispam(message: types.Message):
         return
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     reason = "Без причины"
     parts = message.text.split('\n', 1)
     if len(parts) > 1: reason = parts[1].strip()
@@ -3047,23 +3150,22 @@ async def add_antispam(message: types.Message):
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)", (target.id, reason, message.from_user.id))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} {mention(target)} в «Антиспам»\n📝 {reason}", parse_mode="HTML")
+    await message.reply(f"✅ {mention(target)} в «Антиспам»\n📝 {reason}", parse_mode="HTML")
 
-# ================= -АИГН / -АС (убрать) =================
 @dp.message(Command("аигн", prefix="-"))
 async def remove_ignore(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
         return
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if not is_ignored(message.chat.id, target.id):
-        return await message.reply(f"⚠️ Не в игноре.", parse_mode="HTML")
+        return await message.reply("⚠️ Не в игноре.", parse_mode="HTML")
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("DELETE FROM ignore_list WHERE user_id = ? AND chat_id = ?", (target.id, message.chat.id))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} {mention(target)} убран из игнора", parse_mode="HTML")
+    await message.reply(f"✅ {mention(target)} убран из игнора", parse_mode="HTML")
 
 @dp.message(Command("ас", prefix="-"))
 async def remove_antispam(message: types.Message):
@@ -3071,15 +3173,15 @@ async def remove_antispam(message: types.Message):
         return
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+        return await message.reply("❌ Ответьте или укажите @user / ID", parse_mode="HTML")
     if not is_in_antispam(target.id):
-        return await message.reply(f"⚠️ Не в антиспаме.", parse_mode="HTML")
+        return await message.reply("⚠️ Не в антиспаме.", parse_mode="HTML")
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("DELETE FROM antispam WHERE user_id = ?", (target.id,))
         c.execute("DELETE FROM ignore_list WHERE user_id = ? AND chat_id = ?", (target.id, message.chat.id))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} {mention(target)} вынесен из антиспама", parse_mode="HTML")
+    await message.reply(f"✅ {mention(target)} вынесен из антиспама", parse_mode="HTML")
 
 # ================= ПРАВИЛА =================
 @dp.message(Command("правила", prefix="."))
@@ -3093,19 +3195,18 @@ async def rules_cmd(message: types.Message):
     sub = args[1].strip().lower()
     if sub.startswith("установить"):
         if not has_permission(message.chat.id, message.from_user.id, 3):
-            return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML")
+            return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
         parts = message.text.split("\n", 1)
         if len(parts) < 2:
             return await message.reply("📌 <code>.правила установить</code> (текст на новой строке)", parse_mode="HTML")
         text = parts[1].strip()[:3500]
-        text = auto_premium(text)
         set_chat_rules(message.chat.id, text, message.from_user.id)
-        return await message.reply(f"{em('check', '✅')} Правила установлены!", parse_mode="HTML")
+        return await message.reply("✅ Правила установлены!", parse_mode="HTML")
     if sub in ["сброс", "удалить"]:
         if not has_permission(message.chat.id, message.from_user.id, 3):
             return
         reset_chat_rules(message.chat.id)
-        return await message.reply(f"{em('check', '✅')} Сброшено.", parse_mode="HTML")
+        return await message.reply("✅ Сброшено.", parse_mode="HTML")
     if sub in ["закрепить", "пин"]:
         if not has_permission(message.chat.id, message.from_user.id, 3):
             return
@@ -3115,7 +3216,7 @@ async def rules_cmd(message: types.Message):
             msg = await message.reply(f"📜 <b>Правила:</b>\n\n{rules}", parse_mode="HTML")
             await bot.pin_chat_message(message.chat.id, msg.message_id, disable_notification=True)
         except Exception as e:
-            return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML")
+            return await message.reply(f"❌ {e}", parse_mode="HTML")
         return
     rules = get_chat_rules(message.chat.id)
     if rules:
@@ -3127,7 +3228,7 @@ async def greeting_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML")
     if not has_permission(message.chat.id, message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Нужен ранг Мл. Админ (3).", parse_mode="HTML")
+        return await message.reply("❌ Нужен ранг Мл. Админ (3).", parse_mode="HTML")
     args = message.text.split(maxsplit=1)
     sub = args[1].strip().lower() if len(args) >= 2 else ""
     if not sub:
@@ -3152,10 +3253,9 @@ async def greeting_cmd(message: types.Message):
             return await message.reply("❌ Текст пустой.", parse_mode="HTML")
         if len(text) > 1000:
             return await message.reply("❌ Максимум 1000 символов.", parse_mode="HTML")
-        text = auto_premium(text)
         set_greeting(message.chat.id, text, message.from_user.id)
         return await message.reply(
-            f"{em('check', '✅')} <b>Приветствие установлено!</b>\n\n"
+            f"✅ <b>Приветствие установлено!</b>\n\n"
             f"📝 <i>Проверка:</i>\n{format_greeting(text, message.from_user, message.chat)}",
             parse_mode="HTML"
         )
@@ -3164,7 +3264,7 @@ async def greeting_cmd(message: types.Message):
         if not current:
             return await message.reply("📭 И так пусто.", parse_mode="HTML")
         reset_greeting(message.chat.id)
-        return await message.reply(f"{em('check', '✅')} Приветствие сброшено.", parse_mode="HTML")
+        return await message.reply("✅ Приветствие сброшено.", parse_mode="HTML")
     if sub in ["пример", "тест"]:
         current = get_greeting(message.chat.id)
         if not current:
@@ -3186,7 +3286,7 @@ async def requests_settings_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML")
     if not has_permission(message.chat.id, message.from_user.id, 4):
-        return await message.reply(f"{em('cross', '❌')} Нужен ранг Ст. Админ (4).", parse_mode="HTML")
+        return await message.reply("❌ Нужен ранг Ст. Админ (4).", parse_mode="HTML")
     args = message.text.split(maxsplit=1)
     sub = args[1].strip().lower() if len(args) >= 2 else ""
     if not sub:
@@ -3202,13 +3302,13 @@ async def requests_settings_cmd(message: types.Message):
         )
     if sub in ["модерация", "вкл", "on"]:
         update_chat_setting(message.chat.id, "auto_requests", 0)
-        return await message.reply(f"{em('check', '✅')} <b>Заявки в модерацию включены!</b>", parse_mode="HTML")
+        return await message.reply("✅ <b>Заявки в модерацию включены!</b>", parse_mode="HTML")
     if sub in ["авто", "auto"]:
         update_chat_setting(message.chat.id, "auto_requests", 1)
-        return await message.reply(f"{em('check', '✅')} <b>Авто-одобрение включено!</b>", parse_mode="HTML")
+        return await message.reply("✅ <b>Авто-одобрение включено!</b>", parse_mode="HTML")
     if sub in ["выкл", "off", "стоп"]:
         update_chat_setting(message.chat.id, "auto_requests", 0)
-        return await message.reply(f"{em('check', '✅')} Режим заявок <b>выключен</b>.", parse_mode="HTML")
+        return await message.reply("✅ Режим заявок <b>выключен</b>.", parse_mode="HTML")
     await message.reply(
         "📌 <b>Команды:</b>\n"
         "• <code>.заявки</code>\n"
@@ -3226,7 +3326,7 @@ async def become_citizen_cmd(message: types.Message):
     current = get_citizenship_info(user_id)
     if current:
         if current[0] == chat_id:
-            return await message.reply(f"ℹ️ Вы уже гражданин этого чата.", parse_mode="HTML")
+            return await message.reply("ℹ️ Вы уже гражданин этого чата.", parse_mode="HTML")
         try:
             old_chat = await bot.get_chat(current[0])
             old_title = old_chat.title or f"Чат {current[0]}"
@@ -3258,7 +3358,7 @@ async def leave_citizenship_cmd(message: types.Message):
     chat_id, _ = info
     remove_citizenship(message.from_user.id)
     if chat_id == message.chat.id:
-        await message.reply(f"👋 Вы больше не гражданин.", parse_mode="HTML")
+        await message.reply("👋 Вы больше не гражданин.", parse_mode="HTML")
     else:
         try:
             old = await bot.get_chat(chat_id)
@@ -3279,7 +3379,7 @@ async def citizens_list_cmd(message: types.Message):
         text += f"{i}. {name} — <i>{format_citizenship_duration(became_at)}</i>\n"
     await message.reply(text, parse_mode="HTML")
 
-# ================= НИК/О СЕБЕ/ЗВАНИЕ =================
+# ================= НИК =================
 @dp.message(lambda m: m.text and m.text.lower().startswith("+ник"))
 async def set_nick_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
@@ -3297,24 +3397,25 @@ async def remove_nick_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().strip() == "ник")
 async def show_my_nick_cmd(message: types.Message):
     nick = get_user_nick(message.from_user.id, message.chat.id)
-    if not nick: 
+    if not nick:
         return await message.reply("📭 Нет ника.\n\n📌 <code>+Ник ВашеИмя</code>", parse_mode="HTML")
     await message.reply(f"🔤 Ваш ник: <b>{nick}</b>", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and m.text.lower().startswith("ник "))
 async def show_user_nick_cmd(message: types.Message):
     target, _ = await resolve_target(message)
-    if not target: return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML")
+    if not target: return await message.reply("❌ Ответьте.", parse_mode="HTML")
     nick = get_user_nick(target.id, message.chat.id)
-    if not nick: return await message.reply(f"📭 Нет ника.", parse_mode="HTML")
+    if not nick: return await message.reply("📭 Нет ника.", parse_mode="HTML")
     await message.reply(f"🔤 Ник {mention(target)}: <b>{nick}</b>", parse_mode="HTML")
 
+# ================= О СЕБЕ =================
 @dp.message(lambda m: m.text and m.text.lower().startswith("+о себе"))
 async def set_about_cmd(message: types.Message):
     parts = message.text.split("\n", 1)
     if len(parts) < 2:
         return await message.reply("📌 <code>+О себе</code> (текст на новой строке)", parse_mode="HTML")
-    set_user_about(message.from_user.id, auto_premium(parts[1].strip()[:500]))
+    set_user_about(message.from_user.id, parts[1].strip()[:500])
     await message.reply("✅ Описание сохранено.", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-о себе")
@@ -3331,11 +3432,12 @@ async def show_my_about_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().startswith("о себе "))
 async def show_user_about_cmd(message: types.Message):
     target, _ = await resolve_target(message)
-    if not target: return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML")
+    if not target: return await message.reply("❌ Ответьте.", parse_mode="HTML")
     text = get_user_about(target.id)
-    if not text: return await message.reply(f"📭 Нет описания.", parse_mode="HTML")
+    if not text: return await message.reply("📭 Нет описания.", parse_mode="HTML")
     await message.reply(f"✏️ <b>О себе ({mention(target)}):</b>\n\n{text}", parse_mode="HTML")
 
+# ================= ЗВАНИЕ =================
 @dp.message(lambda m: m.text and m.text.lower().startswith("+звание"))
 async def set_rank_text_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
@@ -3358,9 +3460,9 @@ async def show_my_rank_text_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().startswith("!звание"))
 async def show_user_rank_text_cmd(message: types.Message):
     target, _ = await resolve_target(message)
-    if not target: return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML")
+    if not target: return await message.reply("❌ Ответьте.", parse_mode="HTML")
     rank_text = get_user_rank_text(target.id, message.chat.id)
-    if not rank_text: return await message.reply(f"📭 Нет звания.", parse_mode="HTML")
+    if not rank_text: return await message.reply("📭 Нет звания.", parse_mode="HTML")
     await message.reply(f"📌 Звание {mention(target)}: <b>{rank_text}</b>", parse_mode="HTML")
 
 # ================= АНКЕТА =================
@@ -3436,7 +3538,7 @@ async def set_motto_cmd(message: types.Message):
     if len(args) < 2:
         return await message.reply("📌 <code>+Девиз ваш текст</code>", parse_mode="HTML")
     update_user_profile(message.from_user.id, "motto", args[1].strip()[:100])
-    await message.reply(f"✅ Девиз установлен.", parse_mode="HTML")
+    await message.reply("✅ Девиз установлен.", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-девиз")
 async def remove_motto_cmd(message: types.Message):
@@ -3454,14 +3556,14 @@ async def show_motto_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().startswith("брак ") and "@" in m.text)
 async def marriage_proposal_cmd(message: types.Message):
     target, _ = await resolve_target(message)
-    if not target: return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML")
+    if not target: return await message.reply("❌ Ответьте.", parse_mode="HTML")
     if target.id == message.from_user.id: return
-    if get_marriage(message.chat.id, message.from_user.id): return await message.reply(f"{em('cross', '❌')} Вы в браке.", parse_mode="HTML")
-    if get_marriage(message.chat.id, target.id): return await message.reply(f"{em('cross', '❌')} {mention(target)} в браке.", parse_mode="HTML")
+    if get_marriage(message.chat.id, message.from_user.id): return await message.reply("❌ Вы в браке.", parse_mode="HTML")
+    if get_marriage(message.chat.id, target.id): return await message.reply(f"❌ {mention(target)} в браке.", parse_mode="HTML")
     div = get_divorced_marriage(message.chat.id, message.from_user.id)
     if div:
         restore_marriage(div[0])
-        return await message.reply(f"💞 <b>Брак восстановлен!</b>", parse_mode="HTML")
+        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML")
     add_proposal(message.chat.id, message.from_user.id, target.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
@@ -3474,18 +3576,18 @@ async def marriage_proposal_reply(message: types.Message):
     if not message.reply_to_message: return
     target = message.reply_to_message.from_user
     if target.id == message.from_user.id: return
-    if get_marriage(message.chat.id, message.from_user.id): return await message.reply(f"{em('cross', '❌')} Вы в браке.", parse_mode="HTML")
-    if get_marriage(message.chat.id, target.id): return await message.reply(f"{em('cross', '❌')} {mention(target)} в браке.", parse_mode="HTML")
+    if get_marriage(message.chat.id, message.from_user.id): return await message.reply("❌ Вы в браке.", parse_mode="HTML")
+    if get_marriage(message.chat.id, target.id): return await message.reply(f"❌ {mention(target)} в браке.", parse_mode="HTML")
     div = get_divorced_marriage(message.chat.id, message.from_user.id)
     if div:
         restore_marriage(div[0])
-        return await message.reply(f"💞 <b>Брак восстановлен!</b>", parse_mode="HTML")
+        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML")
     add_proposal(message.chat.id, message.from_user.id, target.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
         InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
     ]])
-    await message.reply(f"💍 <b>Предложение!</b>", parse_mode="HTML", reply_markup=kb)
+    await message.reply("💍 <b>Предложение!</b>", parse_mode="HTML", reply_markup=kb)
 
 @dp.callback_query(lambda c: c.data and (c.data.startswith("marry_accept:") or c.data.startswith("marry_reject:")))
 async def marriage_response(callback: types.CallbackQuery):
@@ -3519,7 +3621,7 @@ async def marriage_response(callback: types.CallbackQuery):
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["!развод", "развод"])
 async def divorce_cmd(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
-    if not mar: return await message.reply(f"{em('cross', '❌')} Вы не в браке.", parse_mode="HTML")
+    if not mar: return await message.reply("❌ Вы не в браке.", parse_mode="HTML")
     _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
     partner_id = u2_id if u1_id == message.from_user.id else u1_id
     partner_name = u2_name if u1_id == message.from_user.id else u1_name
@@ -3530,7 +3632,7 @@ async def divorce_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["мой брак", "моя пара"])
 async def my_marriage_cmd(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
-    if not mar: return await message.reply(f"💔 Вы не в браке.", parse_mode="HTML")
+    if not mar: return await message.reply("💔 Вы не в браке.", parse_mode="HTML")
     _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
     partner_id = u2_id if u1_id == message.from_user.id else u1_id
     partner_name = u2_name if u1_id == message.from_user.id else u1_name
@@ -3552,7 +3654,7 @@ async def marriages_list_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().startswith("брак продлить"))
 async def extend_marriage(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
-    if not mar: return await message.reply(f"{em('cross', '❌')} Вы не в браке.", parse_mode="HTML")
+    if not mar: return await message.reply("❌ Вы не в браке.", parse_mode="HTML")
     args = message.text.split()
     if len(args) < 3 or not args[-1].isdigit():
         return await message.reply("📌 <code>брак продлить {дни}</code>", parse_mode="HTML")
@@ -3562,7 +3664,7 @@ async def extend_marriage(message: types.Message):
     total = days * price
     if total > 0:
         balance = get_balance(message.from_user.id)
-        if balance < total: return await message.reply(f"{em('cross', '❌')} Нужно: <b>{total}</b>, у вас: <b>{balance}</b>", parse_mode="HTML")
+        if balance < total: return await message.reply(f"❌ Нужно: <b>{total}</b>, у вас: <b>{balance}</b>", parse_mode="HTML")
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
             c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (total, message.from_user.id))
@@ -3577,15 +3679,14 @@ async def extend_marriage(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().startswith("+заметка "))
 async def create_note_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Нужен ранг Мл. Админ.", parse_mode="HTML")
+        return await message.reply("❌ Нужен ранг Мл. Админ.", parse_mode="HTML")
     parts = message.text.split("\n", 1)
     name = parts[0].replace("+Заметка", "").replace("+заметка", "").strip()
     if not name or len(parts) < 2: return
     body = parts[1].strip()[:3500]
-    body = auto_premium(body)
     note_id = add_note(message.chat.id, name, body, message.from_user.id)
-    if not note_id: return await message.reply(f"{em('cross', '❌')} Заметка уже есть.", parse_mode="HTML")
-    await message.reply(f"{em('check', '✅')} Заметка <b>{name}</b> создана (ID: {note_id})", parse_mode="HTML")
+    if not note_id: return await message.reply("❌ Заметка уже есть.", parse_mode="HTML")
+    await message.reply(f"✅ Заметка <b>{name}</b> создана (ID: {note_id})", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and m.text.lower().startswith("-заметка "))
 async def delete_note_cmd(message: types.Message):
@@ -3593,9 +3694,9 @@ async def delete_note_cmd(message: types.Message):
     arg = message.text[len("-Заметка"):].strip()
     if not arg: return
     note = get_note_by_number(message.chat.id, int(arg)) if arg.isdigit() else get_note_by_name(message.chat.id, arg)
-    if not note: return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML")
+    if not note: return await message.reply("❌ Не найдена.", parse_mode="HTML")
     delete_note(message.chat.id, note[0])
-    await message.reply(f"{em('check', '✅')} Заметка <b>{note[1]}</b> удалена.", parse_mode="HTML")
+    await message.reply(f"✅ Заметка <b>{note[1]}</b> удалена.", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and (m.text.lower().strip() == "заметки" or m.text.lower().startswith("заметки ")))
 async def list_notes_cmd(message: types.Message):
@@ -3618,7 +3719,7 @@ async def get_note_cmd(message: types.Message):
     arg = message.text[len("Заметка"):].strip()
     if not arg: return
     note = get_note_by_number(message.chat.id, int(arg)) if arg.isdigit() else get_note_by_name(message.chat.id, arg)
-    if not note: return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML")
+    if not note: return await message.reply("❌ Не найдена.", parse_mode="HTML")
     await message.reply(note[2], parse_mode="HTML", disable_web_page_preview=True)
 
 # ================= VIP =================
@@ -3628,7 +3729,7 @@ async def vip_info_cmd(message: types.Message):
     price = get_vip_price(message.chat.id)
     if len(args) >= 2 and args[1].isdigit():
         if not has_permission(message.chat.id, message.from_user.id, 4):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг Ст. Админ (4).", parse_mode="HTML")
+            return await message.reply("❌ Нужен ранг Ст. Админ (4).", parse_mode="HTML")
         new_price = int(args[1])
         if new_price < 10 or new_price > 10000:
             return await message.reply("❌ Цена от 10 до 10 000.", parse_mode="HTML")
@@ -3703,7 +3804,7 @@ async def who_not_vip_cmd(message: types.Message):
     users = get_vip_list(message.chat.id, only_vip=False, limit=50)
     if not users:
         return await message.reply("📭 Все VIP.", parse_mode="HTML")
-    text = f"👤 <b>Без VIP</b>:\n\n"
+    text = "👤 <b>Без VIP</b>:\n\n"
     for i, uid in enumerate(users, 1):
         try:
             u = await bot.get_chat(uid)
@@ -3763,7 +3864,7 @@ async def delete_rp_cmd(message: types.Message):
         c = conn.cursor()
         c.execute("DELETE FROM rp_commands WHERE chat_id = ? AND name = ? AND created_by = ?", (message.chat.id, name, message.from_user.id))
         conn.commit()
-    await message.reply(f"✅ Удалено.", parse_mode="HTML")
+    await message.reply("✅ Удалено.", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and m.text.lower().startswith("+гмрп"))
 async def create_global_rp_cmd(message: types.Message):
@@ -3806,7 +3907,7 @@ async def delete_global_rp_cmd(message: types.Message):
         c = conn.cursor()
         c.execute("DELETE FROM global_rp_commands WHERE user_id = ? AND name = ?", (message.from_user.id, name))
         conn.commit()
-    await message.reply(f"✅ Удалено.", parse_mode="HTML")
+    await message.reply("✅ Удалено.", parse_mode="HTML")
 
 # ================= ПОГОДА =================
 @dp.message(Command("погода", prefix="."))
@@ -3817,7 +3918,7 @@ async def weather_cmd(message: types.Message):
     city = args[1].strip()
     weather = get_weather(city)
     if not weather:
-        return await message.reply(f"{em('cross', '❌')} Город не найден.", parse_mode="HTML")
+        return await message.reply("❌ Город не найден.", parse_mode="HTML")
     text = (
         f"🌍 <b>Погода в {weather['name']}</b>"
         + (f", {weather['country']}" if weather['country'] else "")
@@ -3835,16 +3936,16 @@ async def enable_chat_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 4): return
     try:
         await bot.set_chat_permissions(chat_id=message.chat.id, permissions=types.ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True, can_send_polls=True, can_invite_users=True, can_change_info=False, can_pin_messages=False))
-        await message.reply(f"✅ Чат включён.", parse_mode="HTML")
-    except Exception as e: await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML")
+        await message.reply("✅ Чат включён.", parse_mode="HTML")
+    except Exception as e: await message.reply(f"❌ {e}", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-чат")
 async def disable_chat_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 4): return
     try:
         await bot.set_chat_permissions(chat_id=message.chat.id, permissions=types.ChatPermissions(can_send_messages=False, can_send_media_messages=False, can_send_other_messages=False, can_add_web_page_previews=False, can_send_polls=False, can_invite_users=True, can_change_info=False, can_pin_messages=False))
-        await message.reply(f"{em('mute', '🔇')} Чат отключён.", parse_mode="HTML")
-    except Exception as e: await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML")
+        await message.reply("🔇 Чат отключён.", parse_mode="HTML")
+    except Exception as e: await message.reply(f"❌ {e}", parse_mode="HTML")
 
 # ================= СЕТКИ =================
 @dp.message(lambda m: m.text and m.text.lower().startswith("создать сетку"))
@@ -4034,7 +4135,7 @@ async def catalog_add_cmd(message: types.Message):
     ]])
     try: await bot.send_message(MODERATION_CHAT_ID, mod_text, reply_markup=kb, parse_mode="HTML")
     except: pass
-    await message.reply(f"📥 Заявка отправлена!\n💰 Коины не списываются.", parse_mode="HTML")
+    await message.reply("📥 Заявка отправлена!\n💰 Коины не списываются.", parse_mode="HTML")
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "каталог чатов")
 async def catalog_list_cmd(message: types.Message):
@@ -4092,9 +4193,7 @@ async def catalog_review_handler(callback: types.CallbackQuery):
             await callback.message.edit_reply_markup(reply_markup=None)
             await callback.message.reply(f"❌ Отклонено {reviewer}")
         except: pass
-        await callback.answer("❌ Отклонено!")
-
-# ================= ВЛАДЕЛЕЦ =================
+        await callback.answer("❌ Отклонено!")# ================= ВЛАДЕЛЕЦ =================
 @dp.message(Command("опасно", prefix="+"))
 async def ban_chat_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID: return
@@ -4102,7 +4201,7 @@ async def ban_chat_cmd(message: types.Message):
     if len(args) >= 2:
         code = args[1].upper()
         chat_id = get_chat_by_code(code)
-        if not chat_id: return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML")
+        if not chat_id: return await message.reply("❌ Не найден", parse_mode="HTML")
         try:
             chat = await bot.get_chat(chat_id)
             chat_name = chat.title or f"Чат {chat_id}"
@@ -4115,7 +4214,7 @@ async def ban_chat_cmd(message: types.Message):
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO banned_chats (chat_id, added_by) VALUES (?, ?)", (chat_id, message.from_user.id))
         conn.commit()
-    await message.reply(f"{em('ban', '🚫')} Чат «{chat_name}» забанен.", parse_mode="HTML")
+    await message.reply(f"🚫 Чат «{chat_name}» забанен.", parse_mode="HTML")
     try: await bot.leave_chat(chat_id)
     except: pass
 
@@ -4139,7 +4238,7 @@ async def unban_chat_cmd(message: types.Message):
         c = conn.cursor()
         c.execute("DELETE FROM banned_chats WHERE chat_id = ?", (chat_id,))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} Чат «{chat_name}» убран.", parse_mode="HTML")
+    await message.reply(f"✅ Чат «{chat_name}» убран.", parse_mode="HTML")
 
 # ================= БЭКАП =================
 @dp.message(Command("бэкап", prefix="."))
@@ -4159,7 +4258,6 @@ async def backup_cmd(message: types.Message):
         await message.reply(f"❌ Ошибка: {e}")
 
 async def auto_backup_loop():
-    """Каждые 6 часов бэкап + отправка владельцу"""
     while True:
         try:
             os.makedirs("backups", exist_ok=True)
@@ -4168,7 +4266,6 @@ async def auto_backup_loop():
             backup_path = f"backups/bot_{timestamp}.db"
             shutil.copy2(DATABASE_PATH, backup_path)
             print(f"✅ Бэкап: {backup_path}")
-            # Удаляем старые (>7 дней)
             now = datetime.now()
             for f in os.listdir("backups"):
                 fp = os.path.join("backups", f)
@@ -4235,7 +4332,6 @@ async def on_join(event: types.ChatMemberUpdated):
     user = event.new_chat_member.user
     chat_id = event.chat.id
     chat_title = event.chat.title or "чат"
-    # Проверка антиспама — только если он включён в ЭТОМ чате
     if is_antispam_enabled(chat_id) and is_in_antispam(user.id):
         try:
             await bot.ban_chat_member(chat_id, user.id)
@@ -4246,7 +4342,7 @@ async def on_join(event: types.ChatMemberUpdated):
                 reason_text = r[0] if r and r[0] else "спамер"
             await bot.send_message(
                 chat_id,
-                f"{em('ban', '🚫')} {mention(user)} в антиспаме\n📝 {reason_text}",
+                f"🚫 {mention(user)} в антиспаме\n📝 {reason_text}",
                 parse_mode="HTML"
             )
         except: pass
@@ -4265,7 +4361,7 @@ async def on_join(event: types.ChatMemberUpdated):
     except: pass
     keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Я не бот", callback_data=f"captcha_pass:{user.id}:{chat_id}")]])
     try:
-        captcha_msg = await bot.send_message(chat_id, f"{em('wave', '👋')} Привет, {mention(user)}!\n\n🤖 Нажми кнопку в течение <b>2 минут</b>.", reply_markup=keyboard, parse_mode="HTML")
+        captcha_msg = await bot.send_message(chat_id, f"👋 Привет, {mention(user)}!\n\n🤖 Нажми кнопку в течение <b>2 минут</b>.", reply_markup=keyboard, parse_mode="HTML")
         save_captcha(user.id, chat_id, captcha_msg.message_id)
         asyncio.create_task(captcha_timeout(user.id, chat_id))
     except: pass
@@ -4307,15 +4403,14 @@ async def captcha_pass_handler(callback: types.CallbackQuery):
             await bot.send_message(chat_id, format_greeting(greeting, user, chat), parse_mode="HTML")
         except: pass
     else:
-        await bot.send_message(chat_id, f"{em('wave', '👋')} Привет, {mention(user)}!", parse_mode="HTML")
-    await callback.answer(f"{em('check', '✅')} Капча пройдена!")
+        await bot.send_message(chat_id, f"👋 Привет, {mention(user)}!", parse_mode="HTML")
+    await callback.answer("✅ Капча пройдена!")
 
 # ================= ЗАЯВКИ НА ВСТУПЛЕНИЕ =================
 @dp.chat_join_request()
 async def on_join_request(request: types.ChatJoinRequest):
     chat_id = request.chat.id
     user = request.from_user
-    # Проверка антиспама — только если он включён
     if is_antispam_enabled(chat_id) and is_in_antispam(user.id):
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
@@ -4408,10 +4503,10 @@ async def my_bans_cmd(message: types.Message):
             r = c.fetchone()
             if r: bans.append(f"☢️ <b>Антиспам MOS</b>\n📝 {r[0]}\n📅 {r[1][:10]}")
     if not bans:
-        return await message.reply(f"{em('check', '✅')} У вас нет банов.", parse_mode="HTML")
-    text = f"📋 <b>Ваши баны:</b>\n\n" + "\n\n".join(bans)
+        return await message.reply("✅ У вас нет банов.", parse_mode="HTML")
+    text = "📋 <b>Ваши баны:</b>\n\n" + "\n\n".join(bans)
     if in_antispam:
-        text += f"\n\n{em('sos', '🆘')} За разблокировкой: {SUPPORT_CHAT_LINK}"
+        text += f"\n\n🆘 За разблокировкой: {SUPPORT_CHAT_LINK}"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.my_chat_member()
@@ -4423,7 +4518,7 @@ async def on_bot_added(event: types.ChatMemberUpdated):
     if is_chat_banned(chat_id):
         try: await bot.leave_chat(chat_id)
         except: pass
-        try: await bot.send_message(OWNER_ID, f"{em('ban', '🚫')} Бот добавлен в опасный чат! ID: {chat_id}", parse_mode="HTML")
+        try: await bot.send_message(OWNER_ID, f"🚫 Бот добавлен в опасный чат! ID: {chat_id}", parse_mode="HTML")
         except: pass
         return
     try:
@@ -4435,15 +4530,15 @@ async def on_bot_added(event: types.ChatMemberUpdated):
     except: pass
     if chat_type in ["group", "supergroup"]:
         text = (
-            f"{em('wave', '👋')} <b>Всем привет!</b>\n\n"
+            f"👋 <b>Всем привет!</b>\n\n"
             f"Я <b>{BOT_NAME}</b> — помогу навести порядок.\n\n"
-            f"{em('shield', '🛡')} Умею: ловить спам, выдавать варны, капча, статистика.\n\n"
+            f"🛡 Умею: ловить спам, выдавать варны, капча, статистика.\n\n"
             f"⚙️ Выдайте мне права администратора.\n\n"
-            f"{em('sos', '🆘')} {SUPPORT_CHAT_LINK}"
+            f"🆘 {SUPPORT_CHAT_LINK}"
         )
         try: await bot.send_message(chat_id, text, parse_mode="HTML", disable_web_page_preview=True)
         except: pass
-        try: await bot.send_message(OWNER_ID, f"{em('check', '✅')} Бот добавлен: <b>{event.chat.title or '—'}</b>", parse_mode="HTML")
+        try: await bot.send_message(OWNER_ID, f"✅ Бот добавлен: <b>{event.chat.title or '—'}</b>", parse_mode="HTML")
         except: pass
 
 # ================= BUSINESS =================
@@ -4452,7 +4547,7 @@ async def on_business_connection(connection: types.BusinessConnection):
     if connection.is_enabled:
         save_business_connection(connection.user.id, connection.id)
         try:
-            await bot.send_message(connection.user.id, f"{em('check', '✅')} Бот подключён к Business-аккаунту!\n\nКоманды: +ас / +аигн / -ас / -аигн / .ид / .анкета", parse_mode="HTML")
+            await bot.send_message(connection.user.id, "✅ Бот подключён к Business-аккаунту!\n\nКоманды: +ас / +аигн / -ас / -аигн / .ид / .анкета", parse_mode="HTML")
         except: pass
     else:
         with sqlite3.connect(DATABASE_PATH) as conn:
