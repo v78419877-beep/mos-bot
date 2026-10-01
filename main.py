@@ -19,7 +19,8 @@ from io import BytesIO
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 OWNER_ID = 7305320918
-DATABASE_PATH = "bot.db"
+# Railway — используйте /app/data/bot.db (см. инструкцию ниже)
+DATABASE_PATH = os.environ.get("DATABASE_PATH", "bot.db")
 BOT_NAME = "Mos | Чат-менеджер"
 SUPPORT_CHAT_LINK = "https://t.me/mospodd"
 SUPPORT_CHANNEL_LINK = "https://t.me/moskanalp"
@@ -110,7 +111,6 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS greetings (chat_id INTEGER PRIMARY KEY, text TEXT, updated_by INTEGER, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, first_name TEXT, username TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS captcha (user_id INTEGER, chat_id INTEGER, message_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
-        c.execute("CREATE TABLE IF NOT EXISTS greeting_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, admin_id INTEGER, text TEXT, status TEXT DEFAULT 'pending', reviewed_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS business_connections (user_id INTEGER PRIMARY KEY, connection_id TEXT, connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS chat_bans (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, user_id INTEGER, reason TEXT, banned_by INTEGER, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, until_date TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS grids (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, creator_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -131,18 +131,21 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS user_achievements (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER, achievement_id INTEGER, given_by INTEGER, given_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id, achievement_id))")
         c.execute("CREATE TABLE IF NOT EXISTS chat_settings (chat_id INTEGER PRIMARY KEY, channels_allowed INTEGER DEFAULT 0, reactions_allowed INTEGER DEFAULT 1, auto_requests INTEGER DEFAULT 0, description TEXT, invite_link TEXT, request_link TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS user_tags (user_id INTEGER, chat_id INTEGER, tag TEXT, UNIQUE(user_id, chat_id))")
-        c.execute("CREATE TABLE IF NOT EXISTS reactions_disabled (user_id INTEGER, chat_id INTEGER, UNIQUE(user_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS citizenship (user_id INTEGER PRIMARY KEY, chat_id INTEGER, became_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS user_nicks (user_id INTEGER, chat_id INTEGER, nick TEXT, UNIQUE(user_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS user_about (user_id INTEGER PRIMARY KEY, text TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS user_ranks (user_id INTEGER, chat_id INTEGER, rank TEXT, UNIQUE(user_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS chat_rules (chat_id INTEGER PRIMARY KEY, text TEXT, updated_by INTEGER, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS user_profiles (user_id INTEGER PRIMARY KEY, gender TEXT, birth_date TEXT, birth_visibility TEXT DEFAULT 'месяц', city TEXT, bio TEXT, motto TEXT, show_citizenship INTEGER DEFAULT 1, is_hidden INTEGER DEFAULT 1)")
-        c.execute("CREATE TABLE IF NOT EXISTS user_stars (user_id INTEGER PRIMARY KEY, stars INTEGER DEFAULT 0)")
         c.execute("CREATE TABLE IF NOT EXISTS vip_settings (chat_id INTEGER PRIMARY KEY, price INTEGER DEFAULT 100)")
         c.execute("CREATE TABLE IF NOT EXISTS vip_users (user_id INTEGER PRIMARY KEY, expires_at TIMESTAMP, emoji TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS rp_commands (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, name TEXT, emoji TEXT, text TEXT, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(chat_id, name))")
         c.execute("CREATE TABLE IF NOT EXISTS global_rp_commands (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, emoji TEXT, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, name))")
+        # НОВОЕ: настройки антиспама для чата
+        c.execute("""CREATE TABLE IF NOT EXISTS chat_antispam_settings (
+            chat_id INTEGER PRIMARY KEY,
+            antispam_enabled INTEGER DEFAULT 1
+        )""")
         conn.commit()
 
 # ================= РАНГИ ЧАТА =================
@@ -181,7 +184,7 @@ def can_manage(chat_id, actor_id, target_id):
 def has_permission(chat_id, user_id, required_rank):
     return get_rank(chat_id, user_id) >= required_rank
 
-# ================= ВСПОМОГАТЕЛЬНЫЕ =================
+# ================= РАНГИ АГЕНТОВ =================
 def is_agent(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -216,6 +219,7 @@ def has_agent_rank(user_id, min_rank):
         return True
     return get_agent_rank(user_id) >= min_rank
 
+# ================= АНТИСПАМ / ИГНОР =================
 def is_in_antispam(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -227,6 +231,39 @@ def is_ignored(chat_id, user_id):
         c = conn.cursor()
         c.execute("SELECT 1 FROM ignore_list WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
         return c.fetchone() is not None
+
+def is_antispam_enabled(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT antispam_enabled FROM chat_antispam_settings WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        if r is None:
+            c.execute("INSERT INTO chat_antispam_settings (chat_id, antispam_enabled) VALUES (?, 1)", (chat_id,))
+            conn.commit()
+            return True
+        return bool(r[0])
+
+def set_antispam_enabled(chat_id, enabled):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO chat_antispam_settings (chat_id, antispam_enabled) VALUES (?, ?)",
+                  (chat_id, 1 if enabled else 0))
+        conn.commit()
+
+def get_all_antispam_chats():
+    """Все чаты где бот есть и антиспам включён"""
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT DISTINCT sub.chat_id FROM (
+            SELECT chat_id FROM messages_stats
+            UNION
+            SELECT chat_id FROM chat_codes
+            UNION
+            SELECT chat_id FROM admins
+        ) sub
+        LEFT JOIN chat_antispam_settings s ON s.chat_id = sub.chat_id
+        WHERE COALESCE(s.antispam_enabled, 1) = 1""")
+        return [r[0] for r in c.fetchall()]
 
 def is_chat_banned(chat_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -310,6 +347,26 @@ async def get_chat_link(chat_id):
     except:
         return None
 
+# ================= ФУНКЦИИ ДЛЯ КИКА ПО ВСЕМ ЧАТАМ =================
+async def kick_in_all_antispam_chats(target_id, max_parallel=10):
+    """Кикает юзера во всех чатах где включён антиспам. Возвращает (success, failed)"""
+    all_chats = get_all_antispam_chats()
+    sem = asyncio.Semaphore(max_parallel)
+    results = {"success": 0, "failed": 0}
+
+    async def kick(chat_id):
+        async with sem:
+            try:
+                await bot.ban_chat_member(chat_id, target_id)
+                await bot.unban_chat_member(chat_id, target_id)
+                results["success"] += 1
+            except:
+                results["failed"] += 1
+
+    if all_chats:
+        await asyncio.gather(*[kick(cid) for cid in all_chats])
+    return results["success"], results["failed"], len(all_chats)
+
 # ================= ГРАФИКИ =================
 def generate_user_activity_chart(user_id, days=30):
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -383,7 +440,9 @@ def generate_chat_activity_chart(chat_id, days=30):
     plt.savefig(buf, format='png', dpi=90, bbox_inches='tight')
     buf.seek(0)
     plt.close()
-    return buf# ================= ВАРНЫ =================
+    return buf
+
+# ================= ВАРНЫ =================
 def add_warn(user_id, chat_id, reason, warned_by):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -431,9 +490,7 @@ def get_top_users(chat_id, period="today", limit=10):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute(query, params)
-        return c.fetchall()
-
-# ================= КОНФЕТКИ =================
+        return c.fetchall()мм# ================= КОНФЕТКИ =================
 def get_balance(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -545,7 +602,7 @@ def add_chat_coins(chat_id, amount):
         c.execute("UPDATE chat_coins SET balance = balance + ? WHERE chat_id = ?", (amount, chat_id))
         conn.commit()
 
-# ================= АГЕНТЫ =================
+# ================= АГЕНТЫ — СТАТУС =================
 def update_agent_activity(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -606,6 +663,25 @@ def get_total_stats(user_id):
         c.execute("SELECT MIN(date) FROM messages_stats WHERE user_id = ?", (user_id,))
         first_msg_date = c.fetchone()[0]
         return total, today_count, chat_count, first_msg_date
+
+# ================= BOT PROMOTED =================
+def mark_bot_promoted(user_id, chat_id, promoted_by):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO bot_promoted (user_id, chat_id, promoted_by) VALUES (?, ?, ?)", (user_id, chat_id, promoted_by))
+        conn.commit()
+
+def is_bot_promoted(user_id, chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM bot_promoted WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        return c.fetchone() is not None
+
+def unmark_bot_promoted(user_id, chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM bot_promoted WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        conn.commit()
 
 # ================= CHAT BANS =================
 def add_chat_ban(chat_id, user_id, reason, banned_by, until_date=None):
@@ -1025,17 +1101,6 @@ def delete_achievement(aid):
         conn.commit()
 
 # ================= УПРАВЛЕНИЕ ЧАТОМ =================
-def get_chat_settings(chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT channels_allowed, reactions_allowed, auto_requests, description, invite_link, request_link FROM chat_settings WHERE chat_id = ?", (chat_id,))
-        r = c.fetchone()
-        if not r:
-            c.execute("INSERT INTO chat_settings (chat_id) VALUES (?)", (chat_id,))
-            conn.commit()
-            return (0, 1, 0, None, None, None)
-        return r
-
 def update_chat_setting(chat_id, field, value):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1194,13 +1259,6 @@ def update_user_profile(user_id, field, value):
         c.execute("INSERT OR IGNORE INTO user_profiles (user_id) VALUES (?)", (user_id,))
         c.execute(f"UPDATE user_profiles SET {field} = ? WHERE user_id = ?", (value, user_id))
         conn.commit()
-
-def get_user_stars(user_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT stars FROM user_stars WHERE user_id = ?", (user_id,))
-        r = c.fetchone()
-        return r[0] if r else 0
 
 def get_activity_stats(user_id):
     today = datetime.now().date()
@@ -1709,7 +1767,15 @@ async def profile_full_cmd(message: types.Message):
             first_seen = datetime.now()
     profile = get_user_profile(target.id)
     gender, birth_date, city, bio, is_hidden, birth_visibility, motto, show_cit = profile
-    stars = get_user_stars(target.id)
+    stars = 0
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT stars FROM user_stars WHERE user_id = ?", (target.id,))
+            r = c.fetchone()
+            stars = r[0] if r else 0
+    except:
+        pass
     stars_title = get_stars_title(stars)
     day, week, month, total = get_activity_stats(target.id)
     cit = get_citizenship_info(target.id)
@@ -2398,7 +2464,80 @@ async def clear_warns_cmd(message: types.Message):
     clear_warns(target.id, message.chat.id)
     await message.reply(f"♻️ Все варны ({count}) сброшены.", parse_mode="HTML")
 
-# ================= АЧИВКИ =================
+# ================= НАКАЗАНИЯ =================
+@dp.message(Command("наказания", prefix="."))
+async def show_punishments(message: types.Message):
+    if not await is_tg_admin(message.chat.id, message.from_user.id):
+        return
+    target = None
+    if message.reply_to_message:
+        target = message.reply_to_message.from_user
+    else:
+        args = message.text.split()
+        if len(args) >= 2:
+            try:
+                if args[1].startswith('@'): target = await bot.get_chat(args[1])
+                elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
+            except:
+                return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML")
+    if not target:
+        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+    chat_id = message.chat.id
+    user_id = target.id
+    name = mention(target)
+    blocks = []
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        if member.status == "kicked":
+            ban_info = get_last_chat_ban(chat_id, user_id)
+            if ban_info:
+                reason, banned_by, banned_at, until_date = ban_info
+                try:
+                    mod = await bot.get_chat(banned_by)
+                    mod_name = mention_by_id(banned_by, mod.first_name)
+                except: mod_name = f"ID {banned_by}"
+                blocks.append(f"{em('ban', '🚫')} <b>Забанен</b>\n📝 {reason}\n👮 {mod_name}")
+            else:
+                blocks.append(f"{em('ban', '🚫')} <b>Забанен</b>\n📝 <i>неизвестна</i>")
+    except: pass
+    grid_id = get_chat_grid(chat_id)
+    if grid_id:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT reason, banned_by FROM grid_bans WHERE grid_id = ? AND user_id = ?", (grid_id, user_id))
+            r = c.fetchone()
+            if r:
+                reason, banned_by = r
+                try:
+                    mod = await bot.get_chat(banned_by)
+                    mod_name = mention_by_id(banned_by, mod.first_name)
+                except: mod_name = f"ID {banned_by}"
+                blocks.append(f"{em('ban', '🚫')} <b>Забанен в сетке</b>\n📝 {reason}\n👮 {mod_name}")
+    if is_in_antispam(user_id):
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT reason FROM antispam WHERE user_id = ?", (user_id,))
+            r = c.fetchone()
+            if r: blocks.append(f"{em('shield', '🛡')} <b>В антиспаме MOS</b>\n📝 {r[0]}")
+    if not blocks:
+        return await message.reply(f"{em('check', '✅')} {name} <b>чист</b>", parse_mode="HTML")
+    text = f"{em('calendar', '🗓')} <b>Наказания {name}</b>\n\n" + "\n\n".join(blocks)
+    await message.reply(text, parse_mode="HTML")
+
+@dp.message(Command("баны", prefix="."))
+async def show_bans(message: types.Message):
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
+        return
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+    if not is_in_antispam(target.id):
+        return await message.reply(f"{em('check', '✅')} {mention(target)} чист", parse_mode="HTML")
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT reason, added_at FROM antispam WHERE user_id = ?", (target.id,))
+        r = c.fetchone()
+    await message.reply(f"{em('ban', '🚫')} {mention(target)} в антиспаме\n📝 {r[0]}\n{em('calendar', '🗓')} {r[1][:10]}", parse_mode="HTML")# ================= АЧИВКИ =================
 @dp.message(lambda m: m.text and m.text.lower().startswith("+ачивка создать"))
 async def create_achievement_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 3):
@@ -2672,7 +2811,93 @@ async def coins_top_cmd(message: types.Message):
         text += f"{medal} {name} — <b>{balance}</b> i¢\n"
     await message.reply(text, parse_mode="HTML")
 
-# ================= АГЕНТСКИЕ =================
+# ================= +АНТИСПАМ / -АНТИСПАМ =================
+@dp.message(Command("антиспам", prefix="+"))
+async def enable_antispam_cmd(message: types.Message):
+    """Включить антиспам в этом чате"""
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML")
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
+        return await message.reply(f"{em('cross', '❌')} Только агенты.", parse_mode="HTML")
+
+    if is_antispam_enabled(message.chat.id):
+        return await message.reply(
+            f"ℹ️ Антиспам уже <b>включён</b> в этом чате.",
+            parse_mode="HTML"
+        )
+
+    set_antispam_enabled(message.chat.id, True)
+    await message.reply(
+        f"{em('check', '✅')} <b>Антиспам включён</b> в этом чате!\n\n"
+        f"🚫 Юзеры из базы будут <b>автоматически баниться</b> при входе.",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("антиспам", prefix="-"))
+async def disable_antispam_cmd(message: types.Message):
+    """Выключить антиспам в этом чате"""
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML")
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
+        return await message.reply(f"{em('cross', '❌')} Только агенты.", parse_mode="HTML")
+
+    if not is_antispam_enabled(message.chat.id):
+        return await message.reply(
+            f"ℹ️ Антиспам уже <b>выключен</b> в этом чате.",
+            parse_mode="HTML"
+        )
+
+    set_antispam_enabled(message.chat.id, False)
+    await message.reply(
+        f"{em('check', '✅')} <b>Антиспам выключен</b> в этом чате.\n\n"
+        f"✅ Юзеры из базы <b>будут впускаться</b> без блокировки.",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("антиспам", prefix="."))
+async def antispam_status_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return
+    enabled = is_antispam_enabled(message.chat.id)
+    status = "🟢 <b>включён</b>" if enabled else "🔴 <b>выключен</b>"
+    await message.reply(
+        f"🛡 <b>Антиспам в этом чате:</b> {status}\n\n"
+        f"Управление:\n"
+        f"• <code>+антиспам</code> — включить\n"
+        f"• <code>-антиспам</code> — выключить",
+        parse_mode="HTML"
+    )
+
+# ================= +АК (КИК ПО ВСЕМ ЧАТАМ) =================
+@dp.message(Command("ак", prefix="+"))
+async def add_antispam_kick(message: types.Message):
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
+        return
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
+    reason = "Без причины"
+    parts = message.text.split('\n', 1)
+    if len(parts) > 1: reason = parts[1].strip()
+
+    # Добавляем в базу
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)",
+                  (target.id, reason, message.from_user.id))
+        conn.commit()
+
+    # Кикаем во всех чатах с антиспамом
+    success, failed, total = await kick_in_all_antispam_chats(target.id)
+
+    await message.reply(
+        f"{em('check', '✅')} {mention(target)} в «Антиспам»\n"
+        f"👢 Кикнут в <b>{success}</b> из <b>{total}</b> чатов" + (f" (ошибок: {failed})" if failed else "") + "\n"
+        f"📝 {reason}",
+        parse_mode="HTML"
+    )
+
+# ================= +АКИ (КИК + ИГНОР ПО ВСЕМ ЧАТАМ) =================
 @dp.message(Command("аки", prefix="+"))
 async def add_antispam_kick_ignore(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
@@ -2683,18 +2908,27 @@ async def add_antispam_kick_ignore(message: types.Message):
     reason = "Без причины"
     parts = message.text.split('\n', 1)
     if len(parts) > 1: reason = parts[1].strip()
-    kick_status = "👢 Кикнут"
-    try:
-        await bot.ban_chat_member(message.chat.id, target.id)
-        await bot.unban_chat_member(message.chat.id, target.id)
-    except: kick_status = "⚠️ Не удалось кикнуть"
+
+    # Добавляем в базу + игнор
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)", (target.id, reason, message.from_user.id))
-        c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)", (target.id, message.chat.id, reason, message.from_user.id))
+        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)",
+                  (target.id, reason, message.from_user.id))
+        c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)",
+                  (target.id, message.chat.id, reason, message.from_user.id))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} {mention(target)} в «Антиспам»\n{em('mute', '🔇')} Игнор\n{kick_status}\n📝 {reason}", parse_mode="HTML")
 
+    # Кикаем во всех чатах с антиспамом
+    success, failed, total = await kick_in_all_antispam_chats(target.id)
+
+    await message.reply(
+        f"{em('check', '✅')} {mention(target)} в «Антиспам» + игнор\n"
+        f"👢 Кикнут в <b>{success}</b> из <b>{total}</b> чатов" + (f" (ошибок: {failed})" if failed else "") + "\n"
+        f"📝 {reason}",
+        parse_mode="HTML"
+    )
+
+# ================= +АС / +АИГН (просто добавить) =================
 @dp.message(Command("аигн", prefix="+"))
 async def add_antispam_ignore(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
@@ -2712,27 +2946,6 @@ async def add_antispam_ignore(message: types.Message):
         conn.commit()
     await message.reply(f"{em('check', '✅')} {mention(target)} в «Антиспам»\n{em('mute', '🔇')} Игнор\n📝 {reason}", parse_mode="HTML")
 
-@dp.message(Command("ак", prefix="+"))
-async def add_antispam_kick(message: types.Message):
-    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
-        return
-    target, _ = await resolve_target(message)
-    if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML")
-    reason = "Без причины"
-    parts = message.text.split('\n', 1)
-    if len(parts) > 1: reason = parts[1].strip()
-    kick_status = "👢 Кикнут"
-    try:
-        await bot.ban_chat_member(message.chat.id, target.id)
-        await bot.unban_chat_member(message.chat.id, target.id)
-    except: kick_status = "⚠️ Не удалось"
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)", (target.id, reason, message.from_user.id))
-        conn.commit()
-    await message.reply(f"{em('check', '✅')} {mention(target)} в «Антиспам»\n{kick_status}\n📝 {reason}", parse_mode="HTML")
-
 @dp.message(Command("ас", prefix="+"))
 async def add_antispam(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
@@ -2749,6 +2962,7 @@ async def add_antispam(message: types.Message):
         conn.commit()
     await message.reply(f"{em('check', '✅')} {mention(target)} в «Антиспам»\n📝 {reason}", parse_mode="HTML")
 
+# ================= -АИГН / -АС (убрать) =================
 @dp.message(Command("аигн", prefix="-"))
 async def remove_ignore(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
@@ -3840,6 +4054,48 @@ async def unban_chat_cmd(message: types.Message):
         conn.commit()
     await message.reply(f"{em('check', '✅')} Чат «{chat_name}» убран.", parse_mode="HTML")
 
+# ================= БЭКАП =================
+@dp.message(Command("бэкап", prefix="."))
+async def backup_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    await message.reply("💾 Создаю бэкап...")
+    try:
+        with open(DATABASE_PATH, "rb") as f:
+            data = f.read()
+        size_kb = len(data) / 1024
+        await message.reply_document(
+            types.BufferedInputFile(data, filename=f"bot_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"),
+            caption=f"💾 Бэкап базы\n📦 Размер: {size_kb:.1f} КБ"
+        )
+    except Exception as e:
+        await message.reply(f"❌ Ошибка: {e}")
+
+async def auto_backup_loop():
+    """Каждые 6 часов бэкап + отправка владельцу"""
+    while True:
+        try:
+            os.makedirs("backups", exist_ok=True)
+            import shutil
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = f"backups/bot_{timestamp}.db"
+            shutil.copy2(DATABASE_PATH, backup_path)
+            print(f"✅ Бэкап: {backup_path}")
+            # Удаляем старые (>7 дней)
+            now = datetime.now()
+            for f in os.listdir("backups"):
+                fp = os.path.join("backups", f)
+                if os.path.isfile(fp) and f.startswith("bot_"):
+                    try:
+                        mtime = datetime.fromtimestamp(os.path.getmtime(fp))
+                        if (now - mtime).days > 7:
+                            os.remove(fp)
+                    except:
+                        pass
+        except Exception as e:
+            print(f"❌ Ошибка бэкапа: {e}")
+        await asyncio.sleep(6 * 3600)
+
 # ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
@@ -3892,10 +4148,20 @@ async def on_join(event: types.ChatMemberUpdated):
     user = event.new_chat_member.user
     chat_id = event.chat.id
     chat_title = event.chat.title or "чат"
-    if is_in_antispam(user.id):
+    # Проверка антиспама — только если он включён в ЭТОМ чате
+    if is_antispam_enabled(chat_id) and is_in_antispam(user.id):
         try:
             await bot.ban_chat_member(chat_id, user.id)
-            await bot.send_message(chat_id, f"{em('ban', '🚫')} {mention(user)} в антиспаме", parse_mode="HTML")
+            with sqlite3.connect(DATABASE_PATH) as conn:
+                c = conn.cursor()
+                c.execute("SELECT reason FROM antispam WHERE user_id = ?", (user.id,))
+                r = c.fetchone()
+                reason_text = r[0] if r and r[0] else "спамер"
+            await bot.send_message(
+                chat_id,
+                f"{em('ban', '🚫')} {mention(user)} в антиспаме\n📝 {reason_text}",
+                parse_mode="HTML"
+            )
         except: pass
         return
     try:
@@ -3962,7 +4228,8 @@ async def captcha_pass_handler(callback: types.CallbackQuery):
 async def on_join_request(request: types.ChatJoinRequest):
     chat_id = request.chat.id
     user = request.from_user
-    if is_in_antispam(user.id):
+    # Проверка антиспама — только если он включён
+    if is_antispam_enabled(chat_id) and is_in_antispam(user.id):
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT reason FROM antispam WHERE user_id = ?", (user.id,))
@@ -4177,6 +4444,7 @@ async def main():
     init_db()
     print("✅ Бот запущен!")
     asyncio.create_task(auto_unban_loop())
+    asyncio.create_task(auto_backup_loop())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
