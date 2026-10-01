@@ -1453,6 +1453,198 @@ def get_vip_emoji(user_id):
         return v[1]
     return ""
 
+# ================= 🎁 ПОДАРКИ (АВТО-ID) =================
+GIFT_ALIASES = {}   # заполнится автоматически при старте
+GIFT_CACHE = {}
+
+async def load_gifts_cache():
+    """Загружает ID подарков и создаёт алиасы по цене"""
+    global GIFT_ALIASES, GIFT_CACHE
+    try:
+        result = await bot.get_available_gifts()
+        GIFT_CACHE = {}
+        GIFT_ALIASES = {}
+        
+        for g in result.gifts:
+            # Кэш: ID → данные
+            GIFT_CACHE[g.id] = {
+                "id": g.id,
+                "stars": g.star_count,
+                "sticker": g.sticker,
+                "emoji": g.sticker.emoji if g.sticker else "🎁"
+            }
+            
+            # Алиас по цене (упрощённо, чтобы вы могли использовать .подарок 15)
+            # Если несколько подарков по одной цене — берём первый
+            key_by_price = str(g.star_count)
+            if key_by_price not in GIFT_ALIASES:
+                GIFT_ALIASES[key_by_price] = g.id
+            
+            # Алиас по эмодзи (если эмодзи уникален)
+            if g.sticker and g.sticker.emoji:
+                emoji_key = g.sticker.emoji.strip()
+                # Убираем Variation Selector (U+FE0F), если есть
+                emoji_key = emoji_key.replace("\ufe0f", "")
+                if emoji_key not in GIFT_ALIASES:
+                    GIFT_ALIASES[emoji_key] = g.id
+        
+        print(f"✅ Загружено {len(GIFT_CACHE)} подарков, {len(GIFT_ALIASES)} алиасов")
+        # Выводим в лог для отладки
+        for alias, gid in GIFT_ALIASES.items():
+            stars = GIFT_CACHE[gid]["stars"]
+            print(f"   Алиас '{alias}' → ID {gid} ({stars}⭐)")
+    except Exception as e:
+        print(f"❌ Ошибка загрузки подарков: {e}")
+        GIFT_ALIASES = {}
+        GIFT_CACHE = {}
+
+def find_gift_by_name(name: str):
+    """
+    Ищет подарок по алиасу (цена или эмодзи).
+    Все алиасы создаются автоматически при старте.
+    """
+    name = name.lower().strip()
+    return GIFT_ALIASES.get(name)
+
+def get_gift_by_id(gift_id):
+    return GIFT_CACHE.get(gift_id)
+
+
+# ================= КОМАНДЫ ПОДАРКОВ =================
+@dp.message(Command("гифтс", prefix="."))
+@dp.message(Command("подарки", prefix="."))
+async def list_gifts_cmd(message: types.Message):
+    """Список доступных подарков и алиасов"""
+    if message.from_user.id != OWNER_ID:
+        return
+    
+    if not GIFT_CACHE:
+        await load_gifts_cache()
+    
+    if not GIFT_CACHE:
+        return await message.reply("❌ Не удалось загрузить подарки. Проверьте баланс звёзд бота.", parse_mode="HTML")
+    
+    text = "🎁 <b>Доступные подарки:</b>\n\n"
+    # Группируем по цене
+    by_price = {}
+    for gid, data in GIFT_CACHE.items():
+        by_price.setdefault(data["stars"], []).append(data)
+    
+    for stars in sorted(by_price.keys()):
+        gifts = by_price[stars]
+        text += f"⭐ <b>{stars}</b> звёзд:\n"
+        for g in gifts[:3]:  # максимум 3 на цену
+            emoji = g["emoji"] or "🎁"
+            text += f"   {emoji} <code>{g['id']}</code>\n"
+        if len(gifts) > 3:
+            text += f"   <i>...и ещё {len(gifts)-3}</i>\n"
+        text += "\n"
+    
+    text += "<b>📌 Как использовать:</b>\n"
+    text += "<code>.подарок 15 Текст</code> — подарить по цене\n"
+    text += "<code>.подарок @user 15 Текст</code> — подарить другому\n"
+    text += "<code>.подарок 🐻 Текст</code> — по эмодзи\n\n"
+    text += f"<i>Всего алиасов: {len(GIFT_ALIASES)}</i>"
+    
+    await message.reply(text, parse_mode="HTML")
+
+
+@dp.message(Command("подарок", prefix="."))
+@dp.message(Command("gift", prefix="."))
+async def send_gift_cmd(message: types.Message):
+    """
+    .подарок <алиас> <подпись>
+    .подарок @user <алиас> <подпись>
+    
+    Алиас — это цена (15, 25) или эмодзи (🐻, ❤️)
+    """
+    args = message.text.split(maxsplit=2)
+    if len(args) < 2:
+        # Показываем инструкцию с алиасами
+        aliases_sample = list(GIFT_ALIASES.keys())[:10]
+        aliases_text = ", ".join([f"<code>{a}</code>" for a in aliases_sample])
+        return await message.reply(
+            "🎁 <b>Отправка подарка</b>\n\n"
+            "📌 <b>Формат:</b>\n"
+            "<code>.подарок [@user] алиас подпись</code>\n\n"
+            "📝 <b>Примеры:</b>\n"
+            "<code>.подарок 15 С днём рождения!</code>\n"
+            "<code>.подарок @vasya 25 Спасибо!</code>\n"
+            "<code>.подарок 🐻 Ты лучший!</code>\n\n"
+            f"💡 <b>Доступные алиасы:</b> {aliases_text}\n\n"
+            "<i>Полный список: .гифтс</i>",
+            parse_mode="HTML"
+        )
+    
+    parts = args[1].split(maxsplit=1)
+    target = message.from_user
+    gift_alias = None
+    gift_text = None
+    
+    # Проверяем, первый аргумент — юзер или алиас
+    if parts[0].startswith('@') or parts[0].isdigit():
+        try:
+            if parts[0].startswith('@'):
+                target = await bot.get_chat(parts[0])
+            else:
+                target = await bot.get_chat(int(parts[0]))
+        except:
+            return await message.reply(f"❌ Пользователь {parts[0]} не найден.", parse_mode="HTML")
+        
+        if len(parts) < 2:
+            return await message.reply("📌 Укажите алиас подарка.", parse_mode="HTML")
+        name_parts = parts[1].split(maxsplit=1)
+        gift_alias = name_parts[0]
+        gift_text = name_parts[1] if len(name_parts) > 1 else None
+    else:
+        gift_alias = parts[0]
+        gift_text = parts[1] if len(parts) > 1 else None
+    
+    # Ищем подарок
+    gift_id = find_gift_by_name(gift_alias)
+    if not gift_id:
+        return await message.reply(
+            f"❌ Подарок <b>{gift_alias}</b> не найден.\n\n"
+            f"💡 Используйте алиас из <code>.гифтс</code>.",
+            parse_mode="HTML"
+        )
+    
+    gift_data = get_gift_by_id(gift_id)
+    stars_cost = gift_data["stars"] if gift_data else "?"
+    
+    # Проверка прав (владелец или агент 3+)
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 3):
+        return await message.reply("❌ Недостаточно прав.", parse_mode="HTML")
+    
+    # Подпись (лимит 128 символов)
+    if gift_text:
+        gift_text = gift_text[:128]
+    
+    # Отправляем
+    try:
+        await bot.send_gift(
+            user_id=target.id,
+            gift_id=gift_id,
+            text=gift_text,
+            text_parse_mode="HTML"
+        )
+        await message.reply(
+            f"🎁 <b>Подарок отправлен!</b>\n\n"
+            f"👤 Кому: {mention(target)}\n"
+            f"🎀 Что: {gift_data['emoji'] if gift_data else '🎁'} (⭐ {stars_cost})\n"
+            f"📝 Подпись: {gift_text or '—'}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.reply(
+            f"❌ <b>Ошибка отправки</b>\n\n"
+            f"<code>{e}</code>\n\n"
+            f"💡 <b>Возможные причины:</b>\n"
+            f"• На балансе бота мало звёзд (нужно ⭐ {stars_cost})\n"
+            f"• Пользователь не начинал диалог с ботом",
+            parse_mode="HTML"
+        )
+        
 # ================= ПОГОДА =================
 def get_weather(city: str):
     try:
