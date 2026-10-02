@@ -3497,9 +3497,23 @@ async def rm_as_confirm_handler(callback: types.CallbackQuery):
 
     log_antispam_action(target_id, "remove", old_reason, admin_id)
 
+       # Получаем username заранее
+    try:
+        target_chat = await bot.get_chat(target_id)
+        target_name = target_chat.first_name or "Юзер"
+        target_username = target_chat.username
+    except:
+        target_name = "Юзер"
+        target_username = None
+
+    if target_username:
+        user_display = f"<a href='https://t.me/{target_username}'>{target_name}</a>"
+    else:
+        user_display = f"<b>{target_name}</b>"
+
     try:
         await callback.message.edit_text(
-            f"{em('check', '✅')} <a href='https://t.me/{(await bot.get_chat(target_id)).username or \"\"}'>Юзер</a> вынесен из АС\n"
+            f"{em('check', '✅')} {user_display} вынесен из АС\n"
             f"📝 <b>Была причина:</b> {old_reason}\n"
             f"👮 Вынес: {callback.from_user.first_name}",
             parse_mode="HTML"
@@ -3514,7 +3528,7 @@ async def rm_as_confirm_handler(callback: types.CallbackQuery):
             )
         except: pass
     await callback.answer(f"{em('check', '✅')} Вынесен")
-
+    
 @dp.callback_query(lambda c: c.data and c.data.startswith("rm_as_cancel:"))
 async def rm_as_cancel_handler(callback: types.CallbackQuery):
     parts = callback.data.split(":")
