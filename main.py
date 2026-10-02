@@ -4707,6 +4707,193 @@ async def auto_backup_loop():
             print(f"❌ Ошибка бэкапа: {e}")
         await asyncio.sleep(6 * 3600)
 
+    # ================= ИМПОРТ БАЗЫ =================
+@dp.message(Command("импорт", prefix="."))
+async def import_db_cmd(message: types.Message):
+    """
+    Импорт базы из .db файла.
+    Использование: ответом на .db файл → .импорт
+    """
+    if message.from_user.id != OWNER_ID:
+        return
+
+    if not message.reply_to_message or not message.reply_to_message.document:
+        return await message.reply(
+            f"{em('cross', '❌')} <b>Ответьте</b> на <code>.db</code> файл командой <code>.импорт</code>",
+            parse_mode="HTML"
+        )
+
+    doc = message.reply_to_message.document
+    if not doc.file_name.lower().endswith(".db"):
+        return await message.reply(
+            f"{em('cross', '❌')} Только <code>.db</code> файлы.",
+            parse_mode="HTML"
+        )
+
+    # Лимит размера — 20 МБ
+    if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+        return await message.reply(
+            f"{em('cross', '❌')} Файл слишком большой (макс 20 МБ).",
+            parse_mode="HTML"
+        )
+
+    status_msg = await message.reply("📥 Скачиваю базу...")
+
+    temp_path = f"temp_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+
+    try:
+        # 1. Скачиваем файл
+        file = await bot.get_file(doc.file_id)
+        await bot.download_file(file.file_path, temp_path)
+
+        # 2. Проверяем что это валидный SQLite
+        import sqlite3 as _sql
+        try:
+            with _sql.connect(temp_path) as test_conn:
+                test_cursor = test_conn.cursor()
+                test_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in test_cursor.fetchall()]
+        except Exception as e:
+            os.remove(temp_path)
+            await status_msg.edit_text(
+                f"{em('cross', '❌')} <b>Файл повреждён</b>\n\n"
+                f"Не удалось открыть как SQLite: <code>{e}</code>",
+                parse_mode="HTML"
+            )
+            return
+
+        # 3. Проверяем наличие ключевых таблиц
+        required_tables = ["users", "messages_stats", "agents"]
+        missing = [t for t in required_tables if t not in tables]
+
+        if missing:
+            os.remove(temp_path)
+            await status_msg.edit_text(
+                f"{em('cross', '❌')} <b>Это не база Mos-бота</b>\n\n"
+                f"Не найдены таблицы: <code>{', '.join(missing)}</code>\n\n"
+                f"<i>Найдено: {len(tables)} таблиц</i>",
+                parse_mode="HTML"
+            )
+            return
+
+        # 4. Делаем бэкап старой базы
+        os.makedirs("backups", exist_ok=True)
+        old_backup = f"backups/old_before_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        import shutil
+
+        if os.path.exists(DATABASE_PATH):
+            shutil.copy2(DATABASE_PATH, old_backup)
+
+        # 5. Подсчёт статистики новой базы
+        with _sql.connect(temp_path) as test_conn:
+            test_cursor = test_conn.cursor()
+            try:
+                test_cursor.execute("SELECT COUNT(*) FROM users")
+                users_count = test_cursor.fetchone()[0]
+            except:
+                users_count = "?"
+            try:
+                test_cursor.execute("SELECT COUNT(*) FROM messages_stats")
+                messages_count = test_cursor.fetchone()[0]
+            except:
+                messages_count = "?"
+            try:
+                test_cursor.execute("SELECT COUNT(*) FROM agents")
+                agents_count = test_cursor.fetchone()[0]
+            except:
+                agents_count = "?"
+
+        # 6. Заменяем базу
+        shutil.move(temp_path, DATABASE_PATH)
+
+        # 7. Отчёт
+        size_mb = doc.file_size / (1024 * 1024) if doc.file_size else 0
+
+        await status_msg.edit_text(
+            f"{em('check', '✅')} <b>База импортирована!</b>\n\n"
+            f"📊 <b>Статистика новой базы:</b>\n"
+            f"👥 Пользователей: <b>{users_count}</b>\n"
+            f"💬 Записей активности: <b>{messages_count}</b>\n"
+            f"🛡 Агентов: <b>{agents_count}</b>\n\n"
+            f"💾 Размер: <b>{size_mb:.1f} МБ</b>\n"
+            f"🗂 Старая база сохранена:\n"
+            f"<code>{old_backup}</code>\n\n"
+            f"⚠️ <b>Перезапустите бота</b>, чтобы изменения вступили в силу.",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+        await status_msg.edit_text(
+            f"{em('cross', '❌')} <b>Ошибка импорта</b>\n\n"
+            f"<code>{e}</code>",
+            parse_mode="HTML"
+        )
+
+
+# ================= ВОССТАНОВИТЬ (из старого бэкапа) =================
+@dp.message(Command("откат", prefix="."))
+async def restore_old_backup_cmd(message: types.Message):
+    """
+    Откатить базу из последнего бэкапа.
+    .откат — показывает список
+    .откат N — откатывает к N-му бэкапу
+    """
+    if message.from_user.id != OWNER_ID:
+        return
+
+    if not os.path.exists("backups"):
+        return await message.reply("📭 Нет бэкапов.", parse_mode="HTML")
+
+    files = sorted(
+        [f for f in os.listdir("backups") if f.startswith("bot_") or f.startswith("old_before_")],
+        reverse=True
+    )
+
+    if not files:
+        return await message.reply("📭 Нет бэкапов.", parse_mode="HTML")
+
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        text = f"📋 <b>Бэкапы для отката</b> ({len(files)}):\n\n"
+        for i, f in enumerate(files[:15], 1):
+            path = os.path.join("backups", f)
+            size_kb = os.path.getsize(path) / 1024
+            text += f"<b>{i}.</b> <code>{f}</code> — {size_kb:.1f} КБ\n"
+        text += f"\n📌 <code>.откат N</code> — восстановить N-й бэкап"
+        return await message.reply(text, parse_mode="HTML")
+
+    num = int(args[1])
+    if num < 1 or num > len(files):
+        return await message.reply(f"{em('cross', '❌')} Номер от 1 до {len(files)}", parse_mode="HTML")
+
+    src = os.path.join("backups", files[num - 1])
+
+    try:
+        # Дополнительный бэкап текущей
+        os.makedirs("backups", exist_ok=True)
+        import shutil
+        safety = f"backups/before_rollback_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        if os.path.exists(DATABASE_PATH):
+            shutil.copy2(DATABASE_PATH, safety)
+
+        # Заменяем базу
+        shutil.copy2(src, DATABASE_PATH)
+
+        await message.reply(
+            f"{em('check', '✅')} <b>Откат выполнен!</b>\n\n"
+            f"📄 Источник: <code>{files[num-1]}</code>\n"
+            f"🛡 Текущая база сохранена: <code>{safety}</code>\n\n"
+            f"⚠️ <b>Перезапустите бота</b>, чтобы изменения вступили в силу.",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML")
+        
 # ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
