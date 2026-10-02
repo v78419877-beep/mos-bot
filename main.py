@@ -33,7 +33,6 @@ dp = Dispatcher()
 
 # ================= ПРЕМИУМ-ЭМОДЗИ =================
 EMOJI = {
-    # Старые
     "mute": "5239939553720041034", "pencil": "5395444784611480792",
     "wave": "5215248074498128418", "stats": "5884161133174067365",
     "ban": "5472267631979405211", "id": "5014902839575577394",
@@ -43,7 +42,6 @@ EMOJI = {
     "gear": "4904936030232117798", "shield": "5251203410396458957",
     "key": "5330115548900501467", "user": "5373012449597335010",
     "write": "5197269100878907942", "pin": "5291893917673868928",
-    # Новые
     "announce": "5269669124069432917",
     "artist": "5258215635996908355",
     "like": "5391210243210353922",
@@ -73,13 +71,11 @@ EMOJI = {
 }
 
 UNICODE_TO_KEY = {
-    # Старые
     "🔇": "mute", "✏️": "pencil", "👋": "wave", "📊": "stats",
     "🚫": "ban", "🆔": "id", "✅": "check", "🏓": "ping",
     "❌": "cross", "🗓": "calendar", "🆘": "sos", "⚙️": "gear",
     "🛡": "shield", "🔑": "key", "👤": "user", "✍️": "write",
     "📌": "pin", "👽": "alien",
-    # Новые
     "📣": "announce", "👩‍🎨": "artist", "👍": "like", "👎": "dislike",
     "❤️": "heart", "🎓": "education", "🎨": "art", "🧹": "broom",
     "💼": "briefcase", "🛠": "wrench", "✂️": "crop", "🔔": "notify",
@@ -227,14 +223,240 @@ def init_db():
             hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
 
-        # Автоматически добавить владельца как гл. агента
         c.execute("INSERT OR IGNORE INTO agents (user_id, added_by) VALUES (?, ?)", (OWNER_ID, OWNER_ID))
         c.execute("""INSERT OR IGNORE INTO agent_ranks (user_id, rank, added_by) 
             VALUES (?, 4, ?)""", (OWNER_ID, OWNER_ID))
 
-        conn.commit()
+        conn.commit()import asyncio
+import sqlite3
+import random
+import string
+import os
+import re
+import json
+from urllib.parse import quote
+from urllib.request import urlopen
+from datetime import datetime, timedelta, timezone
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command, CommandStart
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from io import BytesIO
+
+# ================= НАСТРОЙКИ =================
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+OWNER_ID = 7305320918
+DATABASE_PATH = os.environ.get("DATABASE_PATH", "bot.db")
+BOT_NAME = "Mos | Чат-менеджер"
+SUPPORT_CHAT_LINK = "https://t.me/mospodd"
+SUPPORT_CHANNEL_LINK = "https://t.me/moskanalp"
+MODERATION_CHAT_ID = -1004438332613
+SUPPORT_CHAT_ID = -1004438332613
+TELETYPE_URL = "https://teletype.in/@sirenie3/Mos-command"
+
+BOT_START_TIME = datetime.now()
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+# ================= ПРЕМИУМ-ЭМОДЗИ =================
+EMOJI = {
+    "mute": "5239939553720041034", "pencil": "5395444784611480792",
+    "wave": "5215248074498128418", "stats": "5884161133174067365",
+    "ban": "5472267631979405211", "id": "5014902839575577394",
+    "check": "5429501538806548545", "ping": "5269563867305879894",
+    "cross": "5269666272211148094", "calendar": "5413879192267805083",
+    "alien": "5267401355567345688", "sos": "5238025132177369293",
+    "gear": "4904936030232117798", "shield": "5251203410396458957",
+    "key": "5330115548900501467", "user": "5373012449597335010",
+    "write": "5197269100878907942", "pin": "5291893917673868928",
+    "announce": "5269669124069432917",
+    "artist": "5258215635996908355",
+    "like": "5391210243210353922",
+    "dislike": "5864180515816345988",
+    "heart": "5266996773943028034",
+    "education": "5391052390277348873",
+    "art": "5431456208487716895",
+    "broom": "5472291748220771063",
+    "briefcase": "5398037325655602784",
+    "wrench": "5462921117423384478",
+    "crop": "5318804172705910750",
+    "notify": "5458603043203327669",
+    "sport": "5409008750893734809",
+    "mask": "5359441070201513074",
+    "qr": "5407025283456835913",
+    "eye": "5122983123188974322",
+    "people": "5258513401784573443",
+    "envelope": "5253742260054409879",
+    "card": "5472250091332993630",
+    "lab": "5411512278740640309",
+    "medicine": "5433635625217563352",
+    "audio": "5260652149469094137",
+    "video": "5472069741261265416",
+    "verified": "5411267122007397812",
+    "wallet": "5269472440337078683",
+    "music": "5172447776205702031",
+}
+
+UNICODE_TO_KEY = {
+    "🔇": "mute", "✏️": "pencil", "👋": "wave", "📊": "stats",
+    "🚫": "ban", "🆔": "id", "✅": "check", "🏓": "ping",
+    "❌": "cross", "🗓": "calendar", "🆘": "sos", "⚙️": "gear",
+    "🛡": "shield", "🔑": "key", "👤": "user", "✍️": "write",
+    "📌": "pin", "👽": "alien",
+    "📣": "announce", "👩‍🎨": "artist", "👍": "like", "👎": "dislike",
+    "❤️": "heart", "🎓": "education", "🎨": "art", "🧹": "broom",
+    "💼": "briefcase", "🛠": "wrench", "✂️": "crop", "🔔": "notify",
+    "🏆": "sport", "🎭": "mask", "📱": "qr", "👁": "eye",
+    "👥": "people", "✉️": "envelope", "💳": "card", "🧪": "lab",
+    "💊": "medicine", "🎙": "audio", "🎬": "video", "✔️": "verified",
+    "👛": "wallet", "🎵": "music",
+}
+
+def em(name, fallback="•"):
+    eid = EMOJI.get(name)
+    if not eid:
+        return fallback
+    return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>'
+
+def mention(user):
+    if getattr(user, 'username', None):
+        return f'<a href="https://t.me/{user.username}">{user.first_name}</a>'
+    return f'<b>{user.first_name}</b>'
+
+def mention_by_id(user_id, first_name, username=None):
+    if username:
+        return f'<a href="https://t.me/{username}">{first_name}</a>'
+    return f'<b>{first_name}</b>'
+
+def user_link(user_id, first_name="Пользователь", username=None):
+    if username:
+        return f'<a href="https://t.me/{username}">{first_name}</a>'
+    return f'<b>{first_name}</b>'
+
+def auto_premium(text: str) -> str:
+    if not text:
+        return text
+    for uni, key in UNICODE_TO_KEY.items():
+        eid = EMOJI.get(key)
+        if eid and uni in text:
+            text = text.replace(uni, f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>')
+    return text
 
 # ================= РАНГИ ЧАТА =================
+RANK_NAMES = {0: "👤 Участник", 1: "🛡️ Мл. Модератор", 2: "🛡️ Ст. Модератор",
+              3: "👑 Мл. Админ", 4: "👑 Ст. Админ", 5: "⚜️ Владелец"}
+
+AGENT_RANKS = {
+    1: "🛡 Мл. Агент",
+    2: "🛡 Агент",
+    3: "🛡 Ст. Агент",
+    4: "⚜️ Гл. Агент",
+}
+
+# ================= БАЗА ДАННЫХ =================
+def init_db():
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS agents (user_id INTEGER PRIMARY KEY, added_by INTEGER)")
+        c.execute("""CREATE TABLE IF NOT EXISTS agent_ranks (
+            user_id INTEGER PRIMARY KEY,
+            rank INTEGER DEFAULT 1,
+            added_by INTEGER,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        c.execute("CREATE TABLE IF NOT EXISTS antispam (user_id INTEGER PRIMARY KEY, reason TEXT, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS ignore_list (user_id INTEGER, chat_id INTEGER, reason TEXT, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS chat_codes (chat_id INTEGER PRIMARY KEY, code TEXT UNIQUE)")
+        c.execute("CREATE TABLE IF NOT EXISTS messages_stats (user_id INTEGER, chat_id INTEGER, date DATE, count INTEGER DEFAULT 1, UNIQUE(user_id, chat_id, date))")
+        c.execute("CREATE TABLE IF NOT EXISTS banned_chats (chat_id INTEGER PRIMARY KEY, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER, chat_id INTEGER, rank INTEGER DEFAULT 1, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS bot_promoted (user_id INTEGER, chat_id INTEGER, promoted_by INTEGER, promoted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS warns (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER, reason TEXT, warned_by INTEGER, warned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS candies (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)")
+        c.execute("CREATE TABLE IF NOT EXISTS candy_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount INTEGER, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS agent_activity (user_id INTEGER PRIMARY KEY, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS greetings (chat_id INTEGER PRIMARY KEY, text TEXT, updated_by INTEGER, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, first_name TEXT, username TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS captcha (user_id INTEGER, chat_id INTEGER, message_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS business_connections (user_id INTEGER PRIMARY KEY, connection_id TEXT, connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS chat_bans (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, user_id INTEGER, reason TEXT, banned_by INTEGER, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, until_date TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS grids (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, creator_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS grid_chats (grid_id INTEGER, chat_id INTEGER, hidden INTEGER DEFAULT 0, description TEXT, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(grid_id, chat_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS grid_moderators (grid_id INTEGER, user_id INTEGER, rank INTEGER DEFAULT 1, is_admin INTEGER DEFAULT 0, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(grid_id, user_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS grid_bans (grid_id INTEGER, user_id INTEGER, reason TEXT, banned_by INTEGER, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(grid_id, user_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS grid_mutes (grid_id INTEGER, user_id INTEGER, until_date TIMESTAMP, muted_by INTEGER, UNIQUE(grid_id, user_id))")
+        c.execute("""CREATE TABLE IF NOT EXISTS grid_user_ranks (
+            grid_id INTEGER,
+            user_id INTEGER,
+            rank INTEGER DEFAULT 1,
+            added_by INTEGER,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(grid_id, user_id)
+        )""")
+        c.execute("CREATE TABLE IF NOT EXISTS marriages (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, user1_id INTEGER, user2_id INTEGER, user1_name TEXT, user2_name TEXT, married_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, divorced_at TIMESTAMP, status TEXT DEFAULT 'active', in_top INTEGER DEFAULT 0, extra_days INTEGER DEFAULT 0, UNIQUE(chat_id, user1_id), UNIQUE(chat_id, user2_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS marriage_settings (chat_id INTEGER PRIMARY KEY, divorce_mode TEXT DEFAULT 'off', divorce_price INTEGER DEFAULT 0)")
+        c.execute("CREATE TABLE IF NOT EXISTS proposals (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, from_id INTEGER, to_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, name TEXT, text TEXT, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(chat_id, name))")
+        c.execute("CREATE TABLE IF NOT EXISTS coins (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0, last_farm TIMESTAMP, total_farmed INTEGER DEFAULT 0, last_tax TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS coin_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount INTEGER, reason TEXT, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS chat_coins (chat_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)")
+        c.execute("CREATE TABLE IF NOT EXISTS catalog (chat_id INTEGER PRIMARY KEY, title TEXT, description TEXT, link TEXT, submitted_by INTEGER, submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, status TEXT DEFAULT 'pending', show_moderators INTEGER DEFAULT 0, approved_by INTEGER, approved_at TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS catalog_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, submitted_by INTEGER, action TEXT, status TEXT DEFAULT 'pending', reviewed_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(chat_id, action))")
+        c.execute("CREATE TABLE IF NOT EXISTS achievements (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, emoji TEXT DEFAULT '🏅', description TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS user_achievements (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER, achievement_id INTEGER, given_by INTEGER, given_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id, achievement_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS chat_settings (chat_id INTEGER PRIMARY KEY, channels_allowed INTEGER DEFAULT 0, reactions_allowed INTEGER DEFAULT 1, auto_requests INTEGER DEFAULT 0, description TEXT, invite_link TEXT, request_link TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS user_tags (user_id INTEGER, chat_id INTEGER, tag TEXT, UNIQUE(user_id, chat_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS citizenship (user_id INTEGER PRIMARY KEY, chat_id INTEGER, became_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS user_nicks (user_id INTEGER, chat_id INTEGER, nick TEXT, UNIQUE(user_id, chat_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS user_about (user_id INTEGER PRIMARY KEY, text TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS user_ranks (user_id INTEGER, chat_id INTEGER, rank TEXT, UNIQUE(user_id, chat_id))")
+        c.execute("CREATE TABLE IF NOT EXISTS chat_rules (chat_id INTEGER PRIMARY KEY, text TEXT, updated_by INTEGER, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+        c.execute("CREATE TABLE IF NOT EXISTS user_profiles (user_id INTEGER PRIMARY KEY, gender TEXT, birth_date TEXT, birth_visibility TEXT DEFAULT 'месяц', city TEXT, bio TEXT, motto TEXT, show_citizenship INTEGER DEFAULT 1, is_hidden INTEGER DEFAULT 1)")
+        c.execute("CREATE TABLE IF NOT EXISTS vip_settings (chat_id INTEGER PRIMARY KEY, price INTEGER DEFAULT 100)")
+        c.execute("CREATE TABLE IF NOT EXISTS vip_users (user_id INTEGER PRIMARY KEY, expires_at TIMESTAMP, emoji TEXT)")
+        c.execute("CREATE TABLE IF NOT EXISTS rp_commands (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, name TEXT, emoji TEXT, text TEXT, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(chat_id, name))")
+        c.execute("CREATE TABLE IF NOT EXISTS global_rp_commands (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, emoji TEXT, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, name))")
+        c.execute("""CREATE TABLE IF NOT EXISTS chat_antispam_settings (
+            chat_id INTEGER PRIMARY KEY,
+            antispam_enabled INTEGER DEFAULT 1
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS stars_settings (
+            chat_id INTEGER PRIMARY KEY,
+            stars_per_candy INTEGER DEFAULT 2
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS stars_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            chat_id INTEGER,
+            amount_candies INTEGER,
+            stars_paid INTEGER,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS antispam_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action TEXT,
+            reason TEXT,
+            admin_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS link_filter (
+            chat_id INTEGER PRIMARY KEY,
+            enabled INTEGER DEFAULT 0
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS hidden_agents (
+            user_id INTEGER PRIMARY KEY,
+            hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        c.execute("INSERT OR IGNORE INTO agents (user_id, added_by) VALUES (?, ?)", (OWNER_ID, OWNER_ID))
+        c.execute("""INSERT OR IGNORE INTO agent_ranks (user_id, rank, added_by) 
+            VALUES (?, 4, ?)""", (OWNER_ID, OWNER_ID))
+
+        conn.commit()# ================= РАНГИ ЧАТА =================
 def get_rank(chat_id, user_id):
     if user_id == OWNER_ID:
         return 5
@@ -739,7 +961,9 @@ def generate_chat_activity_chart(chat_id, days=30):
     plt.savefig(buf, format='png', dpi=90, bbox_inches='tight')
     buf.seek(0)
     plt.close()
-    return buf# ================= ВАРНЫ =================
+    return buf
+
+# ================= ВАРНЫ =================
 def add_warn(user_id, chat_id, reason, warned_by):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -909,7 +1133,6 @@ def update_agent_activity(user_id):
         conn.commit()
 
 def get_agents_status():
-    """Возвращает (online, offline). Владелец как обычный агент, скрытые — исключены."""
     online, offline = [], []
     now = datetime.now()
     hidden = get_hidden_agents()
@@ -918,7 +1141,6 @@ def get_agents_status():
         c.execute("SELECT user_id FROM agents")
         agents = c.fetchall()
         for (agent_id,) in agents:
-            # Скрытые — пропускаем (включая владельца)
             if agent_id in hidden:
                 continue
             if agent_id == OWNER_ID:
@@ -1079,9 +1301,7 @@ def get_business_owner_by_conn(connection_id):
         c = conn.cursor()
         c.execute("SELECT user_id FROM business_connections WHERE connection_id = ?", (connection_id,))
         r = c.fetchone()
-        return r[0] if r else None
-
-# ================= СЕТКА =================
+        return r[0] if r else None# ================= СЕТКА =================
 def create_grid(name, creator_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2262,7 +2482,9 @@ async def top_cmd(message: types.Message):
             name = f"ID: {user_id}"
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {name} — <b>{count}</b>\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)# ================= +АГЕНТ (РАНГ) =================
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+# ================= +АГЕНТ (РАНГ) =================
 @dp.message(Command("агент", prefix="+"))
 async def add_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
@@ -2372,7 +2594,6 @@ async def list_agents_cmd(message: types.Message):
 # ================= +ПОМОЩЬ / -ПОМОЩЬ =================
 @dp.message(Command("помощь", prefix="-"))
 async def hide_from_help_cmd(message: types.Message):
-    """Скрыть себя из списка агентов в .помощь"""
     user_id = message.from_user.id
 
     if not is_agent(user_id) and user_id != OWNER_ID:
@@ -2400,7 +2621,6 @@ async def hide_from_help_cmd(message: types.Message):
 
 @dp.message(Command("помощь", prefix="+"))
 async def show_in_help_cmd(message: types.Message):
-    """Показать себя обратно в списке агентов"""
     user_id = message.from_user.id
 
     if not is_agent(user_id) and user_id != OWNER_ID:
@@ -2660,7 +2880,6 @@ async def list_admins_cmd(message: types.Message):
             name = f"ID: {user_id}"
         agent_badge = f" {em('shield', '🛡')}" if is_agent(user_id) else ""
         text += f"{RANK_NAMES.get(rank, '👤 Участник')} — {name}{agent_badge}\n"
-    text += f"\n⚜️ Владелец бота: <code>{OWNER_ID}</code>"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(Command("восстановить", prefix="."))
@@ -2679,11 +2898,13 @@ async def restore_creator_cmd(message: types.Message):
     set_rank(chat_id, user_id, 5, user_id)
     await message.reply(f"{em('check', '✅')} Вы владелец чата!", parse_mode="HTML", disable_web_page_preview=True)
 
+# ================= +АДМИН (выдача ТГ-админки) =================
 @dp.message(Command("админ", prefix="+"))
 async def grant_admin_cmd(message: types.Message):
     actor_rank = get_rank(message.chat.id, message.from_user.id)
     if actor_rank < 3:
         return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+
     try:
         bot_member = await bot.get_chat_member(message.chat.id, bot.id)
         if bot_member.status not in ['administrator', 'creator']:
@@ -2691,15 +2912,33 @@ async def grant_admin_cmd(message: types.Message):
         if bot_member.status == 'administrator' and not bot_member.can_promote_members:
             return await message.reply(f"{em('cross', '❌')} Нет права добавлять админов.", parse_mode="HTML", disable_web_page_preview=True)
     except:
-        return await message.reply(f"{em('cross', '❌')} Ошибка.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ошибка проверки прав.", parse_mode="HTML", disable_web_page_preview=True)
+
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(
+            "📌 <b>Формат:</b>\n"
+            "<code>+Админ @user</code>\n"
+            "<code>+Админ</code> (ответом на сообщение)\n\n"
+            "<i>Юзер должен быть повышен в боте (ранг 1+)</i>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
     if target.id == OWNER_ID:
         return await message.reply("⛔ Владелец и так имеет все права.", parse_mode="HTML", disable_web_page_preview=True)
+
     target_rank = get_rank(message.chat.id, target.id)
     if target_rank < 1:
-        return await message.reply("⚠️ Сначала повысьте.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(
+            f"⚠️ Сначала повысьте в боте:\n<code>.повысить {target.id} 1</code>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    if message.from_user.id != OWNER_ID and target_rank >= actor_rank:
+        return await message.reply(f"{em('cross', '❌')} Нельзя управлять равным или выше.", parse_mode="HTML", disable_web_page_preview=True)
+
     try:
         await bot.promote_chat_member(
             chat_id=message.chat.id, user_id=target.id,
@@ -2708,11 +2947,14 @@ async def grant_admin_cmd(message: types.Message):
             can_invite_users=True, can_pin_messages=True
         )
         mark_bot_promoted(target.id, message.chat.id, message.from_user.id)
-        await message.reply(f"{em('check', '✅')} {mention(target)} теперь админ Telegram!", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(
+            f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b> в этом чате!\n"
+            f"👮 Выдал: {mention(message.from_user)}",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
-
-# ================= МОДЕРАЦИЯ =================
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)# ================= МОДЕРАЦИЯ =================
 @dp.message(Command("бан", prefix="."))
 async def ban_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
@@ -3231,7 +3473,9 @@ async def show_bans(message: types.Message):
     if not is_in_antispam(user_id) and spam_bans >= 3 and spam_bans < 5:
         text += f"\n⚠️ <i>До авто-блокировки: {5 - spam_bans} банов за спам</i>"
 
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)# ================= АЧИВКИ =================
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+# ================= АЧИВКИ =================
 @dp.message(lambda m: m.text and m.text.lower().startswith("+ачивка создать"))
 async def create_achievement_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 3):
@@ -3745,7 +3989,7 @@ async def add_antispam(message: types.Message):
     log_antispam_action(target.id, "add", reason, message.from_user.id)
     await message.reply(f"{em('check', '✅')} {mention(target)} в «Антиспам»\n📝 {reason}", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= -АС (обычная + ошибка) =================
+# ================= -АС =================
 @dp.message(Command("ас", prefix="-"))
 async def remove_antispam(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
@@ -3764,7 +4008,6 @@ async def remove_antispam(message: types.Message):
     info = get_antispam_info(target.id)
     old_reason = info[0] if info else "неизвестно"
 
-    # РЕЖИМ "ОШИБКА"
     if is_error_mode:
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
@@ -3785,7 +4028,6 @@ async def remove_antispam(message: types.Message):
         await message.reply(msg, parse_mode="HTML", disable_web_page_preview=True)
         return
 
-    # ОБЫЧНЫЙ РЕЖИМ
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
             text="✅ Да, вынести",
@@ -3808,7 +4050,6 @@ async def remove_antispam(message: types.Message):
         reply_markup=kb
     )
 
-# ===== Обработчики кнопок =====
 @dp.callback_query(lambda c: c.data and c.data.startswith("rm_as_confirm:"))
 async def rm_as_confirm_handler(callback: types.CallbackQuery):
     parts = callback.data.split(":")
@@ -3883,7 +4124,6 @@ async def rm_as_cancel_handler(callback: types.CallbackQuery):
         pass
     await callback.answer(f"{em('cross', '❌')} Отменено")
 
-# ================= -АИГН =================
 @dp.message(Command("аигн", prefix="-"))
 async def remove_ignore(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
@@ -4061,7 +4301,6 @@ async def requests_settings_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 4):
         return await message.reply(f"{em('cross', '❌')} Нужен ранг Ст. Админ (4).", parse_mode="HTML", disable_web_page_preview=True)
 
-    # Создать запись в chat_settings
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("INSERT OR IGNORE INTO chat_settings (chat_id, auto_requests) VALUES (?, 0)", (message.chat.id,))
@@ -4745,9 +4984,7 @@ async def disable_chat_cmd(message: types.Message):
     try:
         await bot.set_chat_permissions(chat_id=message.chat.id, permissions=types.ChatPermissions(can_send_messages=False, can_send_media_messages=False, can_send_other_messages=False, can_add_web_page_previews=False, can_send_polls=False, can_invite_users=True, can_change_info=False, can_pin_messages=False))
         await message.reply(f"{em('mute', '🔇')} Чат отключён.", parse_mode="HTML", disable_web_page_preview=True)
-    except Exception as e: await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
-
-# ================= СЕТКИ =================
+    except Exception as e: await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)# ================= СЕТКИ =================
 @dp.message(lambda m: m.text and m.text.lower().startswith("создать сетку"))
 async def create_grid_cmd(message: types.Message):
     if message.chat.type != "private": return
@@ -4759,7 +4996,7 @@ async def create_grid_cmd(message: types.Message):
     if not grid_id: return await message.reply(f"{em('cross', '❌')} Уже существует.", parse_mode="HTML", disable_web_page_preview=True)
     await message.reply(f"{em('check', '✅')} Сетка <b>{name}</b> (ID: <code>{grid_id}</code>)", parse_mode="HTML", disable_web_page_preview=True)
 
-@dp.message(lambda m: m.text and m.text.lower().startswith("сетка ") and m.chat.type != "private" and not m.text.lower().startswith("сетка повысить") and not m.text.lower().startswith("сетка понизить"))
+@dp.message(lambda m: m.text and m.text.lower().startswith("сетка ") and m.chat.type != "private" and not m.text.lower().startswith("сетка повысить") and not m.text.lower().startswith("сетка понизить") and not m.text.lower().startswith("сетка +админ"))
 async def set_grid_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2: return
@@ -4991,6 +5228,94 @@ async def grid_demote_cmd(message: types.Message):
     except:
         pass
 
+# ================= СЕТКА: +АДМИН (ТГ-админка во всех чатах) =================
+@dp.message(lambda m: m.text and m.text.lower().startswith("сетка +админ"))
+async def grid_tg_admin_cmd(message: types.Message):
+    grid_id = get_chat_grid(message.chat.id)
+    if not grid_id:
+        return await message.reply(f"{em('cross', '❌')} Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT creator_id FROM grids WHERE id = ?", (grid_id,))
+        r = c.fetchone()
+        creator_id = r[0] if r else None
+
+    if message.from_user.id != creator_id and message.from_user.id != OWNER_ID:
+        return await message.reply("⛔ Только создатель сетки или владелец бота.", parse_mode="HTML", disable_web_page_preview=True)
+
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply(
+            "📌 <b>Формат:</b>\n"
+            "<code>сетка +админ @user</code>\n"
+            "<code>сетка +админ</code> (ответом)\n\n"
+            "<i>Выдаёт ТГ-админку во всех чатах сетки</i>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    if target.id == OWNER_ID:
+        return await message.reply("⛔ Владельца нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+
+    chats = get_grid_chats(grid_id, include_hidden=True)
+    if not chats:
+        return await message.reply(f"{em('cross', '❌')} В сетке нет чатов.", parse_mode="HTML", disable_web_page_preview=True)
+
+    success = 0
+    failed = 0
+    notified = 0
+    actor_link = user_link(message.from_user.id, message.from_user.first_name, message.from_user.username)
+
+    for chat_id, hidden, desc in chats:
+        try:
+            await bot.promote_chat_member(
+                chat_id=chat_id, user_id=target.id,
+                can_manage_chat=True, can_delete_messages=True, can_manage_video_chats=True,
+                can_restrict_members=True, can_promote_members=True, can_change_info=True,
+                can_invite_users=True, can_pin_messages=True
+            )
+            mark_bot_promoted(target.id, chat_id, message.from_user.id)
+            success += 1
+
+            try:
+                chat = await bot.get_chat(chat_id)
+                chat_title = chat.title or f"Чат {chat_id}"
+                await bot.send_message(
+                    chat_id,
+                    f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b>\n"
+                    f"👮 Выдал: {actor_link}",
+                    parse_mode="HTML",
+                    disable_web_page_preview=True
+                )
+                notified += 1
+            except:
+                pass
+        except Exception as e:
+            print(f"❌ Ошибка +админ в чате {chat_id}: {e}")
+            failed += 1
+
+    await message.reply(
+        f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b> в сетке\n\n"
+        f"✅ Успешно: <b>{success}</b> из <b>{len(chats)}</b>\n"
+        f"📢 Уведомлено: <b>{notified}</b>"
+        + (f"\n⚠️ Ошибок: {failed}" if failed else ""),
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+    try:
+        await bot.send_message(
+            target.id,
+            f"👑 <b>Вы теперь ТГ-админ в сетке чатов!</b>\n\n"
+            f"🌐 Чатов: <b>{success}</b>\n"
+            f"👮 Назначил: {actor_link}",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except:
+        pass
+
 @dp.message(lambda m: m.text and m.text.lower().strip() == "чаты")
 async def list_grid_chats(message: types.Message):
     grid_id = get_chat_grid(message.chat.id)
@@ -5212,7 +5537,9 @@ async def catalog_review_handler(callback: types.CallbackQuery):
             await callback.message.edit_reply_markup(reply_markup=None)
             await callback.message.reply(f"{em('cross', '❌')} Отклонено {reviewer}", disable_web_page_preview=True)
         except: pass
-        await callback.answer(f"{em('cross', '❌')} Отклонено!")# ================= ВЛАДЕЛЕЦ =================
+        await callback.answer(f"{em('cross', '❌')} Отклонено!")
+
+# ================= ВЛАДЕЛЕЦ =================
 @dp.message(Command("опасно", prefix="+"))
 async def ban_chat_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID: return
@@ -5495,17 +5822,10 @@ async def restore_old_backup_cmd(message: types.Message):
     except Exception as e:
         await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= АВТО-БЭКАП (утро 09:00 + вечер 21:00 МСК) =================
+# ================= АВТО-БЭКАП (09:00 + 21:00 МСК) =================
 async def auto_backup_loop():
-    """
-    Отправляет бэкап в ЛС владельцу 2 раза в день:
-    - Утро: 09:00 МСК
-    - Вечер: 21:00 МСК
-    Также делает локальные копии в backups/
-    """
     while True:
         try:
-            # МСК = UTC+3
             now = datetime.now(timezone.utc) + timedelta(hours=3)
             current_hour = now.hour
             current_minute = now.minute
@@ -5553,7 +5873,6 @@ async def auto_backup_loop():
                     with open(marker_file, "w") as f:
                         f.write(str(now))
 
-                    # Чистим старые (>7 дней)
                     try:
                         for f_name in os.listdir("backups"):
                             fp = os.path.join("backups", f_name)
@@ -5567,9 +5886,7 @@ async def auto_backup_loop():
         except Exception as e:
             print(f"❌ Ошибка в auto_backup_loop: {e}")
 
-        await asyncio.sleep(300)
-
-# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
+        await asyncio.sleep(300)# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot:
@@ -5772,7 +6089,6 @@ async def on_join_request(request: types.ChatJoinRequest):
     chat_id = request.chat.id
     user = request.from_user
 
-    # ===== ПРОВЕРКА АНТИСПАМА =====
     if is_antispam_enabled(chat_id) and is_in_antispam(user.id):
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
@@ -5783,7 +6099,6 @@ async def on_join_request(request: types.ChatJoinRequest):
             await request.decline()
         except:
             pass
-        # Уведомление в ЛС юзеру
         try:
             await bot.send_message(
                 user.id,
@@ -5796,10 +6111,8 @@ async def on_join_request(request: types.ChatJoinRequest):
             )
         except:
             pass
-        # НЕ отправляем в чат модерации
         return
 
-    # ===== АВТО-ОДОБРЕНИЕ =====
     try:
         await request.approve()
         try:
@@ -5812,7 +6125,6 @@ async def on_join_request(request: types.ChatJoinRequest):
             )
         except:
             pass
-        # НЕ отправляем в чат модерации
         return
     except Exception as e:
         print(f"❌ Ошибка авто-одобрения: {e}")
