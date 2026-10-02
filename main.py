@@ -7,7 +7,7 @@ import re
 import json
 from urllib.parse import quote
 from urllib.request import urlopen
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -33,6 +33,7 @@ dp = Dispatcher()
 
 # ================= ПРЕМИУМ-ЭМОДЗИ =================
 EMOJI = {
+    # Старые
     "mute": "5239939553720041034", "pencil": "5395444784611480792",
     "wave": "5215248074498128418", "stats": "5884161133174067365",
     "ban": "5472267631979405211", "id": "5014902839575577394",
@@ -42,14 +43,50 @@ EMOJI = {
     "gear": "4904936030232117798", "shield": "5251203410396458957",
     "key": "5330115548900501467", "user": "5373012449597335010",
     "write": "5197269100878907942", "pin": "5291893917673868928",
+    # Новые
+    "announce": "5269669124069432917",
+    "artist": "5258215635996908355",
+    "like": "5391210243210353922",
+    "dislike": "5864180515816345988",
+    "heart": "5266996773943028034",
+    "education": "5391052390277348873",
+    "art": "5431456208487716895",
+    "broom": "5472291748220771063",
+    "briefcase": "5398037325655602784",
+    "wrench": "5462921117423384478",
+    "crop": "5318804172705910750",
+    "notify": "5458603043203327669",
+    "sport": "5409008750893734809",
+    "mask": "5359441070201513074",
+    "qr": "5407025283456835913",
+    "eye": "5122983123188974322",
+    "people": "5258513401784573443",
+    "envelope": "5253742260054409879",
+    "card": "5472250091332993630",
+    "lab": "5411512278740640309",
+    "medicine": "5433635625217563352",
+    "audio": "5260652149469094137",
+    "video": "5472069741261265416",
+    "verified": "5411267122007397812",
+    "wallet": "5269472440337078683",
+    "music": "5172447776205702031",
 }
 
 UNICODE_TO_KEY = {
+    # Старые
     "🔇": "mute", "✏️": "pencil", "👋": "wave", "📊": "stats",
     "🚫": "ban", "🆔": "id", "✅": "check", "🏓": "ping",
     "❌": "cross", "🗓": "calendar", "🆘": "sos", "⚙️": "gear",
     "🛡": "shield", "🔑": "key", "👤": "user", "✍️": "write",
     "📌": "pin", "👽": "alien",
+    # Новые
+    "📣": "announce", "👩‍🎨": "artist", "👍": "like", "👎": "dislike",
+    "❤️": "heart", "🎓": "education", "🎨": "art", "🧹": "broom",
+    "💼": "briefcase", "🛠": "wrench", "✂️": "crop", "🔔": "notify",
+    "🏆": "sport", "🎭": "mask", "📱": "qr", "👁": "eye",
+    "👥": "people", "✉️": "envelope", "💳": "card", "🧪": "lab",
+    "💊": "medicine", "🎙": "audio", "🎬": "video", "✔️": "verified",
+    "👛": "wallet", "🎵": "music",
 }
 
 def em(name, fallback="•"):
@@ -185,6 +222,16 @@ def init_db():
             chat_id INTEGER PRIMARY KEY,
             enabled INTEGER DEFAULT 0
         )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS hidden_agents (
+            user_id INTEGER PRIMARY KEY,
+            hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+
+        # Автоматически добавить владельца как гл. агента
+        c.execute("INSERT OR IGNORE INTO agents (user_id, added_by) VALUES (?, ?)", (OWNER_ID, OWNER_ID))
+        c.execute("""INSERT OR IGNORE INTO agent_ranks (user_id, rank, added_by) 
+            VALUES (?, 4, ?)""", (OWNER_ID, OWNER_ID))
+
         conn.commit()
 
 # ================= РАНГИ ЧАТА =================
@@ -257,6 +304,31 @@ def has_agent_rank(user_id, min_rank):
     if user_id == OWNER_ID:
         return True
     return get_agent_rank(user_id) >= min_rank
+
+# ================= СКРЫТЫЕ АГЕНТЫ =================
+def is_hidden_agent(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM hidden_agents WHERE user_id = ?", (user_id,))
+        return c.fetchone() is not None
+
+def hide_agent(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO hidden_agents (user_id) VALUES (?)", (user_id,))
+        conn.commit()
+
+def unhide_agent(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM hidden_agents WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+def get_hidden_agents():
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT user_id FROM hidden_agents")
+        return [r[0] for r in c.fetchall()]
 
 # ================= АНТИСПАМ =================
 def is_in_antispam(user_id):
@@ -837,13 +909,18 @@ def update_agent_activity(user_id):
         conn.commit()
 
 def get_agents_status():
+    """Возвращает (online, offline). Владелец как обычный агент, скрытые — исключены."""
     online, offline = [], []
     now = datetime.now()
+    hidden = get_hidden_agents()
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT user_id FROM agents")
         agents = c.fetchall()
         for (agent_id,) in agents:
+            # Скрытые — пропускаем (включая владельца)
+            if agent_id in hidden:
+                continue
             if agent_id == OWNER_ID:
                 online.append(agent_id)
                 continue
@@ -1743,8 +1820,7 @@ async def start_cmd(message: types.Message):
         text += "  <i>пока нет</i>\n"
 
     text += (
-        f"\n⚜️ <b>Владелец:</b> <a href='https://t.me/mospodd'>Mos</a>\n\n"
-        f"{em('sos', '🆘')} <b>Поддержка:</b> {SUPPORT_CHAT_LINK}"
+        f"\n{em('sos', '🆘')} <b>Поддержка:</b> {SUPPORT_CHAT_LINK}"
     )
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1791,10 +1867,7 @@ async def help_cmd(message: types.Message):
             try:
                 user = await bot.get_chat(uid)
                 link = user_link(uid, user.first_name, user.username)
-                if uid == OWNER_ID:
-                    agents_text += f"  ⚜️ {link} <i>(владелец)</i>\n"
-                else:
-                    agents_text += f"  • {link}\n"
+                agents_text += f"  • {link}\n"
             except:
                 agents_text += f"  • ID: <code>{uid}</code>\n"
     else:
@@ -1807,6 +1880,7 @@ async def help_cmd(message: types.Message):
                 agents_text += f"  • {user_link(uid, user.first_name, user.username)}\n"
             except:
                 agents_text += f"  • ID: <code>{uid}</code>\n"
+
     help_text = (
         f"{em('sos', '🆘')} <b>Помощь по боту {BOT_NAME}</b>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n{agents_text}\n━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2293,10 +2367,86 @@ async def list_agents_cmd(message: types.Message):
             name = f"ID {uid}"
         rank_name = AGENT_RANKS.get(rank, "🛡 Агент")
         text += f"{rank_name} — {name}\n"
-    text += f"\n⚜️ <b>Владелец:</b> <code>{OWNER_ID}</code>"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= РАНГИ ЧАТА — .повысить N =================
+# ================= +ПОМОЩЬ / -ПОМОЩЬ =================
+@dp.message(Command("помощь", prefix="-"))
+async def hide_from_help_cmd(message: types.Message):
+    """Скрыть себя из списка агентов в .помощь"""
+    user_id = message.from_user.id
+
+    if not is_agent(user_id) and user_id != OWNER_ID:
+        return await message.reply(
+            f"{em('cross', '❌')} Только агенты могут использовать.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    if is_hidden_agent(user_id):
+        return await message.reply(
+            f"ℹ️ Вы уже <b>скрыты</b> из списка агентов.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    hide_agent(user_id)
+    await message.reply(
+        f"{em('check', '✅')} <b>Вы скрыты из списка агентов!</b>\n\n"
+        f"👻 В <code>.помощь</code> вас больше не видно\n"
+        f"↩️ Вернуться: <code>+помощь</code>",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+@dp.message(Command("помощь", prefix="+"))
+async def show_in_help_cmd(message: types.Message):
+    """Показать себя обратно в списке агентов"""
+    user_id = message.from_user.id
+
+    if not is_agent(user_id) and user_id != OWNER_ID:
+        return await message.reply(
+            f"{em('cross', '❌')} Только агенты могут использовать.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    if not is_hidden_agent(user_id):
+        return await message.reply(
+            f"ℹ️ Вы <b>не скрыты</b> — уже видны в списке.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    unhide_agent(user_id)
+    await message.reply(
+        f"{em('check', '✅')} <b>Вы снова в списке агентов!</b>\n\n"
+        f"🛡 Вас видно в <code>.помощь</code>\n"
+        f"🙈 Скрыться: <code>-помощь</code>",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+# ================= СПИСОК СКРЫТЫХ (владелец) =================
+@dp.message(Command("скрытые", prefix="."))
+async def list_hidden_agents_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    hidden = get_hidden_agents()
+    if not hidden:
+        return await message.reply("📭 Нет скрытых агентов.", disable_web_page_preview=True)
+    text = f"👻 <b>Скрытых агентов:</b> {len(hidden)}\n\n"
+    for uid in hidden:
+        try:
+            u = await bot.get_chat(uid)
+            name = user_link(uid, u.first_name, u.username)
+        except:
+            name = f"ID {uid}"
+        rank = get_agent_rank(uid)
+        rank_name = AGENT_RANKS.get(rank, "—")
+        text += f"• {name} — {rank_name}\n"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+# ================= .ПОВЫСИТЬ N =================
 @dp.message(Command("повысить", prefix="."))
 async def promote_cmd(message: types.Message):
     actor_rank = get_rank(message.chat.id, message.from_user.id)
@@ -2328,7 +2478,6 @@ async def promote_cmd(message: types.Message):
     if current_rank >= 5:
         return await message.reply("⚠️ Это владелец.", parse_mode="HTML", disable_web_page_preview=True)
 
-    # Парсим ранг
     args = message.text.split()
     new_rank = None
     for a in args[1:]:
@@ -2336,7 +2485,6 @@ async def promote_cmd(message: types.Message):
             new_rank = int(a)
             break
 
-    # Если не указан — +1
     if new_rank is None:
         new_rank = current_rank + 1
         if new_rank > 5:
@@ -2369,7 +2517,6 @@ async def promote_cmd(message: types.Message):
         disable_web_page_preview=True
     )
 
-    # ЛС уведомление
     try:
         chat_title = message.chat.title or "чат"
         actor_link = user_link(message.from_user.id, message.from_user.first_name, message.from_user.username)
@@ -2385,7 +2532,7 @@ async def promote_cmd(message: types.Message):
     except:
         pass
 
-# ================= .понизить N =================
+# ================= .ПОНИЗИТЬ N =================
 @dp.message(Command("понизить", prefix="."))
 async def demote_cmd(message: types.Message):
     actor_rank = get_rank(message.chat.id, message.from_user.id)
@@ -2417,7 +2564,6 @@ async def demote_cmd(message: types.Message):
     if current_rank == 0:
         return await message.reply("⚠️ И так участник.", parse_mode="HTML", disable_web_page_preview=True)
 
-    # Парсим ранг
     args = message.text.split()
     new_rank = None
     for a in args[1:]:
@@ -3691,7 +3837,6 @@ async def rm_as_confirm_handler(callback: types.CallbackQuery):
 
     log_antispam_action(target_id, "remove", old_reason, admin_id)
 
-    # Получаем username заранее (без \, как в ошибке)
     try:
         target_chat = await bot.get_chat(target_id)
         target_name = target_chat.first_name or "Юзер"
@@ -3915,34 +4060,56 @@ async def requests_settings_cmd(message: types.Message):
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
     if not has_permission(message.chat.id, message.from_user.id, 4):
         return await message.reply(f"{em('cross', '❌')} Нужен ранг Ст. Админ (4).", parse_mode="HTML", disable_web_page_preview=True)
+
+    # Создать запись в chat_settings
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO chat_settings (chat_id, auto_requests) VALUES (?, 0)", (message.chat.id,))
+        conn.commit()
+
     args = message.text.split(maxsplit=1)
     sub = args[1].strip().lower() if len(args) >= 2 else ""
+
     if not sub:
         auto = is_auto_requests_enabled(message.chat.id)
-        status = "🟢 авто-одобрение" if auto else "🔵 заявки в модерацию"
+        status = "🟢 <b>включено</b>" if auto else "🔴 <b>выключено</b>"
         return await message.reply(
-            f"📥 <b>Заявки на вступление</b>\n\nТекущий режим: {status}\n\n"
+            f"📥 <b>Заявки на вступление</b>\n\n"
+            f"Текущий режим: {status}\n\n"
+            f"🤖 Все заявки обрабатываются <b>ботом автоматически</b>\n\n"
+            f"✅ Юзеры из АС — <b>автоотклонение</b>\n"
+            f"✅ Чистые юзеры — <b>автоодобрение</b>\n\n"
             f"<b>Команды:</b>\n"
-            f"• <code>.заявки модерация</code>\n"
-            f"• <code>.заявки авто</code>\n"
-            f"• <code>.заявки выкл</code>",
+            f"• <code>.заявки вкл</code> — включить обработку\n"
+            f"• <code>.заявки выкл</code> — выключить\n\n"
+            f"<i>📌 Убедитесь, что в Telegram включён режим заявок:</i>\n"
+            f"<i>Управление → Тип чата → Заявки на вступление</i>",
             parse_mode="HTML",
             disable_web_page_preview=True
         )
-    if sub in ["модерация", "вкл", "on"]:
-        update_chat_setting(message.chat.id, "auto_requests", 0)
-        return await message.reply(f"{em('check', '✅')} <b>Заявки в модерацию включены!</b>", parse_mode="HTML", disable_web_page_preview=True)
-    if sub in ["авто", "auto"]:
+
+    if sub in ["вкл", "on", "авто", "auto"]:
         update_chat_setting(message.chat.id, "auto_requests", 1)
-        return await message.reply(f"{em('check', '✅')} <b>Авто-одобрение включено!</b>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(
+            f"{em('check', '✅')} <b>Обработка заявок включена!</b>\n\n"
+            f"🤖 Бот сам одобряет и отклоняет\n"
+            f"⚠️ Антиспам работает всегда",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
     if sub in ["выкл", "off", "стоп"]:
         update_chat_setting(message.chat.id, "auto_requests", 0)
-        return await message.reply(f"{em('check', '✅')} Режим заявок <b>выключен</b>.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(
+            f"{em('check', '✅')} <b>Обработка заявок выключена.</b>\n\n"
+            f"⚠️ Убедитесь, что в Telegram режим заявок тоже отключён",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
     await message.reply(
         "📌 <b>Команды:</b>\n"
-        "• <code>.заявки</code>\n"
-        "• <code>.заявки модерация</code>\n"
-        "• <code>.заявки авто</code>\n"
+        "• <code>.заявки вкл</code>\n"
         "• <code>.заявки выкл</code>",
         parse_mode="HTML",
         disable_web_page_preview=True
@@ -4667,7 +4834,6 @@ async def grid_promote_cmd(message: types.Message):
             set_rank(chat_id, target.id, new_rank, message.from_user.id)
             success += 1
 
-            # Уведомление в чат
             try:
                 notify_text = (
                     f"🏆 <b>Новое повышение!</b>\n\n"
@@ -4766,7 +4932,6 @@ async def grid_demote_cmd(message: types.Message):
             try:
                 remove_rank(chat_id, target.id)
                 success += 1
-
                 try:
                     notify_text = (
                         f"📉 <b>Разжалование в сетке</b>\n\n"
@@ -4789,7 +4954,6 @@ async def grid_demote_cmd(message: types.Message):
             try:
                 set_rank(chat_id, target.id, new_rank, message.from_user.id)
                 success += 1
-
                 try:
                     notify_text = (
                         f"📉 <b>Понижение в сетке</b>\n\n"
@@ -5095,7 +5259,7 @@ async def unban_chat_cmd(message: types.Message):
         conn.commit()
     await message.reply(f"{em('check', '✅')} Чат «{chat_name}» убран.", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= БЭКАП =================
+# ================= БЭКАП (ручной) =================
 @dp.message(Command("бэкап", prefix="."))
 async def backup_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID:
@@ -5111,7 +5275,6 @@ async def backup_cmd(message: types.Message):
         )
     except Exception as e:
         await message.reply(f"{em('cross', '❌')} Ошибка: {e}", disable_web_page_preview=True)
-
 
 @dp.message(Command("бэкапы", prefix="."))
 async def list_backups_cmd(message: types.Message):
@@ -5134,6 +5297,33 @@ async def list_backups_cmd(message: types.Message):
     except Exception as e:
         await message.reply(f"{em('cross', '❌')} Ошибка: {e}", disable_web_page_preview=True)
 
+@dp.message(Command("бэкапсейчас", prefix="."))
+async def backup_now_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    try:
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        import shutil
+        os.makedirs("backups", exist_ok=True)
+        local_backup = f"backups/bot_{timestamp}.db"
+        shutil.copy2(DATABASE_PATH, local_backup)
+
+        with open(DATABASE_PATH, "rb") as f:
+            data = f.read()
+        size_kb = len(data) / 1024
+
+        await message.reply_document(
+            types.BufferedInputFile(data, filename=f"mos_backup_{timestamp}.db"),
+            caption=(
+                f"💾 <b>Бэкап по запросу</b>\n\n"
+                f"📅 {now.strftime('%d.%m.%Y %H:%M')}\n"
+                f"📦 {size_kb:.1f} КБ"
+            ),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", disable_web_page_preview=True)
 
 # ================= ИМПОРТ БАЗЫ =================
 @dp.message(Command("импорт", prefix="."))
@@ -5252,7 +5442,6 @@ async def import_db_cmd(message: types.Message):
             parse_mode="HTML"
         )
 
-
 # ================= ОТКАТ =================
 @dp.message(Command("откат", prefix="."))
 async def restore_old_backup_cmd(message: types.Message):
@@ -5306,31 +5495,79 @@ async def restore_old_backup_cmd(message: types.Message):
     except Exception as e:
         await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
 
-
-# ================= АВТО-БЭКАП =================
+# ================= АВТО-БЭКАП (утро 09:00 + вечер 21:00 МСК) =================
 async def auto_backup_loop():
+    """
+    Отправляет бэкап в ЛС владельцу 2 раза в день:
+    - Утро: 09:00 МСК
+    - Вечер: 21:00 МСК
+    Также делает локальные копии в backups/
+    """
     while True:
         try:
-            os.makedirs("backups", exist_ok=True)
-            import shutil
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = f"backups/bot_{timestamp}.db"
-            shutil.copy2(DATABASE_PATH, backup_path)
-            print(f"✅ Бэкап: {backup_path}")
-            now = datetime.now()
-            for f in os.listdir("backups"):
-                fp = os.path.join("backups", f)
-                if os.path.isfile(fp) and f.startswith("bot_"):
-                    try:
-                        mtime = datetime.fromtimestamp(os.path.getmtime(fp))
-                        if (now - mtime).days > 7:
-                            os.remove(fp)
-                    except:
-                        pass
-        except Exception as e:
-            print(f"❌ Ошибка бэкапа: {e}")
-        await asyncio.sleep(6 * 3600)
+            # МСК = UTC+3
+            now = datetime.now(timezone.utc) + timedelta(hours=3)
+            current_hour = now.hour
+            current_minute = now.minute
 
+            is_morning = (current_hour == 9 and current_minute < 5)
+            is_evening = (current_hour == 21 and current_minute < 5)
+
+            if is_morning or is_evening:
+                period = "morning" if is_morning else "evening"
+                marker_file = f"backups/.last_sent_{period}_{now.date().isoformat()}"
+                os.makedirs("backups", exist_ok=True)
+
+                if not os.path.exists(marker_file):
+                    import shutil
+                    timestamp = now.strftime("%Y%m%d_%H%M%S")
+                    local_backup = f"backups/bot_{timestamp}.db"
+                    shutil.copy2(DATABASE_PATH, local_backup)
+
+                    with open(DATABASE_PATH, "rb") as f:
+                        data = f.read()
+                    size_kb = len(data) / 1024
+
+                    try:
+                        emoji_icon = "🌅" if is_morning else "🌆"
+                        period_text = "Утренний" if is_morning else "Вечерний"
+                        await bot.send_document(
+                            OWNER_ID,
+                            types.BufferedInputFile(
+                                data,
+                                filename=f"mos_backup_{timestamp}.db"
+                            ),
+                            caption=(
+                                f"{emoji_icon} <b>{period_text} бэкап базы</b>\n\n"
+                                f"📅 Дата: <b>{now.strftime('%d.%m.%Y')}</b>\n"
+                                f"⏰ Время: <b>{now.strftime('%H:%M')}</b> (МСК)\n"
+                                f"📦 Размер: <b>{size_kb:.1f} КБ</b>\n\n"
+                                f"<i>Автоматический бэкап</i>"
+                            ),
+                            parse_mode="HTML"
+                        )
+                        print(f"✅ {period_text} бэкап отправлен владельцу")
+                    except Exception as e:
+                        print(f"❌ Не удалось отправить бэкап: {e}")
+
+                    with open(marker_file, "w") as f:
+                        f.write(str(now))
+
+                    # Чистим старые (>7 дней)
+                    try:
+                        for f_name in os.listdir("backups"):
+                            fp = os.path.join("backups", f_name)
+                            if os.path.isfile(fp) and (f_name.startswith("bot_") or f_name.startswith("mos_backup_")):
+                                mtime = datetime.fromtimestamp(os.path.getmtime(fp))
+                                if (datetime.now() - mtime).days > 7:
+                                    os.remove(fp)
+                    except Exception as e:
+                        print(f"⚠️ Ошибка очистки бэкапов: {e}")
+
+        except Exception as e:
+            print(f"❌ Ошибка в auto_backup_loop: {e}")
+
+        await asyncio.sleep(300)
 
 # ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
@@ -5446,7 +5683,6 @@ async def all_messages(message: types.Message):
         except:
             pass
 
-
 # ================= ВХОД В ЧАТ =================
 @dp.chat_member()
 async def on_join(event: types.ChatMemberUpdated):
@@ -5530,20 +5766,24 @@ async def captcha_pass_handler(callback: types.CallbackQuery):
         await bot.send_message(chat_id, f"{em('wave', '👋')} Привет, {mention(user)}!", parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer(f"{em('check', '✅')} Капча пройдена!")
 
-
 # ================= ЗАЯВКИ НА ВСТУПЛЕНИЕ =================
 @dp.chat_join_request()
 async def on_join_request(request: types.ChatJoinRequest):
     chat_id = request.chat.id
     user = request.from_user
+
+    # ===== ПРОВЕРКА АНТИСПАМА =====
     if is_antispam_enabled(chat_id) and is_in_antispam(user.id):
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT reason FROM antispam WHERE user_id = ?", (user.id,))
             r = c.fetchone()
             reason = r[0] if r and r[0] else "Автоматическая блокировка спамера"
-        try: await request.decline()
-        except: pass
+        try:
+            await request.decline()
+        except:
+            pass
+        # Уведомление в ЛС юзеру
         try:
             await bot.send_message(
                 user.id,
@@ -5554,56 +5794,30 @@ async def on_join_request(request: types.ChatJoinRequest):
                 parse_mode="HTML",
                 disable_web_page_preview=True
             )
-        except: pass
+        except:
+            pass
+        # НЕ отправляем в чат модерации
         return
-    if is_auto_requests_enabled(chat_id):
-        try:
-            await request.approve()
-            try:
-                chat = await bot.get_chat(chat_id)
-                await bot.send_message(user.id, f"{em('check', '✅')} <b>Ваша заявка в «{chat.title or 'чат'}» одобрена!</b>", parse_mode="HTML", disable_web_page_preview=True)
-            except: pass
-            return
-        except: pass
+
+    # ===== АВТО-ОДОБРЕНИЕ =====
     try:
-        text = f"📥 <b>Новая заявка</b>\n\n👤 {mention(user)}\n🆔 <code>{user.id}</code>"
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Одобрить", callback_data=f"join_approve:{chat_id}:{user.id}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"join_decline:{chat_id}:{user.id}")
-        ]])
-        await bot.send_message(MODERATION_CHAT_ID, text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
-    except: pass
-
-@dp.callback_query(lambda c: c.data and (c.data.startswith("join_approve:") or c.data.startswith("join_decline:")))
-async def join_request_callback(callback: types.CallbackQuery):
-    if callback.from_user.id != OWNER_ID and not has_agent_rank(callback.from_user.id, 1):
-        return await callback.answer("⛔ Только агенты.", show_alert=True)
-    action, chat_id_str, user_id_str = callback.data.split(":")
-    chat_id = int(chat_id_str)
-    user_id = int(user_id_str)
-    reviewer = mention(callback.from_user)
-    if action == "join_approve":
+        await request.approve()
         try:
-            await bot.approve_chat_join_request(chat_id, user_id)
-            try:
-                chat = await bot.get_chat(chat_id)
-                await bot.send_message(user_id, f"{em('check', '✅')} Ваша заявка в «{chat.title or 'чат'}» одобрена!", parse_mode="HTML", disable_web_page_preview=True)
-            except: pass
-            await callback.message.edit_text(callback.message.text + f"\n\n✅ Одобрено {reviewer}", parse_mode="HTML")
-            await callback.answer(f"{em('check', '✅')} Одобрено!")
-        except Exception as e:
-            await callback.answer(f"{em('cross', '❌')} {e}", show_alert=True)
-    else:
-        try:
-            await bot.decline_chat_join_request(chat_id, user_id)
-            try: await bot.send_message(user_id, f"{em('cross', '❌')} Ваша заявка отклонена.", parse_mode="HTML", disable_web_page_preview=True)
-            except: pass
-            await callback.message.edit_text(callback.message.text + f"\n\n❌ Отклонено {reviewer}", parse_mode="HTML")
-            await callback.answer(f"{em('cross', '❌')} Отклонено!")
-        except Exception as e:
-            await callback.answer(f"{em('cross', '❌')} {e}", show_alert=True)
+            chat = await bot.get_chat(chat_id)
+            await bot.send_message(
+                user.id,
+                f"{em('check', '✅')} <b>Ваша заявка в «{chat.title or 'чат'}» одобрена!</b>",
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+        except:
+            pass
+        # НЕ отправляем в чат модерации
+        return
+    except Exception as e:
+        print(f"❌ Ошибка авто-одобрения: {e}")
 
-
+# ================= /MY_BANS =================
 @dp.message(Command("my_bans"))
 async def my_bans_cmd(message: types.Message):
     if message.chat.type != "private":
@@ -5653,7 +5867,7 @@ async def my_bans_cmd(message: types.Message):
         text += f"\n\n{em('sos', '🆘')} За разблокировкой: {SUPPORT_CHAT_LINK}"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
-
+# ================= БОТ ДОБАВЛЕН =================
 @dp.my_chat_member()
 async def on_bot_added(event: types.ChatMemberUpdated):
     if event.new_chat_member.status not in ["member", "administrator"]:
@@ -5685,7 +5899,6 @@ async def on_bot_added(event: types.ChatMemberUpdated):
         except: pass
         try: await bot.send_message(OWNER_ID, f"{em('check', '✅')} Бот добавлен: <b>{event.chat.title or '—'}</b>", parse_mode="HTML", disable_web_page_preview=True)
         except: pass
-
 
 # ================= BUSINESS =================
 @dp.business_connection()
@@ -5768,7 +5981,6 @@ async def on_business_message(message: types.Message):
             log_antispam_action(target, "add", "Business", sender_id)
             await bot.send_message(chat_id=message.chat.id, text=f"{em('check', '✅')} {name} в «Антиспам»", business_connection_id=conn_id)
         return
-
 
 # ================= ЗАПУСК =================
 async def main():
