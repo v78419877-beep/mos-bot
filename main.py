@@ -2394,9 +2394,70 @@ async def profile_cmd(message: types.Message):
                 return await message.reply(f"{em('cross', '❌')} Пользователь не найден", parse_mode="HTML", disable_web_page_preview=True)
     if not target:
         target = message.from_user
-
     today_count, all_count = get_user_stats(target.id, message.chat.id)
-
+    in_antispam = is_in_antispam(target.id)
+    in_ignore = is_ignored(message.chat.id, target.id)
+    if in_antispam and in_ignore:
+        status = f"{em('ban', '🚫')} В антиспаме + {em('mute', '🔇')} В игноре"
+    elif in_antispam:
+        status = f"{em('ban', '🚫')} В антиспаме"
+    elif in_ignore:
+        status = f"{em('mute', '🔇')} В игноре"
+    else:
+        status = f"{em('check', '✅')} Чист"
+    if is_agent(target.id):
+        ar = get_agent_rank(target.id)
+        status += f" | {em('shield', '🛡')} {AGENT_RANKS.get(ar, 'Агент')}"
+    rank = get_rank(message.chat.id, target.id)
+    rank_name = RANK_NAMES.get(rank, "👤 Участник")
+    nick = get_user_nick(target.id, message.chat.id)
+    rank_text = get_user_rank_text(target.id, message.chat.id)
+    about = get_user_about(target.id)
+    cit = get_citizenship_info(target.id)
+    cit_line = ""
+    if cit:
+        cit_chat_id, cit_date = cit
+        try:
+            cit_chat = await bot.get_chat(cit_chat_id)
+            cit_title = cit_chat.title or f"Чат {cit_chat_id}"
+        except:
+            cit_title = f"Чат {cit_chat_id}"
+        cit_duration = format_citizenship_duration(cit_date)
+        cit_line = f"\n🏠 Гражданин чата «{cit_title}» {cit_duration}"
+    vip_emoji = get_vip_emoji(target.id)
+    text = (
+        f"{em('user', '👤')} <b>Профиль {vip_emoji}{mention(target)}{vip_emoji}</b>\n\n"
+        f"{em('id', '🆔')} ID: <code>{target.id}</code>\n"
+        f"📛 Имя: {target.first_name}\n"
+        f"🔤 Ник: {nick or '—'}\n"
+        f"📌 Звание: {rank_text or '—'}\n"
+        f"🏆 Ранг: {rank_name}\n"
+        f"{em('stats', '📊')} Сегодня: {today_count}\n"
+        f"{em('stats', '📊')} Всего: {all_count}\n"
+        f"{em('shield', '🛡')} Статус: {status}"
+        f"{cit_line}"
+    )
+    user_ach = get_user_achievements(target.id, message.chat.id)
+    if user_ach:
+        ach_text = " ".join([f"{a[2]}{a[1]}" for a in user_ach])
+        text += f"\n\n🎖 Ачивки: {ach_text}"
+    if about:
+        text += f"\n\n✏️ <b>О себе:</b>\n{about}"
+    chart_buf = None
+    try:
+        # График активности ИМЕННО участника в ЭТОМ чате
+        chart_buf = generate_user_chat_activity_chart(target.id, message.chat.id, days=30)
+    except Exception as e:
+        print(f"Ошибка графика: {e}")
+    if chart_buf:
+        await message.reply_photo(
+            photo=types.BufferedInputFile(chart_buf.getvalue(), filename="user_chat_activity.png"),
+            caption=text,
+            parse_mode="HTML"
+        )
+    else:
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        
     # ===== СТАТУС =====
     in_antispam = is_in_antispam(target.id)
     in_ignore = is_ignored(message.chat.id, target.id)
