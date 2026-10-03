@@ -127,16 +127,6 @@ def user_link(user_id, first_name="Пользователь", username=None):
     return f'<b>{first_name}</b>'
 
 def auto_premium(text: str) -> str:
-    if not text:
-        return text
-    for uni, key in UNICODE_TO_KEY.items():
-        eid = EMOJI.get(key)
-        if not eid:
-            continue
-        pattern = f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>'
-        if pattern in text:
-            continue
-        text = text.replace(uni, pattern)
     return text
 
 
