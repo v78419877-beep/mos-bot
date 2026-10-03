@@ -8,7 +8,7 @@ import json
 from urllib.parse import quote
 from urllib.request import urlopen
 from datetime import datetime, timedelta, timezone
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, BaseMiddleware
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import matplotlib
@@ -30,6 +30,41 @@ TELETYPE_URL = "https://teletype.in/@sirenie3/Mos-command"
 BOT_START_TIME = datetime.now()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# ================= MIDDLEWARE ПРЕФИКСОВ =================
+# Поддержка ! , . и известных команд без префикса
+KNOWN_NO_PREFIX_COMMANDS = {
+    "помощь", "пинг", "инфо", "профиль", "анкета", "мойид", "ид", "чатид",
+    "топ", "курс", "бэкап", "бэкапы", "бэкапсейчас", "импорт", "откат",
+    "мешок", "мешки", "пополнить", "коины", "баланс", "коинытоп",
+    "погода", "админы", "скрытые", "инфобот", "кодчата",
+    "развод", "разбан", "размут", "бан", "мут", "кик", "варн", "варны",
+    "снятьварн", "сбросварнов", "правила", "наказания", "баны",
+    "мрп", "гмрп", "вип", "мой вип", "кто вип", "кто не вип",
+    "мой пол", "мой др", "мой город", "звание", "ник", "о себе",
+    "моя стата", "моя пара", "мой брак", "браки", "девиз",
+    "сетка", "чаты", "глобан", "глоразбан", "гломут", "глоразмут",
+    "ачивки", "все ачивки", "ферма", "бкоин", "купить коины",
+}
+
+class PrefixMiddleware(BaseMiddleware):
+    """Поддержка ! и . , а также известных команд без префикса."""
+    async def __call__(self, handler, event, data):
+        if isinstance(event, types.Message) and event.text:
+            txt = event.text
+            stripped = txt.strip()
+            first_word = stripped.split()[0].lower() if stripped else ""
+
+            # !команда → .команда
+            if stripped.startswith("!"):
+                event.text = "." + stripped[1:]
+            # известная команда без префикса → .команда
+            elif first_word in KNOWN_NO_PREFIX_COMMANDS:
+                event.text = "." + stripped
+
+        return await handler(event, data)
+
+dp.message.middleware(PrefixMiddleware())
 
 # ================= ПРЕМИУМ-ЭМОДЗИ =================
 EMOJI = {
@@ -222,6 +257,7 @@ def init_db():
             user_id INTEGER PRIMARY KEY,
             hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+        c.execute("CREATE TABLE IF NOT EXISTS global_settings (key TEXT PRIMARY KEY, value TEXT)")
 
         c.execute("INSERT OR IGNORE INTO agents (user_id, added_by) VALUES (?, ?)", (OWNER_ID, OWNER_ID))
         c.execute("""INSERT OR IGNORE INTO agent_ranks (user_id, rank, added_by) 
@@ -619,15 +655,32 @@ def auto_add_to_antispam_if_needed(user_id):
     return True
 
 # ================= TELEGRAM STARS =================
+def get_global_stars_per_candy():
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS global_settings (key TEXT PRIMARY KEY, value TEXT)")
+        c.execute("SELECT value FROM global_settings WHERE key = 'stars_per_candy'")
+        r = c.fetchone()
+        if not r:
+            c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('stars_per_candy', '2')")
+            conn.commit()
+            return 2
+        return int(r[0])
+
+def set_global_stars_per_candy(value):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS global_settings (key TEXT PRIMARY KEY, value TEXT)")
+        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('stars_per_candy', ?)", (str(value),))
+        conn.commit()
+
 def get_stars_per_candy(chat_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT stars_per_candy FROM stars_settings WHERE chat_id = ?", (chat_id,))
         r = c.fetchone()
         if not r:
-            c.execute("INSERT INTO stars_settings (chat_id, stars_per_candy) VALUES (?, 2)", (chat_id,))
-            conn.commit()
-            return 2
+            return get_global_stars_per_candy()
         return r[0]
 
 def set_stars_per_candy(chat_id, value):
@@ -661,6 +714,7 @@ def complete_stars_payment(payment_id):
 
 # ================= ГРАФИКИ =================
 def generate_user_activity_chart(user_id, days=30):
+    """Активность пользователя по ВСЕМ чатам."""
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT date, SUM(count) FROM messages_stats WHERE user_id = ? GROUP BY date ORDER BY date DESC LIMIT ?", (user_id, days))
@@ -697,7 +751,51 @@ def generate_user_activity_chart(user_id, days=30):
     plt.close()
     return buf
 
+def generate_user_chat_activity_chart(user_id, chat_id, days=30):
+    """Активность пользователя ИМЕННО в этом чате."""
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT date, SUM(count) FROM messages_stats "
+            "WHERE user_id = ? AND chat_id = ? "
+            "GROUP BY date ORDER BY date DESC LIMIT ?",
+            (user_id, chat_id, days)
+        )
+        rows = c.fetchall()
+    if not rows:
+        return None
+    rows = rows[::-1]
+    today = datetime.now().date()
+    date_counts = {d: cnt or 0 for d, cnt in rows}
+    full_dates, full_counts = [], []
+    for i in range(days - 1, -1, -1):
+        day = (today - timedelta(days=i)).isoformat()
+        full_dates.append(day)
+        full_counts.append(date_counts.get(day, 0))
+    fig, ax = plt.subplots(figsize=(10, 4.5))
+    x_labels = [d[5:] for d in full_dates]
+    bars = ax.bar(range(len(full_dates)), full_counts, color='#a6e22e', width=0.7)
+    step = max(1, len(full_dates) // 10)
+    ax.set_xticks(range(0, len(full_dates), step))
+    ax.set_xticklabels([x_labels[i] for i in range(0, len(x_labels), step)], fontsize=8)
+    ax.set_title("Активность в этом чате", fontsize=12, pad=15)
+    ax.set_ylabel("Сообщений", fontsize=9)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.yaxis.grid(True, linestyle='--', alpha=0.4)
+    ax.set_axisbelow(True)
+    for bar, cnt in zip(bars, full_counts):
+        if cnt > 0:
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, str(cnt), ha='center', va='bottom', fontsize=7)
+    plt.tight_layout()
+    buf = BytesIO()
+    plt.savefig(buf, format='png', dpi=90, bbox_inches='tight')
+    buf.seek(0)
+    plt.close()
+    return buf
+
 def generate_chat_activity_chart(chat_id, days=30):
+    """Общая активность чата (все участники)."""
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT date, SUM(count) FROM messages_stats WHERE chat_id = ? GROUP BY date ORDER BY date DESC LIMIT ?", (chat_id, days))
@@ -2038,12 +2136,13 @@ async def profile_cmd(message: types.Message):
         text += f"\n\n✏️ <b>О себе:</b>\n{about}"
     chart_buf = None
     try:
-        chart_buf = generate_chat_activity_chart(message.chat.id, days=30)
+        # ВАЖНО: график активности ИМЕННО этого участника в ЭТОМ чате
+        chart_buf = generate_user_chat_activity_chart(target.id, message.chat.id, days=30)
     except Exception as e:
         print(f"Ошибка графика: {e}")
     if chart_buf:
         await message.reply_photo(
-            photo=types.BufferedInputFile(chart_buf.getvalue(), filename="chat_activity.png"),
+            photo=types.BufferedInputFile(chart_buf.getvalue(), filename="user_chat_activity.png"),
             caption=text,
             parse_mode="HTML"
         )
@@ -2637,6 +2736,7 @@ async def demote_all_cmd(message: types.Message):
     remove_rank(message.chat.id, target.id)
     await message.reply(f"{em('cross', '❌')} {mention(target)} разжалован.", parse_mode="HTML", disable_web_page_preview=True)
 
+# ================= .АДМИНЫ (без владельца бота, показывает владельца чата) =================
 @dp.message(Command("админы", prefix="."))
 async def list_admins_cmd(message: types.Message):
     admins = get_all_admins(message.chat.id)
@@ -2669,7 +2769,7 @@ async def restore_creator_cmd(message: types.Message):
     set_rank(chat_id, user_id, 5, user_id)
     await message.reply(f"{em('check', '✅')} Вы владелец чата!", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= +АДМИН (выдача ТГ-админки) =================
+# ================= +АДМИН (ТГ-админка) =================
 @dp.message(Command("админ", prefix="+"))
 async def grant_admin_cmd(message: types.Message):
     actor_rank = get_rank(message.chat.id, message.from_user.id)
@@ -3459,22 +3559,34 @@ async def buy_candies_stars_cmd(message: types.Message):
 async def change_stars_price_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID:
         return
+    is_private = message.chat.type == "private"
     args = message.text.split()
+
     if len(args) < 2:
-        price = get_stars_per_candy(message.chat.id)
+        price = get_global_stars_per_candy() if is_private else get_stars_per_candy(message.chat.id)
+        scope = "🌐 глобальный" if is_private else f"📍 чат <code>{message.chat.id}</code>"
         return await message.reply(
-            f"💰 <b>Текущий курс:</b> {price} ⭐ = 1 🍬\n\n"
-            f"📌 <code>.курс 15</code> — изменить на 15 ⭐",
+            f"💰 <b>Текущий курс ({scope}):</b> {price} ⭐ = 1 🍬\n\n"
+            f"📌 <code>.курс 15</code> — изменить\n\n"
+            f"<i>В ЛС меняется глобальный курс.</i>\n"
+            f"<i>В группе — только для этой группы.</i>",
             parse_mode="HTML",
             disable_web_page_preview=True
         )
+
     if not args[1].isdigit():
         return await message.reply(f"{em('cross', '❌')} Введите число.", parse_mode="HTML", disable_web_page_preview=True)
+
     new_price = int(args[1])
     if new_price < 1 or new_price > 1000:
         return await message.reply(f"{em('cross', '❌')} Курс от 1 до 1000.", parse_mode="HTML", disable_web_page_preview=True)
-    set_stars_per_candy(message.chat.id, new_price)
-    await message.reply(f"{em('check', '✅')} Курс изменён: <b>{new_price} ⭐ = 1 🍬</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+    if is_private:
+        set_global_stars_per_candy(new_price)
+        await message.reply(f"{em('check', '✅')} <b>Глобальный курс:</b> {new_price} ⭐ = 1 🍬", parse_mode="HTML", disable_web_page_preview=True)
+    else:
+        set_stars_per_candy(message.chat.id, new_price)
+        await message.reply(f"{em('check', '✅')} Курс для этого чата: <b>{new_price} ⭐ = 1 🍬</b>", parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.pre_checkout_query()
 async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
@@ -3672,7 +3784,7 @@ async def antispam_status_cmd(message: types.Message):
         disable_web_page_preview=True
     )
 
-# ================= +АК / +АКИ =================
+# ================= +АК / +АКИ / +АИГН / +АС =================
 @dp.message(Command("ак", prefix="+"))
 async def add_antispam_kick(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
@@ -3760,7 +3872,7 @@ async def add_antispam(message: types.Message):
     log_antispam_action(target.id, "add", reason, message.from_user.id)
     await message.reply(f"{em('check', '✅')} {mention(target)} в «Антиспам»\n📝 {reason}", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= -АС =================
+# ================= -АС (с подтверждением) =================
 @dp.message(Command("ас", prefix="-"))
 async def remove_antispam(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
