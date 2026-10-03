@@ -26,6 +26,7 @@ SUPPORT_CHANNEL_LINK = "https://t.me/moskanalp"
 MODERATION_CHAT_ID = -1004438332613
 SUPPORT_CHAT_ID = -1004438332613
 TELETYPE_URL = "https://teletype.in/@sirenie3/Mos-command"
+TERMS_URL = "https://teletype.in/@sirenie3/POLSVATELCKOEMOS"
 
 BOT_START_TIME = datetime.now()
 bot = Bot(token=BOT_TOKEN)
@@ -33,21 +34,36 @@ dp = Dispatcher()
 
 # ================= УНИВЕРСАЛЬНЫЙ ДЕКОРАТОР КОМАНД =================
 def _match_command(message: types.Message, name_lower: str) -> bool:
-    """Срабатывает на .команда / !команда / /команда / команда (без префикса)."""
+    """
+    Срабатывает на .команда / !команда / /команда / команда (без префикса).
+    Поддерживает многословные команды: 'перенос анкета', 'мой брак', 'мой пол' и т.п.
+    """
     if not message.text:
         return False
     txt = message.text.strip()
     if not txt:
         return False
 
-    # Отрезаем префикс . ! /
+    # Отрезаем первый префикс . ! /
     if txt[0] in ".!/":
         txt = txt[1:].lstrip()
-    # Дальше берём первое слово
+
     if not txt:
         return False
-    first_word = txt.split(maxsplit=1)[0].lower()
-    return first_word == name_lower
+
+    txt_lower = txt.lower()
+
+    # Точное совпадение всей строки с командой
+    if txt_lower == name_lower:
+        return True
+
+    # Сравнение по первым N словам команды
+    words_needed = name_lower.split()
+    words_have = txt_lower.split()
+    if len(words_have) < len(words_needed):
+        return False
+
+    return words_have[:len(words_needed)] == words_needed
 
 
 def cmd(name: str):
@@ -226,6 +242,19 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS link_filter (chat_id INTEGER PRIMARY KEY, enabled INTEGER DEFAULT 0)")
         c.execute("CREATE TABLE IF NOT EXISTS hidden_agents (user_id INTEGER PRIMARY KEY, hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS global_settings (key TEXT PRIMARY KEY, value TEXT)")
+        c.execute("""CREATE TABLE IF NOT EXISTS pending_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_type TEXT,
+            source_chat_id INTEGER,
+            source_key TEXT,
+            placeholder TEXT,
+            link_url TEXT,
+            link_text TEXT,
+            submitted_by INTEGER,
+            status TEXT DEFAULT 'pending',
+            reviewed_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
 
         c.execute("INSERT OR IGNORE INTO agents (user_id, added_by) VALUES (?, ?)", (OWNER_ID, OWNER_ID))
         c.execute("""INSERT OR IGNORE INTO agent_ranks (user_id, rank, added_by) 
@@ -1800,6 +1829,275 @@ def get_weather_emoji(code: int):
     elif code in [95, 96, 99]: return "⛈️ Гроза"
     else: return "🌡️ Погода"
 
+# ================= ПРОВЕРКА ССЫЛОК В ТЕКСТАХ =================
+import re as _re_links
+
+LINK_PATTERN = _re_links.compile(r'\[([^\]]+)\]\((https?://[^\s\)]+)\)|\{(https?://[^\s\}]+)\}')
+
+PLACEHOLDER = "[ссылка на проверке]"
+
+def extract_links_from_text(text: str):
+    """Возвращает (cleaned_text_with_placeholders, list_of_links)."""
+    if not text:
+        return text, []
+    
+    links = []
+    
+    def replacer(match):
+        if match.group(1) and match.group(2):
+            link_text = match.group(1)
+            link_url = match.group(2)
+        else:
+            link_url = match.group(3)
+            link_text = link_url
+        
+        links.append({
+            "text": link_text,
+            "url": link_url
+        })
+        
+        return PLACEHOLDER
+    
+    cleaned = LINK_PATTERN.sub(replacer, text)
+    return cleaned, links
+
+
+def save_pending_links(source_type, source_chat_id, source_key, links, submitted_by):
+    """Сохраняет ссылки на модерацию. Возвращает список id."""
+    ids = []
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        for link in links:
+            c.execute("""INSERT INTO pending_links 
+                (source_type, source_chat_id, source_key, placeholder, link_url, link_text, submitted_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (source_type, source_chat_id, source_key, PLACEHOLDER, link["url"], link["text"], submitted_by))
+            ids.append(c.lastrowid)
+        conn.commit()
+    return ids
+
+
+def get_pending_link(link_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT id, source_type, source_chat_id, source_key, placeholder,
+            link_url, link_text, submitted_by, status FROM pending_links WHERE id = ?""", (link_id,))
+        return c.fetchone()
+
+
+def _replace_first_placeholder(text, placeholder, replacement):
+    """Заменяет ТОЛЬКО первое вхождение placeholder."""
+    idx = text.find(placeholder)
+    if idx == -1:
+        return text
+    return text[:idx] + replacement + text[idx + len(placeholder):]
+
+
+def approve_pending_link(link_id, reviewed_by):
+    info = get_pending_link(link_id)
+    if not info:
+        return False
+    (lid, src_type, chat_id, src_key, placeholder, url, text, submitted_by, status) = info
+    if status != "pending":
+        return False
+    
+    html_link = f'<a href="{url}">{text}</a>'
+    
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        
+        if src_type == "greeting":
+            c.execute("SELECT text FROM greetings WHERE chat_id = ?", (chat_id,))
+            r = c.fetchone()
+            if r:
+                new_text = _replace_first_placeholder(r[0], placeholder, html_link)
+                c.execute("UPDATE greetings SET text = ? WHERE chat_id = ?", (new_text, chat_id))
+        
+        elif src_type == "note":
+            c.execute("SELECT id, text FROM notes WHERE chat_id = ? AND LOWER(name) = LOWER(?)", (chat_id, src_key))
+            r = c.fetchone()
+            if r:
+                new_text = _replace_first_placeholder(r[1], placeholder, html_link)
+                c.execute("UPDATE notes SET text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (new_text, r[0]))
+        
+        elif src_type == "rules":
+            c.execute("SELECT text FROM chat_rules WHERE chat_id = ?", (chat_id,))
+            r = c.fetchone()
+            if r:
+                new_text = _replace_first_placeholder(r[0], placeholder, html_link)
+                c.execute("UPDATE chat_rules SET text = ? WHERE chat_id = ?", (new_text, chat_id))
+        
+        elif src_type == "about":
+            c.execute("SELECT text FROM user_about WHERE user_id = ?", (chat_id,))
+            r = c.fetchone()
+            if r:
+                new_text = _replace_first_placeholder(r[0], placeholder, html_link)
+                c.execute("UPDATE user_about SET text = ? WHERE user_id = ?", (new_text, chat_id))
+        
+        c.execute("UPDATE pending_links SET status = 'approved', reviewed_by = ? WHERE id = ?", (reviewed_by, link_id))
+        conn.commit()
+    return True
+
+
+def reject_pending_link(link_id, reviewed_by):
+    info = get_pending_link(link_id)
+    if not info:
+        return False
+    (lid, src_type, chat_id, src_key, placeholder, url, text, submitted_by, status) = info
+    if status != "pending":
+        return False
+    
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        
+        if src_type == "greeting":
+            c.execute("SELECT text FROM greetings WHERE chat_id = ?", (chat_id,))
+            r = c.fetchone()
+            if r:
+                new_text = _replace_first_placeholder(r[0], placeholder, "")
+                c.execute("UPDATE greetings SET text = ? WHERE chat_id = ?", (new_text, chat_id))
+        
+        elif src_type == "note":
+            c.execute("SELECT id, text FROM notes WHERE chat_id = ? AND LOWER(name) = LOWER(?)", (chat_id, src_key))
+            r = c.fetchone()
+            if r:
+                new_text = _replace_first_placeholder(r[1], placeholder, "")
+                c.execute("UPDATE notes SET text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (new_text, r[0]))
+        
+        elif src_type == "rules":
+            c.execute("SELECT text FROM chat_rules WHERE chat_id = ?", (chat_id,))
+            r = c.fetchone()
+            if r:
+                new_text = _replace_first_placeholder(r[0], placeholder, "")
+                c.execute("UPDATE chat_rules SET text = ? WHERE chat_id = ?", (new_text, chat_id))
+        
+        elif src_type == "about":
+            c.execute("SELECT text FROM user_about WHERE user_id = ?", (chat_id,))
+            r = c.fetchone()
+            if r:
+                new_text = _replace_first_placeholder(r[0], placeholder, "")
+                c.execute("UPDATE user_about SET text = ? WHERE user_id = ?", (new_text, chat_id))
+        
+        c.execute("UPDATE pending_links SET status = 'rejected', reviewed_by = ? WHERE id = ?", (reviewed_by, link_id))
+        conn.commit()
+    return True
+
+
+async def notify_links_for_review(link_ids: list, source_type: str, chat_id: int, chat_title: str, submitted_by: int):
+    if not link_ids:
+        return
+    
+    try:
+        user_chat = await bot.get_chat(submitted_by)
+        user_display = user_link(submitted_by, user_chat.first_name, user_chat.username)
+    except:
+        user_display = f"<code>{submitted_by}</code>"
+    
+    type_names = {
+        "greeting": "📜 Приветствие",
+        "note": "📋 Заметка",
+        "rules": "📕 Правила",
+        "about": "✏️ О себе"
+    }
+    type_display = type_names.get(source_type, source_type)
+    
+    for lid in link_ids:
+        info = get_pending_link(lid)
+        if not info:
+            continue
+        (_, _, _, src_key, placeholder, url, text, submitted_by_, _) = info
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Разрешить", callback_data=f"link_approve:{lid}"),
+            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"link_reject:{lid}")
+        ]])
+        
+        key_line = f"\n📎 Место: <code>{src_key}</code>" if src_key else ""
+        
+        mod_text = (
+            f"🔗 <b>Ссылка на проверке</b>\n\n"
+            f"📁 Тип: <b>{type_display}</b>\n"
+            f"🏠 Чат: <b>{chat_title}</b> (<code>{chat_id}</code>){key_line}\n"
+            f"👤 Отправил: {user_display}\n\n"
+            f"📝 Текст ссылки: <b>{text}</b>\n"
+            f"🌐 URL: <code>{url}</code>"
+        )
+        
+        try:
+            await bot.send_message(
+                MODERATION_CHAT_ID,
+                mod_text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=kb
+            )
+        except Exception as e:
+            print(f"❌ Не удалось отправить ссылку на проверку: {e}")
+
+
+# ===== Обработчики кнопок проверки ссылок =====
+@dp.callback_query(lambda c: c.data and c.data.startswith("link_approve:"))
+async def link_approve_handler(callback: types.CallbackQuery):
+    if callback.from_user.id != OWNER_ID and not has_agent_rank(callback.from_user.id, 1):
+        return await callback.answer("⛔ Только агенты.", show_alert=True)
+    
+    lid = int(callback.data.split(":")[1])
+    info = get_pending_link(lid)
+    if not info:
+        return await callback.answer("⚠️ Не найдено.", show_alert=True)
+    if info[8] != "pending":
+        return await callback.answer("⚠️ Уже обработано.", show_alert=True)
+    
+    approve_pending_link(lid, callback.from_user.id)
+    
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass
+    
+    reviewer = mention(callback.from_user)
+    try:
+        await callback.message.edit_text(
+            callback.message.html_text + f"\n\n✅ <b>ОДОБРЕНО</b> — {reviewer}",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except:
+        pass
+    await callback.answer("✅ Одобрено")
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("link_reject:"))
+async def link_reject_handler(callback: types.CallbackQuery):
+    if callback.from_user.id != OWNER_ID and not has_agent_rank(callback.from_user.id, 1):
+        return await callback.answer("⛔ Только агенты.", show_alert=True)
+    
+    lid = int(callback.data.split(":")[1])
+    info = get_pending_link(lid)
+    if not info:
+        return await callback.answer("⚠️ Не найдено.", show_alert=True)
+    if info[8] != "pending":
+        return await callback.answer("⚠️ Уже обработано.", show_alert=True)
+    
+    reject_pending_link(lid, callback.from_user.id)
+    
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass
+    
+    reviewer = mention(callback.from_user)
+    try:
+        await callback.message.edit_text(
+            callback.message.html_text + f"\n\n❌ <b>ОТКЛОНЕНО</b> — {reviewer}",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except:
+        pass
+    await callback.answer("❌ Отклонено")
+
+
 # ================= АВТОРАЗБАН =================
 async def auto_unban_loop():
     while True:
@@ -1857,7 +2155,11 @@ async def start_cmd(message: types.Message):
     else:
         text += "  <i>пока нет</i>\n"
 
-    text += f"\n{em('sos', '🆘')} <b>Поддержка:</b> {SUPPORT_CHAT_LINK}"
+    text += (
+        f"\n📄 <b>Пользовательское соглашение:</b>\n"
+        f"<a href='{TERMS_URL}'>Прочитать</a>\n\n"
+        f"{em('sos', '🆘')} <b>Поддержка:</b> {SUPPORT_CHAT_LINK}"
+    )
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить бота в чат", url=add_url)],
@@ -1865,7 +2167,8 @@ async def start_cmd(message: types.Message):
         [
             InlineKeyboardButton(text="🆘 Поддержка", url=SUPPORT_CHAT_LINK),
             InlineKeyboardButton(text="📢 Канал", url=SUPPORT_CHANNEL_LINK)
-        ]
+        ],
+        [InlineKeyboardButton(text="📄 Пользовательское соглашение", url=TERMS_URL)]
     ])
 
     await message.reply(
@@ -1890,6 +2193,22 @@ async def buy_candies_menu(callback: types.CallbackQuery):
         disable_web_page_preview=True
     )
     await callback.answer()
+
+# ================= КОМАНДЫ (ссылка на Teletype) =================
+@cmd("команды")
+@cmd("commands")
+async def commands_link_cmd(message: types.Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📖 Открыть команды", url=TELETYPE_URL)
+    ]])
+    await message.reply(
+        f"📖 <b>Все команды бота Mos</b>\n\n"
+        f"Полный список команд, примеры и форматы — в нашем гайде на Teletype.\n\n"
+        f"🔗 <a href='{TELETYPE_URL}'>Mos-command</a>",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=kb
+    )
 
 # ================= ПОМОЩЬ =================
 @cmd("помощь")
@@ -1920,6 +2239,7 @@ async def help_cmd(message: types.Message):
         f"{em('sos', '🆘')} <b>Помощь по боту {BOT_NAME}</b>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n{agents_text}\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📖 <b>Команды:</b> <a href='{TELETYPE_URL}'>Mos-command</a>\n"
+        f"📄 <b>Соглашение:</b> <a href='{TERMS_URL}'>Прочитать</a>\n"
         f"{em('sos', '🆘')} <b>Поддержка:</b> <a href=\"{SUPPORT_CHAT_LINK}\">Перейти</a>\n"
         f"📢 <b>Канал:</b> <a href=\"{SUPPORT_CHANNEL_LINK}\">Перейти</a>"
     )
@@ -3760,13 +4080,41 @@ async def add_antispam_ignore(message: types.Message):
     reason = "Без причины"
     parts = message.text.split('\n', 1)
     if len(parts) > 1: reason = parts[1].strip()
+
+    # Добавляем в АС
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)", (target.id, reason, message.from_user.id))
-        c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)", (target.id, message.chat.id, reason, message.from_user.id))
+        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)",
+                  (target.id, reason, message.from_user.id))
         conn.commit()
+
+    # Игнор во всех чатах
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT DISTINCT chat_id FROM (
+            SELECT chat_id FROM messages_stats
+            UNION
+            SELECT chat_id FROM chat_codes
+            UNION
+            SELECT chat_id FROM admins
+            UNION
+            SELECT chat_id FROM chat_antispam_settings
+        )""")
+        all_chats = [r[0] for r in c.fetchall()]
+        for chat_id in all_chats:
+            c.execute("""INSERT OR REPLACE INTO ignore_list 
+                (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)""",
+                (target.id, chat_id, reason, message.from_user.id))
+        conn.commit()
+
     log_antispam_action(target.id, "add", reason, message.from_user.id)
-    await message.reply(f"{em('check', '✅')} {mention(target)} в «Антиспам»\n{em('mute', '🔇')} Игнор\n📝 {reason}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(
+        f"{em('check', '✅')} {mention(target)} в «Антиспам»\n"
+        f"{em('mute', '🔇')} Игнор <b>во всех чатах</b> ({len(all_chats)})\n"
+        f"📝 {reason}",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+ас") and not m.text.lower().strip().startswith("+ачивка"))
 async def add_antispam(message: types.Message):
@@ -3821,6 +4169,22 @@ async def remove_antispam(message: types.Message):
         msg += f"\n👮 Отменил: {mention(message.from_user)}"
 
         await message.reply(msg, parse_mode="HTML", disable_web_page_preview=True)
+
+        # ЛС юзеру — ошибочный вынос
+        try:
+            await bot.send_message(
+                target.id,
+                f"🗓 <b>Вы были исключены из базы «mos-антиспам»</b>\n\n"
+                f"<i>Вынос был ошибочным — запись удалена.</i>\n\n"
+                f"ℹ️ Чтобы в будущем избежать попадания в базу mos-антиспам, "
+                f"рекомендуем ознакомиться с нашим "
+                f"<a href='{TERMS_URL}'>пользовательским соглашением</a>.",
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+        except:
+            pass
+
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -3889,6 +4253,23 @@ async def rm_as_confirm_handler(callback: types.CallbackQuery):
             disable_web_page_preview=True
         )
     except: pass
+
+    # ЛС юзеру
+    try:
+        await bot.send_message(
+            target_id,
+            f"🗓 <b>Вы были исключены из базы «mos-антиспам»</b>\n\n"
+            f"Учтите, что каждый последующий вынос повышается в цене. "
+            f"За подробностями обращайтесь к агентам поддержки.\n\n"
+            f"Чтобы в будущем избежать попадания в базу mos-антиспам, "
+            f"рекомендуем ознакомиться с нашим "
+            f"<a href='{TERMS_URL}'>пользовательским соглашением</a>.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except:
+        pass
+
     await callback.answer(f"{em('check', '✅')} Вынесен")
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("rm_as_cancel:"))
@@ -3904,20 +4285,124 @@ async def rm_as_cancel_handler(callback: types.CallbackQuery):
         pass
     await callback.answer(f"{em('cross', '❌')} Отменено")
 
+# ===== -АИГН (полный вынос: АС + игнор) =====
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("-аигн"))
 async def remove_ignore(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
         return
+
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML", disable_web_page_preview=True)
-    if not is_ignored(message.chat.id, target.id):
-        return await message.reply("⚠️ Не в игноре.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(
+            f"{em('cross', '❌')} Ответьте или укажите @user / ID",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    in_as = is_in_antispam(target.id)
+    in_ig = False
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("DELETE FROM ignore_list WHERE user_id = ? AND chat_id = ?", (target.id, message.chat.id))
+        c.execute("SELECT 1 FROM ignore_list WHERE user_id = ? LIMIT 1", (target.id,))
+        in_ig = c.fetchone() is not None
+
+    if not in_as and not in_ig:
+        return await message.reply(
+            "⚠️ Юзер не в антиспаме и не в игноре.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    info = get_antispam_info(target.id)
+    old_reason = info[0] if info else "неизвестно"
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM antispam WHERE user_id = ?", (target.id,))
+        c.execute("DELETE FROM ignore_list WHERE user_id = ?", (target.id,))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} {mention(target)} убран из игнора", parse_mode="HTML", disable_web_page_preview=True)
+
+    log_antispam_action(target.id, "remove", old_reason, message.from_user.id)
+
+    await message.reply(
+        f"{em('check', '✅')} {mention(target)} вынесен из <b>антиспама</b> и <b>игнора</b> (во всех чатах)\n"
+        f"📝 Была причина: {old_reason}",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+    try:
+        await bot.send_message(
+            target.id,
+            f"🗓 <b>Вы были исключены из базы «mos-антиспам»</b>\n\n"
+            f"Учтите, что каждый последующий вынос повышается в цене. "
+            f"За подробностями обращайтесь к агентам поддержки.\n\n"
+            f"Чтобы в будущем избежать попадания в базу mos-антиспам, "
+            f"рекомендуем ознакомиться с нашим "
+            f"<a href='{TERMS_URL}'>пользовательским соглашением</a>.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except:
+        pass
+
+# ===== -ИГНОР (только игнор) =====
+@dp.message(lambda m: m.text and m.text.lower().strip().startswith("-игнор"))
+async def remove_ignore_only(message: types.Message):
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
+        return
+
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply(
+            f"{em('cross', '❌')} Ответьте или укажите @user / ID",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM ignore_list WHERE user_id = ? LIMIT 1", (target.id,))
+        in_ig = c.fetchone() is not None
+
+    if not in_ig:
+        return await message.reply(
+            "⚠️ Не в игноре.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM ignore_list WHERE user_id = ?", (target.id,))
+        conn.commit()
+
+    still_in_as = is_in_antispam(target.id)
+    note = ""
+    if still_in_as:
+        note = "\n\n⚠️ <i>Юзер всё ещё в базе mos-антиспам.</i>"
+
+    await message.reply(
+        f"{em('check', '✅')} {mention(target)} убран из <b>игнора</b> (во всех чатах){note}",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+    if not still_in_as:
+        try:
+            await bot.send_message(
+                target.id,
+                f"🗓 <b>Вы были исключены из базы «mos-антиспам»</b>\n\n"
+                f"Учтите, что каждый последующий вынос повышается в цене. "
+                f"За подробностями обращайтесь к агентам поддержки.\n\n"
+                f"Чтобы в будущем избежать попадания в базу mos-антиспам, "
+                f"рекомендуем ознакомиться с нашим "
+                f"<a href='{TERMS_URL}'>пользовательским соглашением</a>.",
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+        except:
+            pass
 
 # ================= ПРАВИЛА =================
 @cmd("правила")
@@ -3935,9 +4420,23 @@ async def rules_cmd(message: types.Message):
         parts = message.text.split("\n", 1)
         if len(parts) < 2:
             return await message.reply("📌 <code>.правила установить</code> (текст на новой строке)", parse_mode="HTML", disable_web_page_preview=True)
-        text = parts[1].strip()[:3500]
-        text = auto_premium(text)
-        set_chat_rules(message.chat.id, text, message.from_user.id)
+        raw_text = parts[1].strip()[:3500]
+        
+        cleaned_text, links = extract_links_from_text(raw_text)
+        cleaned_text = auto_premium(cleaned_text)
+        
+        set_chat_rules(message.chat.id, cleaned_text, message.from_user.id)
+        
+        if links:
+            chat_title = message.chat.title or "чат"
+            link_ids = save_pending_links("rules", message.chat.id, "", links, message.from_user.id)
+            await notify_links_for_review(link_ids, "rules", message.chat.id, chat_title, message.from_user.id)
+            return await message.reply(
+                f"{em('check', '✅')} Правила установлены!\n\n"
+                f"⚠️ Обнаружено <b>{len(links)}</b> ссылок — отправлены на проверку агентам.",
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
         return await message.reply(f"{em('check', '✅')} Правила установлены!", parse_mode="HTML", disable_web_page_preview=True)
     if sub in ["сброс", "удалить"]:
         if not has_permission(message.chat.id, message.from_user.id, 3):
@@ -4004,7 +4503,7 @@ async def link_filter_cmd(message: types.Message):
         disable_web_page_preview=True
     )
 
-# ================= ПРИВЕТСТВИЕ =================
+# ================= ПРИВЕТСТВИЕ (с проверкой ссылок) =================
 @cmd("приветствие")
 async def greeting_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
@@ -4022,7 +4521,11 @@ async def greeting_cmd(message: types.Message):
                 "<code>.приветствие установить\n"
                 "Привет, {name}! Добро пожаловать в {chat} 🎉\n"
                 "Правила: {rules}</code>\n\n"
-                "🔤 <b>Плейсхолдеры:</b> <code>{name}</code>, <code>{chat}</code>, <code>{rules}</code>, <code>{link}</code>",
+                "🔤 <b>Плейсхолдеры:</b> <code>{name}</code>, <code>{chat}</code>, <code>{rules}</code>, <code>{link}</code>\n\n"
+                "🔗 <b>Ссылки:</b>\n"
+                "<code>[текст](https://t.me/...)</code>\n"
+                "<code>{https://t.me/...}</code>\n"
+                "<i>Будут отправлены на проверку агентам.</i>",
                 parse_mode="HTML",
                 disable_web_page_preview=True
             )
@@ -4031,16 +4534,31 @@ async def greeting_cmd(message: types.Message):
         parts = message.text.split("\n", 1)
         if len(parts) < 2:
             return await message.reply("📌 <b>Формат:</b>\n<code>.приветствие установить\nПривет, {name}!</code>", parse_mode="HTML", disable_web_page_preview=True)
-        text = parts[1].strip()
-        if not text:
+        raw_text = parts[1].strip()
+        if not raw_text:
             return await message.reply(f"{em('cross', '❌')} Текст пустой.", parse_mode="HTML", disable_web_page_preview=True)
-        if len(text) > 1000:
+        if len(raw_text) > 1000:
             return await message.reply(f"{em('cross', '❌')} Максимум 1000 символов.", parse_mode="HTML", disable_web_page_preview=True)
-        text = auto_premium(text)
-        set_greeting(message.chat.id, text, message.from_user.id)
+        
+        cleaned_text, links = extract_links_from_text(raw_text)
+        cleaned_text = auto_premium(cleaned_text)
+        
+        set_greeting(message.chat.id, cleaned_text, message.from_user.id)
+        
+        if links:
+            chat_title = message.chat.title or "чат"
+            link_ids = save_pending_links("greeting", message.chat.id, "", links, message.from_user.id)
+            await notify_links_for_review(link_ids, "greeting", message.chat.id, chat_title, message.from_user.id)
+            return await message.reply(
+                f"{em('check', '✅')} <b>Приветствие установлено!</b>\n\n"
+                f"⚠️ Обнаружено <b>{len(links)}</b> ссылок — отправлены на проверку агентам.\n"
+                f"Пока не одобрят, вместо ссылок будет текст <code>{PLACEHOLDER}</code>.",
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
         return await message.reply(
             f"{em('check', '✅')} <b>Приветствие установлено!</b>\n\n"
-            f"📝 <i>Проверка:</i>\n{format_greeting(text, message.from_user, message.chat)}",
+            f"📝 <i>Проверка:</i>\n{format_greeting(cleaned_text, message.from_user, message.chat)}",
             parse_mode="HTML",
             disable_web_page_preview=True
         )
@@ -4211,14 +4729,31 @@ async def show_user_nick_cmd(message: types.Message):
     if not nick: return await message.reply("📭 Нет ника.", parse_mode="HTML", disable_web_page_preview=True)
     await message.reply(f"🔤 Ник {mention(target)}: <b>{nick}</b>", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= О СЕБЕ =================
+# ================= О СЕБЕ (с проверкой ссылок) =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+о себе"))
 async def set_about_cmd(message: types.Message):
     parts = message.text.split("\n", 1)
     if len(parts) < 2:
         return await message.reply("📌 <code>+О себе</code> (текст на новой строке)", parse_mode="HTML", disable_web_page_preview=True)
-    set_user_about(message.from_user.id, auto_premium(parts[1].strip()[:500]))
-    await message.reply("✅ Описание сохранено.", parse_mode="HTML", disable_web_page_preview=True)
+    raw_text = parts[1].strip()[:500]
+    
+    cleaned_text, links = extract_links_from_text(raw_text)
+    cleaned_text = auto_premium(cleaned_text)
+    
+    set_user_about(message.from_user.id, cleaned_text)
+    
+    if links:
+        chat_title = message.chat.title or "ЛС"
+        link_ids = save_pending_links("about", message.from_user.id, "", links, message.from_user.id)
+        await notify_links_for_review(link_ids, "about", message.from_user.id, chat_title, message.from_user.id)
+        await message.reply(
+            f"✅ Описание сохранено.\n"
+            f"⚠️ {len(links)} ссылок отправлено на проверку агентам.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    else:
+        await message.reply("✅ Описание сохранено.", parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-о себе")
 async def remove_about_cmd(message: types.Message):
@@ -4462,7 +4997,7 @@ async def extend_marriage(message: types.Message):
         conn.commit()
     await message.reply(f"{em('check', '✅')} Брак продлён на <b>{days}</b> дн. за <b>{total}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= ЗАМЕТКИ =================
+# ================= ЗАМЕТКИ (с проверкой ссылок) =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+заметка "))
 async def create_note_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 3):
@@ -4470,11 +5005,26 @@ async def create_note_cmd(message: types.Message):
     parts = message.text.split("\n", 1)
     name = parts[0].replace("+Заметка", "").replace("+заметка", "").strip()
     if not name or len(parts) < 2: return
-    body = parts[1].strip()[:3500]
-    body = auto_premium(body)
-    note_id = add_note(message.chat.id, name, body, message.from_user.id)
+    raw_body = parts[1].strip()[:3500]
+    
+    cleaned_body, links = extract_links_from_text(raw_body)
+    cleaned_body = auto_premium(cleaned_body)
+    
+    note_id = add_note(message.chat.id, name, cleaned_body, message.from_user.id)
     if not note_id: return await message.reply(f"{em('cross', '❌')} Заметка уже есть.", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"{em('check', '✅')} Заметка <b>{name}</b> создана (ID: {note_id})", parse_mode="HTML", disable_web_page_preview=True)
+    
+    if links:
+        chat_title = message.chat.title or "чат"
+        link_ids = save_pending_links("note", message.chat.id, name, links, message.from_user.id)
+        await notify_links_for_review(link_ids, "note", message.chat.id, chat_title, message.from_user.id)
+        await message.reply(
+            f"{em('check', '✅')} Заметка <b>{name}</b> создана (ID: {note_id})\n\n"
+            f"⚠️ Обнаружено <b>{len(links)}</b> ссылок — отправлены на проверку агентам.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    else:
+        await message.reply(f"{em('check', '✅')} Заметка <b>{name}</b> создана (ID: {note_id})", parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("-заметка "))
 async def delete_note_cmd(message: types.Message):
@@ -4816,9 +5366,7 @@ async def grid_promote_cmd(message: types.Message):
     notified = 0
 
     rank_name = RANK_NAMES.get(new_rank, f"Ранг {new_rank}")
-    actor_name = message.from_user.first_name
-    actor_username = message.from_user.username
-    actor_link = user_link(message.from_user.id, actor_name, actor_username)
+    actor_link = user_link(message.from_user.id, message.from_user.first_name, message.from_user.username)
 
     for chat_id, hidden, desc in chats:
         try:
@@ -4910,9 +5458,7 @@ async def grid_demote_cmd(message: types.Message):
     failed = 0
     notified = 0
 
-    actor_name = message.from_user.first_name
-    actor_username = message.from_user.username
-    actor_link = user_link(message.from_user.id, actor_name, actor_username)
+    actor_link = user_link(message.from_user.id, message.from_user.first_name, message.from_user.username)
 
     if new_rank == 0:
         remove_grid_user_rank(grid_id, target.id)
@@ -4982,7 +5528,7 @@ async def grid_demote_cmd(message: types.Message):
     except:
         pass
 
-# ================= СЕТКА: +АДМИН (ТГ-админка во всех чатах) =================
+# ================= СЕТКА: +АДМИН =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("сетка +админ"))
 async def grid_tg_admin_cmd(message: types.Message):
     grid_id = get_chat_grid(message.chat.id)
@@ -5033,8 +5579,6 @@ async def grid_tg_admin_cmd(message: types.Message):
             success += 1
 
             try:
-                chat = await bot.get_chat(chat_id)
-                chat_title = chat.title or f"Чат {chat_id}"
                 await bot.send_message(
                     chat_id,
                     f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b>\n"
@@ -5256,6 +5800,118 @@ async def catalog_slash_cmd(message: types.Message):
         if link: text += f"   🔗 <a href='{link}'>Перейти</a>\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
+@dp.message(lambda m: m.text and m.text.lower().strip().startswith("-каталог"))
+async def catalog_delete_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 2):
+        return await message.reply(
+            f"{em('cross', '❌')} Только агенты 2+.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        return await message.reply(
+            "📌 <b>Формат:</b>\n"
+            "<code>-каталог @username</code>\n"
+            "<code>-каталог t.me/chatname</code>\n"
+            "<code>-каталог https://t.me/chatname</code>\n"
+            "<code>-каталог КОДЧАТА</code>\n"
+            "<code>-каталог 123456789</code> (chat_id)",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    raw = args[1].strip()
+
+    target_chat_id = None
+    target_username = None
+
+    if re.fullmatch(r"-?\d+", raw):
+        target_chat_id = int(raw)
+    else:
+        code_chat_id = get_chat_by_code(raw.upper())
+        if code_chat_id:
+            target_chat_id = code_chat_id
+        else:
+            cleaned = raw
+            if cleaned.startswith("@"):
+                cleaned = cleaned[1:]
+            cleaned = re.sub(r"^https?://", "", cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r"^(t\.me/|telegram\.me/|telegram\.dog/)", "", cleaned, flags=re.IGNORECASE)
+            cleaned = cleaned.strip("/").strip()
+            if "/" in cleaned:
+                cleaned = cleaned.split("/")[-1]
+
+            if cleaned:
+                target_username = cleaned
+                try:
+                    chat = await bot.get_chat(f"@{cleaned}")
+                    target_chat_id = chat.id
+                except:
+                    target_chat_id = None
+
+    if target_chat_id is None and target_username:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT chat_id FROM catalog WHERE LOWER(link) LIKE ?", (f"%{target_username.lower()}%",))
+            r = c.fetchone()
+            if r:
+                target_chat_id = r[0]
+
+    if target_chat_id is None:
+        return await message.reply(
+            f"{em('cross', '❌')} Чат не найден в каталоге.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    entry = get_catalog_entry(target_chat_id)
+    if not entry:
+        return await message.reply(
+            f"{em('cross', '❌')} Этого чата нет в каталоге.",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    title = entry[1] or f"Чат {target_chat_id}"
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM catalog WHERE chat_id = ?", (target_chat_id,))
+        c.execute("DELETE FROM catalog_queue WHERE chat_id = ?", (target_chat_id,))
+        conn.commit()
+
+    await message.reply(
+        f"{em('check', '✅')} <b>Чат удалён из каталога</b>\n\n"
+        f"📛 Название: <b>{title}</b>\n"
+        f"🆔 ID: <code>{target_chat_id}</code>",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+    try:
+        await bot.send_message(
+            target_chat_id,
+            f"{em('cross', '❌')} <b>Ваш чат удалён из каталога.</b>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except:
+        pass
+
+    try:
+        await bot.send_message(
+            MODERATION_CHAT_ID,
+            f"🗑 <b>Удаление из каталога</b>\n\n"
+            f"📛 {title}\n"
+            f"🆔 <code>{target_chat_id}</code>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except:
+        pass
+
 @dp.callback_query(lambda c: c.data and (c.data.startswith("catalog_approve:") or c.data.startswith("catalog_reject:")))
 async def catalog_review_handler(callback: types.CallbackQuery):
     if callback.from_user.id != OWNER_ID and not has_agent_rank(callback.from_user.id, 2):
@@ -5292,6 +5948,294 @@ async def catalog_review_handler(callback: types.CallbackQuery):
             await callback.message.reply(f"{em('cross', '❌')} Отклонено {reviewer}", disable_web_page_preview=True)
         except: pass
         await callback.answer(f"{em('cross', '❌')} Отклонено!")
+
+# ================= ПЕРЕНОС ДАННЫХ АККАУНТА =================
+@cmd("перенос анкета")
+async def transfer_profile_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return await message.reply(f"{em('cross', '❌')} Только владелец бота.", parse_mode="HTML", disable_web_page_preview=True)
+
+    args = message.text.split()
+    if len(args) < 4:
+        return await message.reply(
+            "📌 <b>Формат:</b>\n"
+            "<code>.перенос анкета @от @кому</code>\n\n"
+            "<b>Переносит только:</b>\n"
+            "• Анкета (пол, ДР, город, био, девиз)\n"
+            "• О себе\n"
+            "• Ники\n"
+            "• Звания\n"
+            "• Гражданство",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    async def get_uid(s: str):
+        s = s.strip()
+        try:
+            if s.isdigit(): return int(s)
+            u = await bot.get_chat(s if s.startswith("@") else f"@{s}")
+            return u.id
+        except:
+            return None
+
+    from_id = await get_uid(args[2])
+    to_id = await get_uid(args[3])
+
+    if not from_id or not to_id:
+        return await message.reply(f"{em('cross', '❌')} Не удалось определить.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if from_id == to_id:
+        return await message.reply(f"{em('cross', '❌')} Один и тот же юзер.", parse_mode="HTML", disable_web_page_preview=True)
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+
+        c.execute("""SELECT gender, birth_date, birth_visibility, city, bio, motto,
+            show_citizenship, is_hidden FROM user_profiles WHERE user_id = ?""", (from_id,))
+        prof = c.fetchone()
+        if prof:
+            c.execute("""INSERT OR REPLACE INTO user_profiles
+                (user_id, gender, birth_date, birth_visibility, city, bio, motto, show_citizenship, is_hidden)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (to_id, *prof))
+
+        c.execute("SELECT text FROM user_about WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO user_about (user_id, text) VALUES (?, ?)", (to_id, r[0]))
+
+        c.execute("SELECT chat_id, nick FROM user_nicks WHERE user_id = ?", (from_id,))
+        for chat_id, nick in c.fetchall():
+            c.execute("INSERT OR REPLACE INTO user_nicks (user_id, chat_id, nick) VALUES (?, ?, ?)", (to_id, chat_id, nick))
+
+        c.execute("SELECT chat_id, rank FROM user_ranks WHERE user_id = ?", (from_id,))
+        for chat_id, rank in c.fetchall():
+            c.execute("INSERT OR REPLACE INTO user_ranks (user_id, chat_id, rank) VALUES (?, ?, ?)", (to_id, chat_id, rank))
+
+        c.execute("SELECT chat_id, became_at FROM citizenship WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO citizenship (user_id, chat_id, became_at) VALUES (?, ?, ?)",
+                      (to_id, r[0], r[1]))
+
+        conn.commit()
+
+    await message.reply(
+        f"{em('check', '✅')} <b>Анкета перенесена!</b>\n\n"
+        f"📤 <code>{from_id}</code> → 📥 <code>{to_id}</code>",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+@cmd("перенос")
+async def transfer_account_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return await message.reply(f"{em('cross', '❌')} Только владелец бота.", parse_mode="HTML", disable_web_page_preview=True)
+
+    args = message.text.split()
+    if len(args) < 3:
+        return await message.reply(
+            "📌 <b>Формат:</b>\n"
+            "<code>.перенос @от @кому</code>\n\n"
+            "<b>Что переносится:</b>\n"
+            "• Анкета, О себе, Ники, Звания\n"
+            "• Ранги в чатах, Гражданство\n"
+            "• 🍬 Ириски, ☢️ Коины\n"
+            "• 🎖 Ачивки, 💎 VIP\n"
+            "• 📊 Статистика, РП, ГМРП\n"
+            "• ⚠️ Варны, 👑 Агентский ранг\n\n"
+            "<i>Операция необратима. Сделай бэкап!</i>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    async def get_uid(s: str):
+        s = s.strip()
+        try:
+            if s.isdigit():
+                return int(s)
+            if s.startswith("@"):
+                u = await bot.get_chat(s)
+                return u.id
+            u = await bot.get_chat(s)
+            return u.id
+        except:
+            return None
+
+    from_id = await get_uid(args[1])
+    to_id = await get_uid(args[2])
+
+    if not from_id or not to_id:
+        return await message.reply(f"{em('cross', '❌')} Не удалось определить пользователей.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if from_id == to_id:
+        return await message.reply(f"{em('cross', '❌')} Один и тот же юзер.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if to_id == OWNER_ID:
+        return await message.reply(f"{em('cross', '❌')} Нельзя переносить на владельца.", parse_mode="HTML", disable_web_page_preview=True)
+
+    status_msg = await message.reply(
+        f"♻️ Переношу данные...\n\n"
+        f"📤 От: <code>{from_id}</code>\n"
+        f"📥 Кому: <code>{to_id}</code>",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+    stats = {}
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+
+        c.execute("""SELECT gender, birth_date, birth_visibility, city, bio, motto,
+            show_citizenship, is_hidden FROM user_profiles WHERE user_id = ?""", (from_id,))
+        prof = c.fetchone()
+        if prof:
+            c.execute("""INSERT OR REPLACE INTO user_profiles
+                (user_id, gender, birth_date, birth_visibility, city, bio, motto, show_citizenship, is_hidden)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", (to_id, *prof))
+            stats["Профиль"] = 1
+
+        c.execute("SELECT text FROM user_about WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO user_about (user_id, text) VALUES (?, ?)", (to_id, r[0]))
+            stats["О себе"] = 1
+
+        c.execute("SELECT chat_id, nick FROM user_nicks WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, nick in rows:
+            c.execute("INSERT OR REPLACE INTO user_nicks (user_id, chat_id, nick) VALUES (?, ?, ?)", (to_id, chat_id, nick))
+        stats["Ники"] = len(rows)
+
+        c.execute("SELECT chat_id, rank FROM user_ranks WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, rank in rows:
+            c.execute("INSERT OR REPLACE INTO user_ranks (user_id, chat_id, rank) VALUES (?, ?, ?)", (to_id, chat_id, rank))
+        stats["Звания"] = len(rows)
+
+        c.execute("SELECT chat_id, rank FROM admins WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, rank in rows:
+            c.execute("INSERT OR REPLACE INTO admins (user_id, chat_id, rank, added_by) VALUES (?, ?, ?, ?)",
+                      (to_id, chat_id, rank, message.from_user.id))
+        stats["Ранги чатов"] = len(rows)
+
+        c.execute("SELECT chat_id, became_at FROM citizenship WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO citizenship (user_id, chat_id, became_at) VALUES (?, ?, ?)",
+                      (to_id, r[0], r[1]))
+            stats["Гражданство"] = 1
+
+        c.execute("SELECT balance FROM candies WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO candies (user_id, balance) VALUES (?, ?)", (to_id, r[0]))
+            stats["🍬 Ириски"] = r[0]
+            c.execute("UPDATE candies SET balance = 0 WHERE user_id = ?", (from_id,))
+
+        c.execute("SELECT balance, total_farmed FROM coins WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("""INSERT OR REPLACE INTO coins (user_id, balance, total_farmed, last_tax, last_farm)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP, NULL)""", (to_id, r[0], r[1]))
+            stats["☢️ Коины"] = r[0]
+            c.execute("UPDATE coins SET balance = 0 WHERE user_id = ?", (from_id,))
+
+        c.execute("SELECT chat_id, achievement_id, given_by, given_at FROM user_achievements WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, ach_id, giver, given_at in rows:
+            try:
+                c.execute("""INSERT OR IGNORE INTO user_achievements
+                    (user_id, chat_id, achievement_id, given_by, given_at)
+                    VALUES (?, ?, ?, ?, ?)""", (to_id, chat_id, ach_id, giver, given_at))
+            except:
+                pass
+        stats["🎖 Ачивки"] = len(rows)
+
+        c.execute("SELECT expires_at, emoji FROM vip_users WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO vip_users (user_id, expires_at, emoji) VALUES (?, ?, ?)",
+                      (to_id, r[0], r[1]))
+            c.execute("DELETE FROM vip_users WHERE user_id = ?", (from_id,))
+            stats["💎 VIP"] = 1
+
+        c.execute("SELECT chat_id, date, count FROM messages_stats WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        moved = 0
+        for chat_id, date, count in rows:
+            try:
+                c.execute("""INSERT INTO messages_stats (user_id, chat_id, date, count)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(user_id, chat_id, date) DO UPDATE SET count = count + ?""",
+                    (to_id, chat_id, date, count, count))
+                moved += 1
+            except:
+                pass
+        c.execute("DELETE FROM messages_stats WHERE user_id = ?", (from_id,))
+        stats["📊 Статистика"] = moved
+
+        c.execute("SELECT chat_id, name, emoji, text FROM rp_commands WHERE created_by = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, name, emoji, text in rows:
+            try:
+                c.execute("""INSERT OR REPLACE INTO rp_commands
+                    (chat_id, name, emoji, text, created_by) VALUES (?, ?, ?, ?, ?)""",
+                    (chat_id, name, emoji, text, to_id))
+            except:
+                pass
+        c.execute("DELETE FROM rp_commands WHERE created_by = ?", (from_id,))
+        stats["РП"] = len(rows)
+
+        c.execute("SELECT name, emoji, text FROM global_rp_commands WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for name, emoji, text in rows:
+            try:
+                c.execute("""INSERT OR REPLACE INTO global_rp_commands
+                    (user_id, name, emoji, text) VALUES (?, ?, ?, ?)""",
+                    (to_id, name, emoji, text))
+            except:
+                pass
+        c.execute("DELETE FROM global_rp_commands WHERE user_id = ?", (from_id,))
+        stats["ГМРП"] = len(rows)
+
+        c.execute("UPDATE warns SET user_id = ? WHERE user_id = ?", (to_id, from_id))
+        stats["⚠️ Варны"] = c.rowcount
+
+        c.execute("SELECT rank FROM agent_ranks WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO agents (user_id, added_by) VALUES (?, ?)", (to_id, message.from_user.id))
+            c.execute("INSERT OR REPLACE INTO agent_ranks (user_id, rank, added_by) VALUES (?, ?, ?)",
+                      (to_id, r[0], message.from_user.id))
+            c.execute("DELETE FROM agents WHERE user_id = ?", (from_id,))
+            c.execute("DELETE FROM agent_ranks WHERE user_id = ?", (from_id,))
+            stats["👑 Агент"] = r[0]
+
+        conn.commit()
+
+    lines = "\n".join([f"  • {k}: <b>{v}</b>" for k, v in stats.items()]) or "  <i>нет данных</i>"
+    await status_msg.edit_text(
+        f"{em('check', '✅')} <b>Перенос выполнен!</b>\n\n"
+        f"📤 От: <code>{from_id}</code>\n"
+        f"📥 Кому: <code>{to_id}</code>\n\n"
+        f"<b>Перенесено:</b>\n{lines}",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+
+    try:
+        await bot.send_message(
+            to_id,
+            f"🎁 <b>Владелец перенёс вам данные аккаунта!</b>\n\n"
+            f"Проверьте свой профиль: <code>.профиль</code>",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except:
+        pass
 
 # ================= ВЛАДЕЛЕЦ =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+опасно"))
