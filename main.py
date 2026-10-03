@@ -4709,7 +4709,7 @@ async def get_note_cmd(message: types.Message):
     if not arg:
         return
     note = get_note_by_number(message.chat.id, int(arg)) if arg.isdigit() else get_note_by_name(message.chat.id, arg)
-        if not note:
+    if not note:
         return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML", disable_web_page_preview=True)
     try:
         await message.reply(note[2], parse_mode="HTML", disable_web_page_preview=True)
