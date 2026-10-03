@@ -131,8 +131,12 @@ def auto_premium(text: str) -> str:
         return text
     for uni, key in UNICODE_TO_KEY.items():
         eid = EMOJI.get(key)
-        if eid and uni in text:
-            text = text.replace(uni, f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>')
+        if not eid:
+            continue
+        pattern = f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>'
+        if pattern in text:
+            continue
+        text = text.replace(uni, pattern)
     return text
 
 
