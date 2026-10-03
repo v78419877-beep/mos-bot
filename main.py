@@ -4699,27 +4699,40 @@ async def list_notes_cmd(message: types.Message):
         text += f"{i}. <b>{name}</b>\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith(("заметка ", ".заметка ", "!заметка ", "/заметка ")))
+@cmd("заметка")
 async def get_note_cmd(message: types.Message):
-    txt = message.text.strip()
-    for prefix in (".", "!", "/"):
-        if txt.startswith(prefix):
-            txt = txt[1:].lstrip()
-            break
-    parts = txt.split(maxsplit=1)
-    if len(parts) < 2:
-        return
-    arg = parts[1].strip()
-    if not arg:
-        return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        return await message.reply(
+            "📌 <code>Заметка {название или номер}</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    arg = args[1].strip()
     note = get_note_by_number(message.chat.id, int(arg)) if arg.isdigit() else get_note_by_name(message.chat.id, arg)
     if not note:
         return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML", disable_web_page_preview=True)
+
+    note_text = note[2]
+
+    # Чистим вложенные <tg-emoji>: регекс убирает внешние обёртки,
+    # оставляя только одну <tg-emoji> вокруг эмодзи.
+    import re as _re
+    # Многократно применяем, пока есть вложенность
+    for _ in range(5):
+        new_text = _re.sub(
+            r'<tg-emoji emoji-id="(\d+)">\s*<tg-emoji emoji-id="\d+">([^<]*)</tg-emoji>\s*</tg-emoji>',
+            r'<tg-emoji emoji-id="\1">\2</tg-emoji>',
+            note_text
+        )
+        if new_text == note_text:
+            break
+        note_text = new_text
+
     try:
-        await message.reply(note[2], parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(note_text, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
         print(f"HTML ERROR: {e}")
-        await message.reply(note[2], disable_web_page_preview=True)
+        await message.reply(note_text, disable_web_page_preview=True)
     
 # ================= VIP =================
 @cmd("вип")
