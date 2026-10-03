@@ -4695,15 +4695,20 @@ async def list_notes_cmd(message: types.Message):
         text += f"{i}. <b>{name}</b>\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("заметка ") and not m.text.lower().strip().startswith("заметки"))
+@cmd("заметка")
 async def get_note_cmd(message: types.Message):
-    arg = message.text[len("Заметка"):].strip()
-    if not arg: return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        return await message.reply(
+            "📌 <code>Заметка {название или номер}</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    arg = args[1].strip()
     note = get_note_by_number(message.chat.id, int(arg)) if arg.isdigit() else get_note_by_name(message.chat.id, arg)
     if not note:
         return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML", disable_web_page_preview=True)
     await message.reply(note[2], parse_mode="HTML", disable_web_page_preview=True)
-
+    
 # ================= VIP =================
 @cmd("вип")
 async def vip_info_cmd(message: types.Message):
