@@ -1967,7 +1967,7 @@ def _replace_first_placeholder(text, placeholder, replacement):
 def approve_pending_link(link_id, reviewed_by):
     info = get_pending_link(link_id)
     if not info:
-        return False    (lid, src_type, chat_id, src_key, placeholder, url, text, submitted_by, status) = info
+    return False    (lid, src_type, chat_id, src_key, placeholder, url, text, submitted_by, status) = info
     if status != "pending":
         return False
     html_link = f'<a href="{url}">{text}</a>'
