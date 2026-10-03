@@ -1965,12 +1965,24 @@ def _replace_first_placeholder(text, placeholder, replacement):
     return text[:idx] + replacement + text[idx + len(placeholder):]
 
 def approve_pending_link(link_id, reviewed_by):
-    info = get_pending_link(link_id)
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, source_type, source_chat_id, source_key, placeholder, "
+            "link_url, link_text, submitted_by, status "
+            "FROM pending_links WHERE id = ?",
+            (link_id,)
+        )
+        info = c.fetchone()
+
     if not info:
-    return False    (lid, src_type, chat_id, src_key, placeholder, url, text, submitted_by, status) = info
-    if status != "pending":
-       
         return False
+
+    (lid, src_type, chat_id, src_key, placeholder,
+     url, text, submitted_by, status) = info
+
+    if status != "pending":
+        return Falsе
     html_link = f'<a href="{url}">{text}</a>'
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
