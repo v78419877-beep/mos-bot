@@ -135,6 +135,90 @@ def auto_premium(text: str) -> str:
             text = text.replace(uni, f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>')
     return text
 
+
+def html_escape_text(text: str) -> str:
+    """Экранирование HTML-спецсимволов."""
+    if not text:
+        return ""
+    return (text
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;"))
+
+
+def apply_monospace(text: str) -> str:
+    """Преобразует markdown-бэктики в HTML: ```...``` → <pre>, `...` → <code>."""
+    if not text:
+        return text
+
+    def _escape(s):
+        return (s
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+    def _replace_pre(match):
+        return f"<pre>{_escape(match.group(1))}</pre>"
+
+    text = re.sub(r"```([\s\S]+?)```", _replace_pre, text)
+
+    def _replace_code(match):
+        return f"<code>{_escape(match.group(1))}</code>"
+
+    text = re.sub(r"`([^`\n]+?)`", _replace_code, text)
+
+    return text
+
+
+def text_with_premium_emoji(message: types.Message) -> str:
+    """Возвращает HTML-текст сообщения с заменой премиум-эмодзи на <tg-emoji>."""
+    if not message.text:
+        return ""
+    text = message.text
+    entities = message.entities or []
+    custom = [e for e in entities if e.type == "custom_emoji" and getattr(e, "custom_emoji_id", None)]
+    if not custom:
+        return html_escape_text(text)
+    custom.sort(key=lambda e: e.offset)
+    result = []
+    last = 0
+    for ent in custom:
+        result.append(html_escape_text(text[last:ent.offset]))
+        emoji_char = text[ent.offset:ent.offset + ent.length]
+        result.append(f'<tg-emoji emoji-id="{ent.custom_emoji_id}">{emoji_char}</tg-emoji>')
+        last = ent.offset + ent.length
+    result.append(html_escape_text(text[last:]))
+    return "".join(result)
+
+
+def _extract_html_after(message: types.Message, char_index: int) -> str:
+    """HTML-текст, начиная с char_index, с заменой премиум-эмодзи."""
+    if not message.text:
+        return ""
+    text = message.text
+    entities = message.entities or []
+    custom = [e for e in entities if e.type == "custom_emoji" and getattr(e, "custom_emoji_id", None)]
+    custom.sort(key=lambda e: e.offset)
+    result = []
+    last = char_index
+    for ent in custom:
+        if ent.offset + ent.length <= char_index:
+            continue
+        if ent.offset < char_index:
+            before = text[char_index:ent.offset]
+            result.append(html_escape_text(before))
+            emoji_char = text[ent.offset:ent.offset + ent.length]
+            result.append(f'<tg-emoji emoji-id="{ent.custom_emoji_id}">{emoji_char}</tg-emoji>')
+            last = ent.offset + ent.length
+            continue
+        result.append(html_escape_text(text[last:ent.offset]))
+        emoji_char = text[ent.offset:ent.offset + ent.length]
+        result.append(f'<tg-emoji emoji-id="{ent.custom_emoji_id}">{emoji_char}</tg-emoji>')
+        last = ent.offset + ent.length
+    result.append(html_escape_text(text[last:]))
+    return "".join(result).strip()
+
+
 # ================= РАНГИ ЧАТА =================
 RANK_NAMES = {0: "👤 Участник", 1: "🛡️ Мл. Модератор", 2: "🛡️ Ст. Модератор",
               3: "👑 Мл. Админ", 4: "👑 Ст. Админ", 5: "⚜️ Владелец"}
@@ -235,7 +319,7 @@ def init_db():
             result TEXT, fish_name TEXT, reward INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-        # ⚠️ Владельца в agents НЕ добавляем — он не агент
+        # ⚠️ Владельца в agents НЕ добавляем
         conn.commit()# ================= РАНГИ ЧАТА =================
 def get_rank(chat_id, user_id):
     if user_id == OWNER_ID:
@@ -1625,14 +1709,11 @@ def format_citizenship_duration(became_at_str):
             return "недавно"
     delta = datetime.now() - became_at
     days = delta.days
-    if days < 1:
-        return "только что"
-    elif days < 30:
-        return f"{days} дн."
+    if days < 1: return "только что"
+    elif days < 30: return f"{days} дн."
     months = days // 30
     remaining = days % 30
-    if months < 12:
-        return f"{months} мес. {remaining} дн."
+    if months < 12: return f"{months} мес. {remaining} дн."
     years = months // 12
     months = months % 12
     return f"{years} г. {months} мес."
@@ -1965,24 +2046,12 @@ def _replace_first_placeholder(text, placeholder, replacement):
     return text[:idx] + replacement + text[idx + len(placeholder):]
 
 def approve_pending_link(link_id, reviewed_by):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute(
-            "SELECT id, source_type, source_chat_id, source_key, placeholder, "
-            "link_url, link_text, submitted_by, status "
-            "FROM pending_links WHERE id = ?",
-            (link_id,)
-        )
-        info = c.fetchone()
-
+    info = get_pending_link(link_id)
     if not info:
         return False
-
-    (lid, src_type, chat_id, src_key, placeholder,
-     url, text, submitted_by, status) = info
-
+    (lid, src_type, chat_id, src_key, placeholder, url, text, submitted_by, status) = info
     if status != "pending":
-        return Falsе
+        return False
     html_link = f'<a href="{url}">{text}</a>'
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2198,7 +2267,7 @@ async def start_cmd(message: types.Message):
 
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
 
-# ================= КУПИТЬ ИРИСКИ (меню) =================
+# ================= КУПИТЬ ИРИСКИ =================
 @dp.callback_query(lambda c: c.data == "buy_candies_menu")
 async def buy_candies_menu(callback: types.CallbackQuery):
     price = get_stars_per_candy(callback.message.chat.id)
@@ -2333,7 +2402,7 @@ async def bot_info_cmd(message: types.Message):
     )
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= .ПРОФИЛЬ (обновлённый) =================
+# ================= .ПРОФИЛЬ =================
 @cmd("профиль")
 async def profile_cmd(message: types.Message):
     target = None
@@ -2464,7 +2533,7 @@ async def profile_cmd(message: types.Message):
     else:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= .АНКЕТА (обновлённая) =================
+# ================= .АНКЕТА =================
 @cmd("анкета")
 async def profile_full_cmd(message: types.Message):
     target = None
@@ -2532,7 +2601,6 @@ async def profile_full_cmd(message: types.Message):
     time_in_universe = format_time_since(first_seen.strftime("%Y-%m-%d"))
     vip_emoji = get_vip_emoji(target.id)
 
-    # Роль — только владелец бота / агент поддержки Mos
     role_line = ""
     if target.id == OWNER_ID:
         role_line = "👑 <b>Владелец бота</b>"
@@ -2690,11 +2758,10 @@ async def add_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
     if actor_id != OWNER_ID and not has_agent_rank(actor_id, 4):
         return await message.reply(f"{em('cross', '❌')} Только Гл. Агент (4).", parse_mode="HTML", disable_web_page_preview=True)
-
     target, _ = await resolve_target(message)
     if not target:
         return await message.reply(
-            "📌 <b>Формат:</b>\n<code>+Агент @user 2</code>\n<code>+Агент</code> (ответом) <code>2</code>\n\n"
+            "📌 <b>Формат:</b>\n<code>+Агент @user 2</code>\n\n"
             "🎖 <b>Ранги:</b>\n1 — Мл. Агент\n2 — Агент\n3 — Ст. Агент\n4 — Гл. Агент",
             parse_mode="HTML", disable_web_page_preview=True
         )
@@ -2752,7 +2819,8 @@ async def list_agents_cmd(message: types.Message):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("""SELECT a.user_id, COALESCE(r.rank, 1) FROM agents a
-                     LEFT JOIN agent_ranks r ON r.user_id = a.user_id                     ORDER BY COALESCE(r.rank, 1) DESC""")
+                     LEFT JOIN agent_ranks r ON r.user_id = a.user_id
+                     ORDER BY COALESCE(r.rank, 1) DESC""")
         rows = c.fetchall()
     if not rows:
         return await message.reply("📭 Нет агентов.", parse_mode="HTML", disable_web_page_preview=True)
@@ -3970,10 +4038,14 @@ async def rules_cmd(message: types.Message):
         parts = message.text.split("\n", 1)
         if len(parts) < 2:
             return await message.reply("📌 <code>.правила установить</code> (текст на новой строке)", parse_mode="HTML", disable_web_page_preview=True)
-        raw_text = parts[1].strip()[:3500]
-        cleaned_text, links = extract_links_from_text(raw_text)
+        nl_idx = message.text.find("\n")
+        raw_text_html = _extract_html_after(message, nl_idx + 1)[:3500]
+
+        cleaned_text, links = extract_links_from_text(raw_text_html)
         cleaned_text = auto_premium(cleaned_text)
+        cleaned_text = apply_monospace(cleaned_text)
         set_chat_rules(message.chat.id, cleaned_text, message.from_user.id)
+
         if links:
             chat_title = message.chat.title or "чат"
             link_ids = save_pending_links("rules", message.chat.id, "", links, message.from_user.id)
@@ -4030,19 +4102,19 @@ async def greeting_cmd(message: types.Message):
     if not sub:
         current = get_greeting(message.chat.id)
         if not current:
-            return await message.reply("📭 Приветствие не установлено.\n\n📌 <code>.приветствие установить</code>\n\n🔤 Плейсхолдеры: <code>{name}</code>, <code>{chat}</code>, <code>{rules}</code>, <code>{link}</code>\n🔗 Ссылки: <code>[текст](url)</code> или <code>{url}</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📭 Приветствие не установлено.\n\n📌 <code>.приветствие установить</code>\n\n🔤 Плейсхолдеры: <code>{name}</code>, <code>{chat}</code>, <code>{rules}</code>, <code>{link}</code>\n🔗 Ссылки: <code>[текст](url)</code> или <code>{url}</code>\n📝 Моно: <code>`код`</code> или <code>```блок```</code>", parse_mode="HTML", disable_web_page_preview=True)
         return await message.reply(f"📜 <b>Текущее:</b>\n\n<code>{current}</code>", parse_mode="HTML", disable_web_page_preview=True)
     if sub.startswith("установить"):
         parts = message.text.split("\n", 1)
         if len(parts) < 2:
             return await message.reply("📌 <code>.приветствие установить\nПривет, {name}!</code>", parse_mode="HTML", disable_web_page_preview=True)
-        raw_text = parts[1].strip()
-        if not raw_text:
+        nl_idx = message.text.find("\n")
+        raw_text_html = _extract_html_after(message, nl_idx + 1)[:1000]
+        if not raw_text_html:
             return await message.reply(f"{em('cross', '❌')} Текст пустой.", parse_mode="HTML", disable_web_page_preview=True)
-        if len(raw_text) > 1000:
-            return await message.reply(f"{em('cross', '❌')} Максимум 1000.", parse_mode="HTML", disable_web_page_preview=True)
-        cleaned_text, links = extract_links_from_text(raw_text)
+        cleaned_text, links = extract_links_from_text(raw_text_html)
         cleaned_text = auto_premium(cleaned_text)
+        cleaned_text = apply_monospace(cleaned_text)
         set_greeting(message.chat.id, cleaned_text, message.from_user.id)
         if links:
             chat_title = message.chat.title or "чат"
@@ -4281,11 +4353,15 @@ async def citizens_list_cmd(message: types.Message):
 # ================= НИК =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+ник"))
 async def set_nick_cmd(message: types.Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
+    if not message.text: return
+    idx = message.text.lower().find("+ник")
+    if idx == -1: return
+    after = message.text[idx + len("+ник"):].lstrip()
+    if not after:
         return await message.reply("📌 <code>+Ник ваш текст</code>", parse_mode="HTML", disable_web_page_preview=True)
-    set_user_nick(message.from_user.id, message.chat.id, args[1].strip()[:50])
-    await message.reply(f"✅ Ник: <b>{args[1].strip()[:50]}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    nick_html = _extract_html_after(message, idx + len("+ник"))[:300]
+    set_user_nick(message.from_user.id, message.chat.id, nick_html)
+    await message.reply(f"✅ Ник: <b>{nick_html}</b>", parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-ник")
 async def remove_nick_cmd(message: types.Message):
@@ -4302,13 +4378,15 @@ async def show_my_nick_cmd(message: types.Message):
 # ================= О СЕБЕ =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+о себе"))
 async def set_about_cmd(message: types.Message):
-    parts = message.text.split("\n", 1)
-    if len(parts) < 2:
+    if not message.text: return
+    nl_idx = message.text.find("\n")
+    if nl_idx == -1:
         return await message.reply("📌 <code>+О себе</code> (текст на новой строке)", parse_mode="HTML", disable_web_page_preview=True)
-    raw_text = parts[1].strip()[:500]
-    cleaned_text, links = extract_links_from_text(raw_text)
-    cleaned_text = auto_premium(cleaned_text)
-    set_user_about(message.from_user.id, cleaned_text)
+    raw_html = _extract_html_after(message, nl_idx + 1)[:500]
+    cleaned, links = extract_links_from_text(raw_html)
+    cleaned = auto_premium(cleaned)
+    cleaned = apply_monospace(cleaned)
+    set_user_about(message.from_user.id, cleaned)
     if links:
         chat_title = message.chat.title or "ЛС"
         link_ids = save_pending_links("about", message.from_user.id, "", links, message.from_user.id)
@@ -4331,11 +4409,15 @@ async def show_my_about_cmd(message: types.Message):
 # ================= ЗВАНИЕ =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+звание"))
 async def set_rank_text_cmd(message: types.Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
+    if not message.text: return
+    idx = message.text.lower().find("+звание")
+    if idx == -1: return
+    after = message.text[idx + len("+звание"):].lstrip()
+    if not after:
         return await message.reply("📌 <code>+Звание текст</code>", parse_mode="HTML", disable_web_page_preview=True)
-    set_user_rank_text(message.from_user.id, message.chat.id, args[1].strip()[:50])
-    await message.reply(f"✅ Звание: <b>{args[1].strip()[:50]}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    rank_html = _extract_html_after(message, idx + len("+звание"))[:300]
+    set_user_rank_text(message.from_user.id, message.chat.id, rank_html)
+    await message.reply(f"✅ Звание: <b>{rank_html}</b>", parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-звание")
 async def remove_rank_text_cmd(message: types.Message):
@@ -4417,10 +4499,14 @@ async def hide_citizenship_cmd(message: types.Message):
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+девиз"))
 async def set_motto_cmd(message: types.Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
+    if not message.text: return
+    idx = message.text.lower().find("+девиз")
+    if idx == -1: return
+    after = message.text[idx + len("+девиз"):].lstrip()
+    if not after:
         return await message.reply("📌 <code>+Девиз ваш текст</code>", parse_mode="HTML", disable_web_page_preview=True)
-    update_user_profile(message.from_user.id, "motto", args[1].strip()[:100])
+    motto_html = _extract_html_after(message, idx + len("+девиз"))[:500]
+    update_user_profile(message.from_user.id, "motto", motto_html)
     await message.reply("✅ Девиз установлен.", parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-девиз")
@@ -4564,10 +4650,14 @@ async def create_note_cmd(message: types.Message):
     parts = message.text.split("\n", 1)
     name = parts[0].replace("+Заметка", "").replace("+заметка", "").strip()
     if not name or len(parts) < 2: return
-    raw_body = parts[1].strip()[:3500]
-    cleaned_body, links = extract_links_from_text(raw_body)
+    nl_idx = message.text.find("\n")
+    raw_body_html = _extract_html_after(message, nl_idx + 1)[:3500]
+
+    cleaned_body, links = extract_links_from_text(raw_body_html)
     cleaned_body = auto_premium(cleaned_body)
+    cleaned_body = apply_monospace(cleaned_body)
     note_id = add_note(message.chat.id, name, cleaned_body, message.from_user.id)
+
     if not note_id:
         return await message.reply(f"{em('cross', '❌')} Заметка уже есть.", parse_mode="HTML", disable_web_page_preview=True)
     if links:
@@ -4631,7 +4721,8 @@ async def vip_info_cmd(message: types.Message):
         f"💎 <b>VIP-статус</b>\n\n💰 Цена: <b>{price}</b> 🍬 / мес\n\n"
         f"📌 Команды:\n• <code>Купить вип</code>\n• <code>Купить вип N</code>\n"
         f"• <code>Купить вип @user</code>\n• <code>Мой вип</code>\n"
-        f"• <code>Кто вип</code> / <code>Кто не вип</code>\n• <code>+Вип эмодзи 😎</code>",
+        f"• <code>Кто вип</code> / <code>Кто не вип</code>\n• <code>+Вип эмодзи 😎</code>\n• <code>-Вип эмодзи</code>\n"
+        f"<i>Поддерживается премиум-эмодзи</i>",
         parse_mode="HTML", disable_web_page_preview=True
     )
 
@@ -4703,11 +4794,37 @@ async def who_not_vip_cmd(message: types.Message):
 async def set_vip_emoji_cmd(message: types.Message):
     if not get_vip(message.from_user.id):
         return await message.reply(f"{em('cross', '❌')} Нет VIP.", parse_mode="HTML", disable_web_page_preview=True)
-    args = message.text.split()
+
+    custom_emoji_id = None
+    custom_emoji_fallback = None
+    if message.entities:
+        for ent in message.entities:
+            if ent.type == "custom_emoji" and getattr(ent, "custom_emoji_id", None):
+                custom_emoji_id = ent.custom_emoji_id
+                custom_emoji_fallback = message.text[ent.offset:ent.offset + ent.length]
+                break
+
+    if custom_emoji_id:
+        emoji_html = f'<tg-emoji emoji-id="{custom_emoji_id}">{custom_emoji_fallback}</tg-emoji>'
+        set_vip_emoji(message.from_user.id, emoji_html)
+        return await message.reply(f"{em('check', '✅')} <b>Премиум-эмодзи установлен</b>\n\n{emoji_html}", parse_mode="HTML", disable_web_page_preview=True)
+
+    args = message.text.split(maxsplit=2)
     if len(args) < 3:
-        return await message.reply("📌 <code>+Вип эмодзи 😎</code>", parse_mode="HTML", disable_web_page_preview=True)
-    set_vip_emoji(message.from_user.id, args[2])
-    await message.reply(f"{em('check', '✅')} Эмодзи: {args[2]}", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <b>Формат:</b>\n<code>+Вип эмодзи 😎</code>\n<i>Можно отправить премиум-эмодзи</i>", parse_mode="HTML", disable_web_page_preview=True)
+    emoji = args[2].strip()[:10]
+    set_vip_emoji(message.from_user.id, emoji)
+    await message.reply(f"{em('check', '✅')} Эмодзи: {emoji}", parse_mode="HTML", disable_web_page_preview=True)
+
+@dp.message(lambda m: m.text and m.text.lower().strip() == "-вип эмодзи")
+async def remove_vip_emoji_cmd(message: types.Message):
+    if not get_vip(message.from_user.id):
+        return await message.reply(f"{em('cross', '❌')} Нет VIP.", parse_mode="HTML", disable_web_page_preview=True)
+    info = get_vip(message.from_user.id)
+    if not info or not info[1]:
+        return await message.reply("📭 У вас и так нет VIP-эмодзи.", parse_mode="HTML", disable_web_page_preview=True)
+    set_vip_emoji(message.from_user.id, None)
+    await message.reply(f"{em('check', '✅')} VIP-эмодзи убран.", parse_mode="HTML", disable_web_page_preview=True)
 
 # ================= РП =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+мрп"))
@@ -4719,11 +4836,14 @@ async def create_rp_cmd(message: types.Message):
         return await message.reply("📌 <code>+Мрп Название / 😀 / текст</code>", parse_mode="HTML", disable_web_page_preview=True)
     name = parts[0].replace("+Мрп", "").replace("+мрп", "").strip()[:30]
     emoji = parts[1].strip()[:5]
-    text = parts[2].strip()[:200]
+    first_slash = message.text.find("/")
+    second_slash = message.text.find("/", first_slash + 1)
+    text_html = _extract_html_after(message, second_slash + 1)[:300] if second_slash != -1 else ""
+
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         try:
-            c.execute("INSERT INTO rp_commands (chat_id, name, emoji, text, created_by) VALUES (?, ?, ?, ?, ?)", (message.chat.id, name, emoji, text, message.from_user.id))
+            c.execute("INSERT INTO rp_commands (chat_id, name, emoji, text, created_by) VALUES (?, ?, ?, ?, ?)", (message.chat.id, name, emoji, text_html, message.from_user.id))
             conn.commit()
             await message.reply(f"{em('check', '✅')} РП: {emoji} <b>{name}</b>", parse_mode="HTML", disable_web_page_preview=True)
         except:
@@ -4763,11 +4883,14 @@ async def create_global_rp_cmd(message: types.Message):
         return await message.reply("📌 <code>+Гмрп Название / 😀 / текст</code>", parse_mode="HTML", disable_web_page_preview=True)
     name = parts[0].replace("+Гмрп", "").replace("+гмрп", "").strip()[:30]
     emoji = parts[1].strip()[:5]
-    text = parts[2].strip()[:200]
+    first_slash = message.text.find("/")
+    second_slash = message.text.find("/", first_slash + 1)
+    text_html = _extract_html_after(message, second_slash + 1)[:300] if second_slash != -1 else ""
+
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         try:
-            c.execute("INSERT INTO global_rp_commands (user_id, name, emoji, text) VALUES (?, ?, ?, ?)", (message.from_user.id, name, emoji, text))
+            c.execute("INSERT INTO global_rp_commands (user_id, name, emoji, text) VALUES (?, ?, ?, ?)", (message.from_user.id, name, emoji, text_html))
             conn.commit()
             await message.reply(f"🌍 ГМРП: {emoji} <b>{name}</b>", parse_mode="HTML", disable_web_page_preview=True)
         except:
