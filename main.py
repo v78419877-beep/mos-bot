@@ -174,7 +174,6 @@ def entities_to_html(message: types.Message) -> str:
                 url = getattr(e, "url", "") or ""
                 result.append(f'<a href="{url}">{inner_text}</a>')
             elif e.type == "custom_emoji":
-                # Оставляем только Unicode, без <tg-emoji>
                 result.append(html_escape_text(raw))
             else:
                 result.append(inner_text)
@@ -347,6 +346,35 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS fishing_tournament_members (
             chat_id INTEGER, user_id INTEGER, caught INTEGER DEFAULT 0,
             UNIQUE(chat_id, user_id))""")
+
+        # ============ МИГРАЦИИ (для старых баз данных) ============
+        def _add_column(table, column, col_type, default=None):
+            """Безопасно добавляет колонку, если её ещё нет."""
+            try:
+                if default is not None:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type} DEFAULT {default}")
+                else:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+                print(f"✅ Миграция: {table}.{column} добавлена")
+            except sqlite3.OperationalError:
+                pass  # Колонка уже существует
+
+        # fishing — новые колонки
+        _add_column("fishing", "inventory", "TEXT", "'{}'")
+        _add_column("fishing", "legendary_caught", "INTEGER", "0")
+
+        # captcha — новые колонки
+        _add_column("captcha", "captcha_type", "TEXT")
+        _add_column("captcha", "answer", "TEXT")
+
+        # user_profiles — новые колонки (если были старые версии)
+        _add_column("user_profiles", "show_citizenship", "INTEGER", "1")
+        _add_column("user_profiles", "is_hidden", "INTEGER", "1")
+        _add_column("user_profiles", "birth_visibility", "TEXT", "'месяц'")
+        _add_column("user_profiles", "motto", "TEXT")
+
+        # ========================================================
+
         conn.commit()
 
 # ================= РАНГИ ЧАТА =================
@@ -1018,7 +1046,9 @@ def update_agent_activity(user_id):
         conn.commit()
 
 def get_agents_status():
+    """Возвращает (online, offline, statuses) — statuses = {uid: 'текст статуса'}"""
     online, offline = [], []
+    statuses = {}
     now = datetime.now()
     hidden = get_hidden_agents()
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -1033,15 +1063,25 @@ def get_agents_status():
             if r:
                 try:
                     ls = datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S")
-                    if (now - ls).total_seconds() <= 600:
+                    delta = (now - ls).total_seconds()
+                    if delta <= 1800:  # 30 минут
                         online.append(agent_id)
+                        statuses[agent_id] = "🟢 в сети"
                     else:
                         offline.append(agent_id)
+                        if delta < 3600:
+                            statuses[agent_id] = f"⏱ {int(delta/60)} мин назад"
+                        elif delta < 86400:
+                            statuses[agent_id] = f"⏱ {int(delta/3600)} ч назад"
+                        else:
+                            statuses[agent_id] = f"⏱ {int(delta/86400)} д назад"
                 except:
                     offline.append(agent_id)
+                    statuses[agent_id] = "⏱ давно"
             else:
                 offline.append(agent_id)
-    return online, offline
+                statuses[agent_id] = "⏱ не заходил"
+    return online, offline, statuses
 
 # ================= USERS =================
 def register_user(user_id, first_name, username):
@@ -2591,7 +2631,7 @@ async def commands_link_cmd(message: types.Message):
 # ================= ПОМОЩЬ =================
 @cmd("помощь")
 async def help_cmd(message: types.Message):
-    online, offline = get_agents_status()
+    online, offline, statuses = get_agents_status()
     agents_text = ""
     if online:
         agents_text += f"{em('check', '✅')} <b>В сети:</b>\n"
@@ -2609,9 +2649,10 @@ async def help_cmd(message: types.Message):
         for uid in offline:
             try:
                 user = await bot.get_chat(uid)
-                agents_text += f"  • {user_link(uid, user.first_name, user.username)}\n"
+                status = statuses.get(uid, "")
+                agents_text += f"  • {user_link(uid, user.first_name, user.username)} — <i>{status}</i>\n"
             except:
-                agents_text += f"  • ID: <code>{uid}</code>\n"
+                agents_text += f"  • ID: <code>{uid}</code> — <i>{statuses.get(uid, '')}</i>\n"
 
     help_text = (
         f"{em('sos', '🆘')} <b>Помощь по боту {BOT_NAME}</b>\n\n"
