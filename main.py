@@ -5435,18 +5435,37 @@ async def set_grid_cmd(message):
 @cmd("чаты")
 async def list_grid_chats(message):
     grid_id = get_chat_grid(message.chat.id)
-    if not grid_id: return await message.reply(f"{em('cross', '❌')} Чат не привязан.", parse_mode="HTML", disable_web_page_preview=True)
+    if not grid_id:
+        return await message.reply(f"{em('cross', '❌')} Чат не привязан.", parse_mode="HTML", disable_web_page_preview=True)
     chats = get_grid_chats(grid_id, include_hidden=False)
+    if not chats:
+        return await message.reply("📭 В сетке нет чатов.", parse_mode="HTML", disable_web_page_preview=True)
     text = "📋 <b>Чаты сетки:</b>\n\n"
     for chat_id, hidden, desc in chats:
         try:
             chat = await bot.get_chat(chat_id)
             title = chat.title or f"Чат {chat_id}"
             link = None
-            if chat.username: link = f"https://t.me/{chat.username}"
-            if link: text += f"• <a href='{link}'>{title}</a>\n"
-            else: text += f"• {title}\n"
-        except: text += f"• Чат {chat_id}\n"
+
+            # 1) Публичный — берём username
+            if chat.username:
+                link = f"https://t.me/{chat.username}"
+            else:
+                # 2) Приватный — создаём invite-ссылку
+                try:
+                    invite = await bot.create_chat_invite_link(chat_id, name="Mos: сетка")
+                    link = invite.invite_link
+                except Exception as e:
+                    print(f"❌ Не удалось создать ссылку для {chat_id}: {e}")
+                    link = None
+
+            if link:
+                text += f"• <a href='{link}'>{title}</a>\n"
+            else:
+                text += f"• {title} <i>(ссылка недоступна)</i>\n"
+        except Exception as e:
+            print(f"❌ Ошибка чата {chat_id}: {e}")
+            text += f"• Чат {chat_id}\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
