@@ -4396,8 +4396,11 @@ async def fishing_shop_cmd(message: types.Message):
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
-@cmd("купить")
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*купить\s+\S+', m.text.strip(), re.IGNORECASE)
+    and not re.match(r'^\s*[.\/!]?\s*купить\s+вип\b', m.text.strip(), re.IGNORECASE))
 async def fishing_buy_cmd(message: types.Message):
+    if not await check_command_access(message, "купить"):
+        return
     args = message.text.split()
     if len(args) < 2:
         return await message.reply("📌 <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
