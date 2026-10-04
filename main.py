@@ -111,7 +111,6 @@ def user_link(user_id, first_name="Пользователь", username=None):
 
 
 def html_escape_text(text: str) -> str:
-    """Экранирование HTML-спецсимволов."""
     if not text:
         return ""
     return (text
@@ -120,13 +119,8 @@ def html_escape_text(text: str) -> str:
         .replace(">", "&gt;"))
 
 
-# ================= TELEGRAM ENTITIES → HTML =================
+# ================= TELEGRAM ENTITIES → HTML (без премиум-эмодзи) =================
 def entities_to_html(message: types.Message) -> str:
-    """
-    Конвертирует текст сообщения с его entities в HTML.
-    КЛЮЧЕВОЕ: несколько custom_emoji подряд с одинаковым offset группируются
-    в один <tg-emoji>...</tg-emoji> блок.
-    """
     if not message.text:
         return ""
     text = message.text
@@ -134,27 +128,16 @@ def entities_to_html(message: types.Message) -> str:
     if not entities:
         return html_escape_text(text)
 
-    # Сортируем по offset, при равенстве — по length (сначала короткие)
-    sorted_ents = sorted(entities, key=lambda e: (e.offset, e.length))
-
-    # Убираем перекрытия (оставляем самые "внешние" и валидные)
-    cleaned = []
-    for e in sorted_ents:
-        if e.offset < 0 or e.offset + e.length > len(text):
-            continue
-        cleaned.append(e)
+    sorted_ents = sorted(entities, key=lambda e: (e.offset, -e.length))
 
     def render_range(start: int, end: int, ent_list) -> str:
-        """Рекурсивно рендерит диапазон с учётом вложенных entities."""
         result = []
         pos = start
         inner = [e for e in ent_list if e.offset >= start and e.offset + e.length <= end]
-        # Только "верхнеуровневые" внутри диапазона
         top = []
         for e in inner:
             if not top or e.offset >= top[-1].offset + top[-1].length:
                 top.append(e)
-            # если перекрывается — пропускаем (некорректный entity)
 
         for e in top:
             if e.offset > pos:
@@ -191,11 +174,8 @@ def entities_to_html(message: types.Message) -> str:
                 url = getattr(e, "url", "") or ""
                 result.append(f'<a href="{url}">{inner_text}</a>')
             elif e.type == "custom_emoji":
-                cid = getattr(e, "custom_emoji_id", None)
-                if cid:
-                    result.append(f'<tg-emoji emoji-id="{cid}">{html_escape_text(raw)}</tg-emoji>')
-                else:
-                    result.append(html_escape_text(raw))
+                # Оставляем только Unicode, без <tg-emoji>
+                result.append(html_escape_text(raw))
             else:
                 result.append(inner_text)
             pos = e.offset + e.length
@@ -203,11 +183,10 @@ def entities_to_html(message: types.Message) -> str:
             result.append(html_escape_text(text[pos:end]))
         return "".join(result)
 
-    return render_range(0, len(text), cleaned).strip()
+    return render_range(0, len(text), sorted_ents).strip()
 
 
 def entities_to_html_from(message: types.Message, char_index: int) -> str:
-    """HTML части сообщения начиная с char_index."""
     if not message.text:
         return ""
     text = message.text
@@ -244,12 +223,9 @@ def entities_to_html_from(message: types.Message, char_index: int) -> str:
     return entities_to_html(fake).strip()
 
 
-def text_with_premium_emoji(message: types.Message) -> str:
-    return entities_to_html(message)
-
-
 def _extract_html_after(message: types.Message, char_index: int) -> str:
-    return entities_to_html_from(message, char_index)
+    html = entities_to_html_from(message, char_index)
+    return re.sub(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', r'\1', html, flags=re.DOTALL)
 
 
 # ================= РАНГИ ЧАТА =================
@@ -284,7 +260,13 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS agent_activity (user_id INTEGER PRIMARY KEY, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS greetings (chat_id INTEGER PRIMARY KEY, text TEXT, updated_by INTEGER, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, first_name TEXT, username TEXT)")
-        c.execute("CREATE TABLE IF NOT EXISTS captcha (user_id INTEGER, chat_id INTEGER, message_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
+        c.execute("""CREATE TABLE IF NOT EXISTS captcha (
+            user_id INTEGER, chat_id INTEGER, message_id INTEGER,
+            captcha_type TEXT, answer TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, chat_id))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS captcha_settings (
+            chat_id INTEGER PRIMARY KEY, enabled INTEGER DEFAULT 1)""")
         c.execute("CREATE TABLE IF NOT EXISTS business_connections (user_id INTEGER PRIMARY KEY, connection_id TEXT, connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS chat_bans (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, user_id INTEGER, reason TEXT, banned_by INTEGER, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, until_date TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS grids (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, creator_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -346,11 +328,25 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS fishing (
             user_id INTEGER PRIMARY KEY, level INTEGER DEFAULT 1, xp INTEGER DEFAULT 0,
             total_caught INTEGER DEFAULT 0, total_empty INTEGER DEFAULT 0,
-            has_rod INTEGER DEFAULT 0, bait_until TIMESTAMP, last_fish TIMESTAMP)""")
+            has_rod INTEGER DEFAULT 0, bait_until TIMESTAMP, last_fish TIMESTAMP,
+            inventory TEXT DEFAULT '{}', legendary_caught INTEGER DEFAULT 0)""")
         c.execute("""CREATE TABLE IF NOT EXISTS fishing_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER,
             result TEXT, fish_name TEXT, reward INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS fishing_achievements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER,
+            achievement TEXT, given_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, chat_id, achievement))""")
+        c.execute("""CREATE TABLE IF NOT EXISTS fishing_events (
+            chat_id INTEGER PRIMARY KEY, event_type TEXT, bonus REAL DEFAULT 1.0,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, expires_at TIMESTAMP)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS fishing_tournaments (
+            chat_id INTEGER PRIMARY KEY, started_by INTEGER, started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP, prize INTEGER DEFAULT 5000)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS fishing_tournament_members (
+            chat_id INTEGER, user_id INTEGER, caught INTEGER DEFAULT 0,
+            UNIQUE(chat_id, user_id))""")
         conn.commit()
 
 # ================= РАНГИ ЧАТА =================
@@ -852,37 +848,6 @@ def generate_user_chat_activity_chart(user_id, chat_id, days=30):
     buf = BytesIO(); plt.savefig(buf, format='png', dpi=90, bbox_inches='tight'); buf.seek(0); plt.close()
     return buf
 
-def generate_chat_activity_chart(chat_id, days=30):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT date, SUM(count) FROM messages_stats WHERE chat_id = ? GROUP BY date ORDER BY date DESC LIMIT ?", (chat_id, days))
-        rows = c.fetchall()
-    if not rows:
-        return None
-    rows = rows[::-1]
-    today = datetime.now().date()
-    date_counts = {d: cnt or 0 for d, cnt in rows}
-    full_dates, full_counts = [], []
-    for i in range(days - 1, -1, -1):
-        day = (today - timedelta(days=i)).isoformat()
-        full_dates.append(day); full_counts.append(date_counts.get(day, 0))
-    fig, ax = plt.subplots(figsize=(10, 4.5))
-    x_labels = [d[5:] for d in full_dates]
-    bars = ax.bar(range(len(full_dates)), full_counts, color='#66c2ff', width=0.7)
-    step = max(1, len(full_dates) // 10)
-    ax.set_xticks(range(0, len(full_dates), step))
-    ax.set_xticklabels([x_labels[i] for i in range(0, len(x_labels), step)], fontsize=8)
-    ax.set_title("Активность чата", fontsize=12, pad=15)
-    ax.set_ylabel("Сообщений", fontsize=9)
-    ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
-    ax.yaxis.grid(True, linestyle='--', alpha=0.4); ax.set_axisbelow(True)
-    for bar, cnt in zip(bars, full_counts):
-        if cnt > 0:
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, str(cnt), ha='center', va='bottom', fontsize=7)
-    plt.tight_layout()
-    buf = BytesIO(); plt.savefig(buf, format='png', dpi=90, bbox_inches='tight'); buf.seek(0); plt.close()
-    return buf
-
 # ================= ВАРНЫ =================
 def add_warn(user_id, chat_id, reason, warned_by):
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -1187,23 +1152,75 @@ def is_link(text):
     return bool(re.search(r'(https?://[^\s]+|t\.me/[^\s]+)', text))
 
 # ================= КАПЧА =================
-def save_captcha(user_id, chat_id, message_id):
+import random as _random
+
+CAPTCHA_EMOJI_ROUNDS = [
+    {"question": "Выбери 🍎", "options": ["🍎", "🍌", "🍇"], "answer": "🍎"},
+    {"question": "Выбери 🐱", "options": ["🐶", "🐱", "🐭"], "answer": "🐱"},
+    {"question": "Выбери 🚗", "options": ["🚗", "✈️", "🚀"], "answer": "🚗"},
+    {"question": "Выбери ⭐", "options": ["⭐", "🌙", "☀️"], "answer": "⭐"},
+    {"question": "Выбери 💎", "options": ["💎", "💍", "👑"], "answer": "💎"},
+    {"question": "Выбери 🎸", "options": ["🎸", "🎹", "🥁"], "answer": "🎸"},
+    {"question": "Выбери 🍕", "options": ["🍕", "🍔", "🌮"], "answer": "🍕"},
+    {"question": "Выбери 🌸", "options": ["🌸", "🌺", "🌻"], "answer": "🌸"},
+    {"question": "Выбери 🐼", "options": ["🐼", "🐻", "🐨"], "answer": "🐼"},
+    {"question": "Выбери 🎁", "options": ["🎁", "🎈", "🎉"], "answer": "🎁"},
+]
+
+
+def _make_odd_one_out():
+    pools = [
+        ("🍎", "🍏"), ("🐶", "🐕"), ("😀", "😃"), ("⭐", "🌟"),
+        ("❤️", "🧡"), ("😺", "😸"), ("🌸", "🌼"), ("🍕", "🥪"),
+    ]
+    main, odd = _random.choice(pools)
+    emojis = [main] * 6 + [odd]
+    _random.shuffle(emojis)
+    return emojis, odd
+
+
+def save_captcha(user_id, chat_id, message_id, captcha_type="emoji", answer=""):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO captcha (user_id, chat_id, message_id) VALUES (?, ?, ?)", (user_id, chat_id, message_id))
+        c.execute("""INSERT OR REPLACE INTO captcha 
+            (user_id, chat_id, message_id, captcha_type, answer) 
+            VALUES (?, ?, ?, ?, ?)""",
+            (user_id, chat_id, message_id, captcha_type, answer))
         conn.commit()
+
 
 def get_captcha(user_id, chat_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("SELECT message_id FROM captcha WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-        r = c.fetchone()
-        return r[0] if r else None
+        c.execute("SELECT message_id, captcha_type, answer FROM captcha WHERE user_id = ? AND chat_id = ?",
+                  (user_id, chat_id))
+        return c.fetchone()
+
 
 def remove_captcha(user_id, chat_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("DELETE FROM captcha WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        conn.commit()
+
+
+def is_captcha_enabled(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT enabled FROM captcha_settings WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        if r is None:
+            c.execute("INSERT INTO captcha_settings (chat_id, enabled) VALUES (?, 1)", (chat_id,))
+            conn.commit()
+            return True
+        return bool(r[0])
+
+
+def set_captcha_enabled(chat_id, enabled):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO captcha_settings (chat_id, enabled) VALUES (?, ?)",
+                  (chat_id, 1 if enabled else 0))
         conn.commit()
 
 # ================= BUSINESS =================
@@ -1298,6 +1315,42 @@ FISH_LIST = [
     ("Золотая рыбка", "✨", 50, 100, 0.5),
 ]
 
+LEGENDARY_FISH = [
+    ("Кит", "🐋", 200, 500, 0.30),
+    ("Меч-рыба", "🗡", 100, 300, 0.50),
+    ("Гигантский сом", "🐟", 150, 400, 0.40),
+    ("Акула", "🦈", 250, 600, 0.20),
+    ("Мурена", "🐍", 80, 200, 0.60),
+    ("Рыба-луна", "🌕", 300, 800, 0.10),
+    ("Голубая марлин", "🐟", 500, 1500, 0.05),
+]
+
+FISHING_GEAR = {
+    "hook": {"name": "🪝 Крючок", "price": 500, "bonus": 0.05, "desc": "+5% к улову"},
+    "spinning": {"name": "🎣 Спиннинг", "price": 1500, "bonus": 0.10, "desc": "+10% к улову"},
+    "line": {"name": "🧵 Леска", "price": 800, "bonus": 0.0, "desc": "Защита от поломки (x5)", "stackable": True, "count": 5},
+    "bucket": {"name": "🪣 Ведро", "price": 2000, "bonus": 0.0, "desc": "+1 🍬 к награде", "flat": 1},
+    "boat": {"name": "🚤 Лодка", "price": 5000, "bonus": 0.0, "desc": "Шанс поймать редкую рыбу"},
+    "premium_rod": {"name": "🎣 Премиум-удочка", "price": 10000, "bonus": 0.15, "desc": "+15% к улову, не ломается"},
+}
+
+FISHING_EVENTS = {
+    "rain": {"name": "🌧 Дождь", "bonus": 1.2, "duration": 30},
+    "night": {"name": "🌙 Ночь", "bonus": 1.3, "duration": 45, "rare_boost": 2.0},
+    "school": {"name": "🐟 Стая", "bonus": 1.2, "duration": 20},
+    "storm": {"name": "⛈ Гроза", "bonus": 0.8, "duration": 15},
+    "calm": {"name": "☀️ Штиль", "bonus": 1.0, "duration": 30},
+}
+
+FISHING_ACHIEVEMENTS = {
+    "first_fish": {"name": "🥇 Первый улов", "check": lambda u: u["total_caught"] >= 1},
+    "hundred_fish": {"name": "🎣 100 рыб", "check": lambda u: u["total_caught"] >= 100},
+    "five_hundred": {"name": "🐟 500 рыб", "check": lambda u: u["total_caught"] >= 500},
+    "level_10": {"name": "📈 Рыбак-любитель", "check": lambda u: u["level"] >= 10},
+    "level_50": {"name": "🏆 Рыбак-профи", "check": lambda u: u["level"] >= 50},
+    "legendary": {"name": "💎 Легендарная рыба", "check": lambda u: u["legendary_caught"] >= 1},
+}
+
 BAIT_DURATION_HOURS = 1
 FISH_COOLDOWN_SECONDS = 7200
 LEVEL_XP_BASE = 50
@@ -1306,12 +1359,13 @@ def get_fishing(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("""SELECT user_id, level, xp, total_caught, total_empty,
-            has_rod, bait_until, last_fish FROM fishing WHERE user_id = ?""", (user_id,))
+            has_rod, bait_until, last_fish, inventory, legendary_caught 
+            FROM fishing WHERE user_id = ?""", (user_id,))
         r = c.fetchone()
         if not r:
             c.execute("INSERT INTO fishing (user_id) VALUES (?)", (user_id,))
             conn.commit()
-            return (user_id, 1, 0, 0, 0, 0, None, None)
+            return (user_id, 1, 0, 0, 0, 0, None, None, "{}", 0)
         return r
 
 def update_fishing(user_id, **kwargs):
@@ -1372,6 +1426,191 @@ def is_bait_active(bait_until_str):
 
 def xp_needed_for_level(level):
     return LEVEL_XP_BASE * level
+
+
+# ================= РЫБАЛКА 2.0 =================
+def get_fishing_inventory(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT inventory FROM fishing WHERE user_id = ?", (user_id,))
+        r = c.fetchone()
+        if not r:
+            return {}
+        try:
+            return json.loads(r[0] or "{}")
+        except:
+            return {}
+
+
+def add_to_fishing_inventory(user_id, gear_key, count=1):
+    inv = get_fishing_inventory(user_id)
+    inv[gear_key] = inv.get(gear_key, 0) + count
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO fishing (user_id) VALUES (?)", (user_id,))
+        c.execute("UPDATE fishing SET inventory = ? WHERE user_id = ?", (json.dumps(inv), user_id))
+        conn.commit()
+
+
+def use_fishing_item(user_id, gear_key):
+    inv = get_fishing_inventory(user_id)
+    if inv.get(gear_key, 0) <= 0:
+        return False
+    inv[gear_key] -= 1
+    if inv[gear_key] <= 0:
+        del inv[gear_key]
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE fishing SET inventory = ? WHERE user_id = ?", (json.dumps(inv), user_id))
+        conn.commit()
+    return True
+
+
+def get_fishing_gear_bonus(user_id):
+    inv = get_fishing_inventory(user_id)
+    total = 0.0
+    flat = 0
+    has_boat = False
+    has_premium = False
+    for key, count in inv.items():
+        if count <= 0:
+            continue
+        gear = FISHING_GEAR.get(key)
+        if not gear:
+            continue
+        total += gear.get("bonus", 0)
+        flat += gear.get("flat", 0)
+        if key == "boat":
+            has_boat = True
+        if key == "premium_rod":
+            has_premium = True
+    return total, flat, has_boat, has_premium
+
+
+def get_active_event(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        now = datetime.now().isoformat()
+        c.execute("SELECT event_type, bonus, expires_at FROM fishing_events WHERE chat_id = ? AND expires_at > ?", (chat_id, now))
+        return c.fetchone()
+
+
+def set_event(chat_id, event_type, bonus, duration_min):
+    expires = (datetime.now() + timedelta(minutes=duration_min)).isoformat()
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO fishing_events (chat_id, event_type, bonus, started_at, expires_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)",
+                  (chat_id, event_type, bonus, expires))
+        conn.commit()
+
+
+def grant_fishing_achievement(user_id, chat_id, achievement_key):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO fishing_achievements (user_id, chat_id, achievement) VALUES (?, ?, ?)",
+                      (user_id, chat_id, achievement_key))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def check_fishing_achievements(user_id, chat_id):
+    info = get_fishing(user_id)
+    (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish, inv, legendary) = info
+    user_data = {
+        "total_caught": total_caught,
+        "level": level,
+        "legendary_caught": legendary or 0,
+    }
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT achievement FROM fishing_achievements WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        have = {r[0] for r in c.fetchall()}
+    new_achievements = []
+    for key, ach in FISHING_ACHIEVEMENTS.items():
+        if key in have:
+            continue
+        try:
+            if ach["check"](user_data):
+                if grant_fishing_achievement(user_id, chat_id, key):
+                    new_achievements.append(ach["name"])
+        except:
+            pass
+    return new_achievements
+
+
+def update_legendary_count(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE fishing SET legendary_caught = legendary_caught + 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+
+# ================= ТУРНИРЫ =================
+def get_active_tournament(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        now = datetime.now().isoformat()
+        c.execute("SELECT started_by, started_at, expires_at, prize FROM fishing_tournaments WHERE chat_id = ? AND expires_at > ?", (chat_id, now))
+        return c.fetchone()
+
+
+def create_tournament(chat_id, user_id, prize=5000, duration_min=60):
+    expires = (datetime.now() + timedelta(minutes=duration_min)).isoformat()
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM fishing_tournaments WHERE chat_id = ?", (chat_id,))
+        c.execute("DELETE FROM fishing_tournament_members WHERE chat_id = ?", (chat_id,))
+        c.execute("INSERT INTO fishing_tournaments (chat_id, started_by, expires_at, prize) VALUES (?, ?, ?, ?)",
+                  (chat_id, user_id, expires, prize))
+        conn.commit()
+
+
+def join_tournament(chat_id, user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO fishing_tournament_members (chat_id, user_id) VALUES (?, ?)", (chat_id, user_id))
+        conn.commit()
+
+
+def update_tournament_score(chat_id, user_id, count=1):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE fishing_tournament_members SET caught = caught + ? WHERE chat_id = ? AND user_id = ?",
+                  (count, chat_id, user_id))
+        conn.commit()
+
+
+def get_tournament_members(chat_id, limit=10):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT user_id, caught FROM fishing_tournament_members WHERE chat_id = ? ORDER BY caught DESC LIMIT ?",
+                  (chat_id, limit))
+        return c.fetchall()
+
+
+def end_tournament(chat_id):
+    tour = get_active_tournament(chat_id)
+    if not tour:
+        return None
+    _, _, _, prize = tour
+    members = get_tournament_members(chat_id, limit=3)
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM fishing_tournaments WHERE chat_id = ?", (chat_id,))
+        c.execute("DELETE FROM fishing_tournament_members WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+    if not members:
+        return None
+    winners = []
+    prizes = [prize, prize // 2, prize // 4]
+    for i, (uid, caught) in enumerate(members):
+        add_candies(uid, prizes[i], 0)
+        winners.append((uid, caught, prizes[i]))
+    return winners
+
 
 # ================= СЕТКА =================
 def create_grid(name, creator_id):
@@ -2039,11 +2278,9 @@ LINK_PATTERN = re.compile(r'\[([^\]]+)\]\((https?://[^\s\)]+)\)|\{(https?://[^\s
 PLACEHOLDER = "[ссылка на проверке]"
 
 def extract_links_from_text(text: str):
-    """Извлекает ссылки, защищая уже существующие HTML-теги от порчи."""
     if not text:
         return text, []
 
-    # Защищаем существующие HTML-теги <tg-emoji>, <a>, <b>, <code> и т.д.
     protected = []
     def _protect(match):
         protected.append(match.group(0))
@@ -2067,7 +2304,6 @@ def extract_links_from_text(text: str):
 
     cleaned = LINK_PATTERN.sub(replacer, text)
 
-    # Восстанавливаем защищённые теги
     for i, p in enumerate(protected):
         cleaned = cleaned.replace(f"\x00LINKPROT{i}\x00", p)
 
@@ -3686,6 +3922,128 @@ async def top_candies_cmd(message: types.Message):
         text += f"{medal} {name} — <b>{balance}</b> 🍬\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
+
+# ================= ПЕРЕВОД ИРИСОК =================
+@cmd("перевод")
+@cmd("перевести")
+async def transfer_candies_cmd(message: types.Message):
+    user_id = message.from_user.id
+    args = message.text.split()
+
+    if len(args) < 2:
+        return await message.reply(
+            "📌 <b>Формат:</b> <code>.перевод @user 100</code>\n\n"
+            "💡 Можно по ID: <code>.перевод 123456789 100</code>\n"
+            "💡 Или ответом: <code>.перевод 100</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    target = None
+    amount_arg = None
+
+    if message.reply_to_message and len(args) == 2:
+        target = message.reply_to_message.from_user
+        amount_arg = args[1]
+    else:
+        target_arg = args[1]
+        amount_arg = args[2] if len(args) >= 3 else None
+        if not amount_arg:
+            return await message.reply("📌 Укажи сумму: <code>.перевод @user 100</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+        if target_arg.startswith('@'):
+            try:
+                target = await bot.get_chat(target_arg)
+            except:
+                return await message.reply(f"{em('cross', '❌')} Пользователь <code>{target_arg}</code> не найден.", parse_mode="HTML", disable_web_page_preview=True)
+        elif target_arg.isdigit():
+            try:
+                target = await bot.get_chat(int(target_arg))
+            except:
+                with sqlite3.connect(DATABASE_PATH) as conn:
+                    c = conn.cursor()
+                    c.execute("SELECT user_id, first_name FROM users WHERE user_id = ?", (int(target_arg),))
+                    r = c.fetchone()
+                    if r:
+                        class _FakeUser:
+                            def __init__(self, uid, name):
+                                self.id = uid
+                                self.first_name = name
+                                self.username = None
+                                self.is_bot = False
+                        target = _FakeUser(r[0], r[1])
+                    else:
+                        return await message.reply(f"{em('cross', '❌')} Пользователь <code>{target_arg}</code> не найден.", parse_mode="HTML", disable_web_page_preview=True)
+        else:
+            return await message.reply("📌 Укажи получателя: <code>.перевод @user 100</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    if not target:
+        return await message.reply(f"{em('cross', '❌')} Получатель не найден.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if target.id == user_id:
+        return await message.reply(f"{em('cross', '❌')} Нельзя перевести самому себе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if target.id == bot.id:
+        return await message.reply(f"{em('cross', '❌')} Нельзя перевести боту.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if getattr(target, 'is_bot', False):
+        return await message.reply(f"{em('cross', '❌')} Нельзя перевести боту.", parse_mode="HTML", disable_web_page_preview=True)
+
+    try:
+        amount = int(amount_arg)
+    except:
+        return await message.reply(f"{em('cross', '❌')} Сумма должна быть числом.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if amount < 1:
+        return await message.reply(f"{em('cross', '❌')} Минимум: <b>1</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
+
+    if amount > 100000:
+        return await message.reply(f"{em('cross', '❌')} Максимум за раз: <b>100 000</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
+
+    sender_balance = get_balance(user_id)
+    if sender_balance < amount:
+        return await message.reply(
+            f"{em('cross', '❌')} Недостаточно ирисок!\n\n"
+            f"💰 У тебя: <b>{sender_balance}</b> 🍬\n"
+            f"💸 Нужно: <b>{amount}</b> 🍬",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (amount, user_id))
+            c.execute("INSERT OR IGNORE INTO candies (user_id, balance) VALUES (?, 0)", (target.id,))
+            c.execute("UPDATE candies SET balance = balance + ? WHERE user_id = ?", (amount, target.id))
+            c.execute("INSERT INTO candy_log (user_id, amount, added_by) VALUES (?, ?, ?)", (user_id, -amount, target.id))
+            c.execute("INSERT INTO candy_log (user_id, amount, added_by) VALUES (?, ?, ?)", (target.id, amount, user_id))
+            conn.commit()
+    except Exception as e:
+        return await message.reply(f"{em('cross', '❌')} Ошибка перевода: <code>{e}</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    new_sender_balance = get_balance(user_id)
+    new_target_balance = get_balance(target.id)
+
+    await message.reply(
+        f"{em('check', '✅')} <b>Перевод выполнен!</b>\n\n"
+        f"👤 Кому: {mention(target)}\n"
+        f"💰 Сумма: <b>{amount}</b> 🍬\n"
+        f"📊 Твой баланс: <b>{new_sender_balance}</b> 🍬",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+    try:
+        sender_name = message.from_user.first_name
+        await bot.send_message(
+            target.id,
+            f"🎁 <b>Вам перевели {amount} 🍬!</b>\n\n"
+            f"👤 От: <b>{sender_name}</b>\n"
+            f"📊 Твой баланс: <b>{new_target_balance}</b> 🍬",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    except:
+        pass
+
+
 # ================= STARS =================
 @cmd("купитьириски")
 @cmd("купить-ириски")
@@ -3870,202 +4228,68 @@ async def antispam_status_cmd(message: types.Message):
     status = "🟢 <b>включён</b>" if enabled else "🔴 <b>выключен</b>"
     await message.reply(f"{em('shield', '🛡')} <b>Антиспам:</b> {status}\n\n• <code>+антиспам</code>\n• <code>-антиспам</code>", parse_mode="HTML", disable_web_page_preview=True)
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("+ак") and not m.text.lower().strip().startswith("+аки"))
-async def add_antispam_kick(message: types.Message):
-    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1): return
-    target, _ = await resolve_target(message)
-    if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
-    reason = "Без причины"
-    parts = message.text.split('\n', 1)
-    if len(parts) > 1: reason = parts[1].strip()
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)", (target.id, reason, message.from_user.id))
-        conn.commit()
-    log_antispam_action(target.id, "add", reason, message.from_user.id)
-    success, failed, total = await kick_in_all_antispam_chats(target.id)
-    await message.reply(f"{em('check', '✅')} {mention(target)} в АС\n👢 Кикнут в <b>{success}</b> из <b>{total}</b>\n📝 {reason}", parse_mode="HTML", disable_web_page_preview=True)
+# ================= +КАПЧА / -КАПЧА =================
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["+капча", "+ капча"])
+async def enable_captcha_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+    actor_rank = get_rank(message.chat.id, message.from_user.id)
+    is_tg_adm = await is_tg_admin(message.chat.id, message.from_user.id)
+    if actor_rank < 3 and not is_tg_adm and message.from_user.id != OWNER_ID:
+        return await message.reply(
+            f"{em('cross', '❌')} Нужен Мл. Админ (3) или ТГ-админ.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    if is_captcha_enabled(message.chat.id):
+        return await message.reply(f"ℹ️ Капча уже <b>включена</b>.", parse_mode="HTML", disable_web_page_preview=True)
+    set_captcha_enabled(message.chat.id, True)
+    await message.reply(
+        f"{em('check', '✅')} <b>Капча включена!</b>\n\n"
+        f"🤖 Новые юзеры будут проходить проверку при входе.\n"
+        f"📌 Отключить: <code>-капча</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("+аки"))
-async def add_antispam_kick_ignore(message: types.Message):
-    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1): return
-    target, _ = await resolve_target(message)
-    if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
-    reason = "Без причины"
-    parts = message.text.split('\n', 1)
-    if len(parts) > 1: reason = parts[1].strip()
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)", (target.id, reason, message.from_user.id))
-        c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)", (target.id, message.chat.id, reason, message.from_user.id))
-        conn.commit()
-    log_antispam_action(target.id, "add", reason, message.from_user.id)
-    success, failed, total = await kick_in_all_antispam_chats(target.id)
-    await message.reply(f"{em('check', '✅')} {mention(target)} в АС + игнор\n👢 Кикнут: <b>{success}</b> из <b>{total}</b>\n📝 {reason}", parse_mode="HTML", disable_web_page_preview=True)
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["-капча", "- капча"])
+async def disable_captcha_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+    actor_rank = get_rank(message.chat.id, message.from_user.id)
+    is_tg_adm = await is_tg_admin(message.chat.id, message.from_user.id)
+    if actor_rank < 3 and not is_tg_adm and message.from_user.id != OWNER_ID:
+        return await message.reply(
+            f"{em('cross', '❌')} Нужен Мл. Админ (3) или ТГ-админ.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    if not is_captcha_enabled(message.chat.id):
+        return await message.reply(f"ℹ️ Капча уже <b>выключена</b>.", parse_mode="HTML", disable_web_page_preview=True)
+    set_captcha_enabled(message.chat.id, False)
+    await message.reply(
+        f"{em('check', '✅')} <b>Капча выключена!</b>\n\n"
+        f"👋 Новые юзеры будут сразу входить в чат без проверки.\n"
+        f"📌 Включить обратно: <code>+капча</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("+аигн"))
-async def add_antispam_ignore(message: types.Message):
-    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1): return
-    target, _ = await resolve_target(message)
-    if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
-    reason = "Без причины"
-    parts = message.text.split('\n', 1)
-    if len(parts) > 1: reason = parts[1].strip()
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)", (target.id, reason, message.from_user.id))
-        conn.commit()
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("""SELECT DISTINCT chat_id FROM (
-            SELECT chat_id FROM messages_stats UNION SELECT chat_id FROM chat_codes
-            UNION SELECT chat_id FROM admins UNION SELECT chat_id FROM chat_antispam_settings
-        )""")
-        all_chats = [r[0] for r in c.fetchall()]
-        for chat_id in all_chats:
-            c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)", (target.id, chat_id, reason, message.from_user.id))
-        conn.commit()
-    log_antispam_action(target.id, "add", reason, message.from_user.id)
-    await message.reply(f"{em('check', '✅')} {mention(target)} в АС\n🔇 Игнор во всех чатах ({len(all_chats)})\n📝 {reason}", parse_mode="HTML", disable_web_page_preview=True)
-
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("+ас") and not m.text.lower().strip().startswith("+ачивка"))
-async def add_antispam(message: types.Message):
-    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1): return
-    target, _ = await resolve_target(message)
-    if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
-    reason = "Без причины"
-    parts = message.text.split('\n', 1)
-    if len(parts) > 1: reason = parts[1].strip()
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO antispam (user_id, reason, added_by) VALUES (?, ?, ?)", (target.id, reason, message.from_user.id))
-        conn.commit()
-    log_antispam_action(target.id, "add", reason, message.from_user.id)
-    await message.reply(f"{em('check', '✅')} {mention(target)} в АС\n📝 {reason}", parse_mode="HTML", disable_web_page_preview=True)
-
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("-ас"))
-async def remove_antispam(message: types.Message):
-    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Только агенты.", parse_mode="HTML", disable_web_page_preview=True)
-    args = message.text.split()
-    is_error_mode = len(args) >= 2 and args[1].lower() == "ошибка"
-    target, _ = await resolve_target(message)
-    if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
-    if not is_in_antispam(target.id):
-        return await message.reply("⚠️ Не в антиспаме.", parse_mode="HTML", disable_web_page_preview=True)
-    info = get_antispam_info(target.id)
-    old_reason = info[0] if info else "неизвестно"
-    if is_error_mode:
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            c = conn.cursor()
-            c.execute("DELETE FROM antispam WHERE user_id = ?", (target.id,))
-            c.execute("DELETE FROM ignore_list WHERE user_id = ?", (target.id,))
-            conn.commit()
-        cancel_last_antispam_add(target.id)
-        await message.reply(f"{em('check', '✅')} {mention(target)} вынесен из АС (ошибочно)\n📝 Была: {old_reason}\n👮 {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True)
-        try: await bot.send_message(target.id, f"🗓 <b>Вы были исключены из базы «mos-антиспам»</b>\n\n<i>Вынос был ошибочным.</i>\n\nℹ️ <a href='{TERMS_URL}'>Пользовательское соглашение</a>", parse_mode="HTML", disable_web_page_preview=True)
-        except: pass
-        return
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Да, вынести", callback_data=f"rm_as_confirm:{target.id}:{message.from_user.id}:{message.chat.id}"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data=f"rm_as_cancel:{target.id}:{message.from_user.id}")
-    ]])
-    await message.reply(f"❓ <b>Вы уверены?</b>\n\n👤 {mention(target)}\n📝 Текущая причина АС: {old_reason}\n\n<i>После выноса юзер будет впускаться.</i>", parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb)
-
-@dp.callback_query(lambda c: c.data and c.data.startswith("rm_as_confirm:"))
-async def rm_as_confirm_handler(callback: types.CallbackQuery):
-    parts = callback.data.split(":")
-    target_id = int(parts[1]); admin_id = int(parts[2]); chat_id = int(parts[3])
-    if callback.from_user.id != admin_id:
-        return await callback.answer("⛔ Не ты вызывал", show_alert=True)
-    if admin_id != OWNER_ID and not has_agent_rank(admin_id, 1):
-        return await callback.answer("⛔ Нет прав", show_alert=True)
-    if not is_in_antispam(target_id):
-        await callback.message.edit_text("⚠️ Юзер уже не в АС.")
-        return await callback.answer()
-    info = get_antispam_info(target_id)
-    old_reason = info[0] if info else "неизвестно"
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM antispam WHERE user_id = ?", (target_id,))
-        c.execute("DELETE FROM ignore_list WHERE user_id = ?", (target_id,))
-        conn.commit()
-    log_antispam_action(target_id, "remove", old_reason, admin_id)
-    try:
-        target_chat = await bot.get_chat(target_id)
-        target_name = target_chat.first_name or "Юзер"
-        target_username = target_chat.username
-    except: target_name = "Юзер"; target_username = None
-    user_display = f"<a href='https://t.me/{target_username}'>{target_name}</a>" if target_username else f"<b>{target_name}</b>"
-    try: await callback.message.edit_text(f"{em('check', '✅')} {user_display} вынесен из АС\n📝 <b>Была:</b> {old_reason}\n👮 {callback.from_user.first_name}", parse_mode="HTML", disable_web_page_preview=True)
-    except: pass
-    try: await bot.send_message(target_id, f"🗓 <b>Вы были исключены из базы «mos-антиспам»</b>\n\nУчтите, что каждый последующий вынос повышается в цене. За подробностями обращайтесь к агентам поддержки.\n\nЧтобы в будущем избежать попадания в базу mos-антиспам, рекомендуем ознакомиться с нашим <a href='{TERMS_URL}'>пользовательским соглашением</a>.", parse_mode="HTML", disable_web_page_preview=True)
-    except: pass
-    await callback.answer(f"{em('check', '✅')} Вынесен")
-
-@dp.callback_query(lambda c: c.data and c.data.startswith("rm_as_cancel:"))
-async def rm_as_cancel_handler(callback: types.CallbackQuery):
-    parts = callback.data.split(":")
-    admin_id = int(parts[2])
-    if callback.from_user.id != admin_id:
-        return await callback.answer("⛔ Не ты вызывал", show_alert=True)
-    try: await callback.message.edit_text(f"{em('cross', '❌')} Отменено.", parse_mode="HTML", disable_web_page_preview=True)
-    except: pass
-    await callback.answer(f"{em('cross', '❌')} Отменено")
-
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("-аигн"))
-async def remove_ignore(message: types.Message):
-    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1): return
-    target, _ = await resolve_target(message)
-    if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
-    in_as = is_in_antispam(target.id)
-    in_ig = False
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT 1 FROM ignore_list WHERE user_id = ? LIMIT 1", (target.id,))
-        in_ig = c.fetchone() is not None
-    if not in_as and not in_ig:
-        return await message.reply("⚠️ Не в АС и не в игноре.", parse_mode="HTML", disable_web_page_preview=True)
-    info = get_antispam_info(target.id)
-    old_reason = info[0] if info else "неизвестно"
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM antispam WHERE user_id = ?", (target.id,))
-        c.execute("DELETE FROM ignore_list WHERE user_id = ?", (target.id,))
-        conn.commit()
-    log_antispam_action(target.id, "remove", old_reason, message.from_user.id)
-    await message.reply(f"{em('check', '✅')} {mention(target)} вынесен из <b>АС</b> и <b>игнора</b> (все чаты)\n📝 Была: {old_reason}", parse_mode="HTML", disable_web_page_preview=True)
-    try: await bot.send_message(target.id, f"🗓 <b>Вы были исключены из базы «mos-антиспам»</b>\n\nУчтите, что каждый последующий вынос повышается в цене. За подробностями обращайтесь к агентам поддержки.\n\n<a href='{TERMS_URL}'>Пользовательское соглашение</a>", parse_mode="HTML", disable_web_page_preview=True)
-    except: pass
-
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("-игнор"))
-async def remove_ignore_only(message: types.Message):
-    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1): return
-    target, _ = await resolve_target(message)
-    if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT 1 FROM ignore_list WHERE user_id = ? LIMIT 1", (target.id,))
-        in_ig = c.fetchone() is not None
-    if not in_ig:
-        return await message.reply("⚠️ Не в игноре.", parse_mode="HTML", disable_web_page_preview=True)
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM ignore_list WHERE user_id = ?", (target.id,))
-        conn.commit()
-    still_in_as = is_in_antispam(target.id)
-    note = "\n\n⚠️ <i>Юзер всё ещё в базе mos-антиспам.</i>" if still_in_as else ""
-    await message.reply(f"{em('check', '✅')} {mention(target)} убран из <b>игнора</b> (все чаты){note}", parse_mode="HTML", disable_web_page_preview=True)
-    if not still_in_as:
-        try: await bot.send_message(target.id, f"🗓 <b>Вы были исключены из базы «mos-антиспам»</b>\n\n<a href='{TERMS_URL}'>Соглашение</a>", parse_mode="HTML", disable_web_page_preview=True)
-        except: pass
+@cmd("капча")
+async def captcha_status_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+    enabled = is_captcha_enabled(message.chat.id)
+    status = "🟢 <b>включена</b>" if enabled else "🔴 <b>выключена</b>"
+    text = (
+        f"🤖 <b>Капча при входе</b>\n\n"
+        f"📊 Статус: {status}\n\n"
+        f"<b>Что делает:</b>\n"
+        f"• Новый юзер входит → получает проверку\n"
+        f"• У него <b>2 минуты</b> чтобы ответить\n"
+        f"• 3 типа: эмодзи, математика, найди отличающийся\n"
+        f"• Не ответил / ошибся → автоматический кик\n\n"
+        f"<b>Управление:</b>\n"
+        f"• <code>+капча</code> — включить\n"
+        f"• <code>-капча</code> — выключить"
+    )
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 # ================= ПРАВИЛА =================
 @cmd("правила")
@@ -4090,10 +4314,8 @@ async def rules_cmd(message: types.Message):
             return await message.reply("📌 <code>.правила установить</code> (текст на новой строке)", parse_mode="HTML", disable_web_page_preview=True)
         nl_idx = message.text.find("\n")
         raw_text_html = _extract_html_after(message, nl_idx + 1)[:3500]
-
         cleaned_text, links = extract_links_from_text(raw_text_html)
         set_chat_rules(message.chat.id, cleaned_text, message.from_user.id)
-
         if links:
             chat_title = message.chat.title or "чат"
             link_ids = save_pending_links("rules", message.chat.id, "", links, message.from_user.id)
@@ -4114,7 +4336,6 @@ async def rules_cmd(message: types.Message):
         except Exception as e:
             return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
         return
-    # Если sub — не команда, просто показываем правила
     rules = get_chat_rules(message.chat.id)
     if rules:
         try:
@@ -4704,10 +4925,8 @@ async def create_note_cmd(message: types.Message):
         return
     nl_idx = message.text.find("\n")
     raw_body_html = _extract_html_after(message, nl_idx + 1)[:3500]
-
     cleaned_body, links = extract_links_from_text(raw_body_html)
     note_id = add_note(message.chat.id, name, cleaned_body, message.from_user.id)
-
     if not note_id:
         return await message.reply(f"{em('cross', '❌')} Заметка уже есть.", parse_mode="HTML", disable_web_page_preview=True)
     if links:
@@ -4757,7 +4976,6 @@ async def get_note_cmd(message: types.Message):
     note = get_note_by_number(message.chat.id, int(arg)) if arg.isdigit() else get_note_by_name(message.chat.id, arg)
     if not note:
         return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML", disable_web_page_preview=True)
-
     note_text = note[2]
     try:
         await message.reply(note_text, parse_mode="HTML", disable_web_page_preview=True)
@@ -4855,7 +5073,6 @@ async def who_not_vip_cmd(message: types.Message):
 async def set_vip_emoji_cmd(message: types.Message):
     if not get_vip(message.from_user.id):
         return await message.reply(f"{em('cross', '❌')} Нет VIP.", parse_mode="HTML", disable_web_page_preview=True)
-
     custom_emoji_id = None
     custom_emoji_fallback = None
     if message.entities:
@@ -4864,12 +5081,10 @@ async def set_vip_emoji_cmd(message: types.Message):
                 custom_emoji_id = ent.custom_emoji_id
                 custom_emoji_fallback = message.text[ent.offset:ent.offset + ent.length]
                 break
-
     if custom_emoji_id:
         emoji_html = f'<tg-emoji emoji-id="{custom_emoji_id}">{custom_emoji_fallback}</tg-emoji>'
         set_vip_emoji(message.from_user.id, emoji_html)
         return await message.reply(f"{em('check', '✅')} <b>Премиум-эмодзи установлен</b>\n\n{emoji_html}", parse_mode="HTML", disable_web_page_preview=True)
-
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
         return await message.reply("📌 <b>Формат:</b>\n<code>+Вип эмодзи 😎</code>\n<i>Можно отправить премиум-эмодзи</i>", parse_mode="HTML", disable_web_page_preview=True)
@@ -4900,7 +5115,6 @@ async def create_rp_cmd(message: types.Message):
     first_slash = message.text.find("/")
     second_slash = message.text.find("/", first_slash + 1)
     text_html = _extract_html_after(message, second_slash + 1)[:300] if second_slash != -1 else ""
-
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         try:
@@ -4947,7 +5161,6 @@ async def create_global_rp_cmd(message: types.Message):
     first_slash = message.text.find("/")
     second_slash = message.text.find("/", first_slash + 1)
     text_html = _extract_html_after(message, second_slash + 1)[:300] if second_slash != -1 else ""
-
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         try:
@@ -5027,7 +5240,7 @@ async def fishing_cmd(message: types.Message):
     user_id = message.from_user.id
     chat_id = message.chat.id
     info = get_fishing(user_id)
-    (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish) = info
+    (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish, inv, legendary) = info
     cooldown = format_fishing_cooldown(last_fish)
     if cooldown > 0:
         hours = cooldown // 3600; mins = (cooldown % 3600) // 60; secs = cooldown % 60
@@ -5037,55 +5250,138 @@ async def fishing_cmd(message: types.Message):
         if secs > 0 and hours == 0: parts.append(f"{secs} сек.")
         time_str = " ".join(parts) if parts else "1 сек."
         return await message.reply(f"⏳ Удочка не готова. Подожди <b>{time_str}</b>.", parse_mode="HTML", disable_web_page_preview=True)
+
+    inv_dict = get_fishing_inventory(user_id)
+    has_premium = inv_dict.get("premium_rod", 0) > 0
+    if not has_rod and not has_premium:
+        return await message.reply(
+            "❌ <b>У тебя нет удочки!</b>\n\n"
+            "📌 Купи обычную: <code>.купить удочку</code> (300 🍬)\n"
+            "📌 Или премиум: <code>.купить премиум-удочку</code> (10 000 🍬)",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
     msg = await message.reply("🎣 Забрасываю удочку...")
-    await asyncio.sleep(3)
+    await asyncio.sleep(2)
+
+    event = get_active_event(chat_id)
+    event_bonus = 1.0
+    event_text = ""
+    rare_boost = 1.0
+    if event:
+        ev_key, ev_bonus, ev_exp = event
+        ev_data = FISHING_EVENTS.get(ev_key, {})
+        event_bonus = ev_bonus
+        rare_boost = ev_data.get("rare_boost", 1.0)
+        event_text = f"\n{ev_data.get('name', ev_key)} — бонус ×{event_bonus}"
+
     chance = 55
     chance += (level - 1) * 5
-    if has_rod: chance += 10
+    if has_rod or has_premium: chance += 10
     bait_active = is_bait_active(bait_until)
     if bait_active: chance += 15
-    chance = min(chance, 95)
+
+    gear_bonus, gear_flat, has_boat, has_premium_gear = get_fishing_gear_bonus(user_id)
+    chance = int(chance * (1 + gear_bonus))
+    chance = min(chance, 98)
+
     roll = random.randint(1, 100)
     if roll <= chance:
-        total_weight = sum(f[4] for f in FISH_LIST)
-        pick = random.uniform(0, total_weight)
-        cumulative = 0
-        chosen_fish = FISH_LIST[0]
-        for fish in FISH_LIST:
-            cumulative += fish[4]
-            if pick <= cumulative:
-                chosen_fish = fish
-                break
-        fish_name, fish_emoji, min_r, max_r, weight = chosen_fish
-        reward = random.randint(min_r, max_r)
+        legendary_chance = 0
+        if has_boat:
+            legendary_chance += 15
+        legendary_chance = int(legendary_chance * rare_boost)
+        is_legendary = random.randint(1, 100) <= legendary_chance
+
+        if is_legendary:
+            total_weight = sum(f[4] for f in LEGENDARY_FISH)
+            pick = random.uniform(0, total_weight)
+            cumulative = 0
+            chosen = LEGENDARY_FISH[0]
+            for fish in LEGENDARY_FISH:
+                cumulative += fish[4]
+                if pick <= cumulative:
+                    chosen = fish
+                    break
+            fish_name, fish_emoji, min_r, max_r, _ = chosen
+            reward = random.randint(min_r, max_r)
+            update_legendary_count(user_id)
+            legendary_text = "\n\n💎 <b>ЛЕГЕНДАРНАЯ РЫБА!</b>"
+        else:
+            total_weight = sum(f[4] for f in FISH_LIST)
+            pick = random.uniform(0, total_weight)
+            cumulative = 0
+            chosen = FISH_LIST[0]
+            for fish in FISH_LIST:
+                cumulative += fish[4]
+                if pick <= cumulative:
+                    chosen = fish
+                    break
+            fish_name, fish_emoji, min_r, max_r, _ = chosen
+            reward = random.randint(min_r, max_r)
+            legendary_text = ""
+
+        reward = int(reward * event_bonus)
+        reward = int(reward * (1 + gear_bonus))
         if bait_active: reward = int(reward * 1.1)
+        reward += gear_flat
+        reward = max(1, reward)
+
         xp_gain = random.randint(5, 15)
         new_xp = xp + xp_gain
         new_level = level
         while new_xp >= xp_needed_for_level(new_level):
             new_xp -= xp_needed_for_level(new_level)
             new_level += 1
+
         update_fishing(user_id, level=new_level, xp=new_xp, total_caught=total_caught + 1)
         set_fishing_last_fish(user_id)
         if reward > 0: add_candies(user_id, reward, 0)
         log_fishing(user_id, chat_id, "caught", fish_name, reward)
+
+        tour = get_active_tournament(chat_id)
+        if tour:
+            update_tournament_score(chat_id, user_id, 1)
+
+        new_ach = check_fishing_achievements(user_id, chat_id)
+        ach_text = ""
+        if new_ach:
+            ach_text = "\n\n🎖 <b>Новые ачивки:</b>\n" + "\n".join(f"  • {a}" for a in new_ach)
+
+        break_text = ""
+        if has_rod and not has_premium:
+            if random.randint(1, 100) <= 15:
+                if use_fishing_item(user_id, "line"):
+                    break_text = "\n\n🧵 <b>Леска спасла удочку!</b>"
+                else:
+                    update_fishing(user_id, has_rod=0)
+                    break_text = "\n\n💥 <b>Удочка сломалась!</b>"
+
         level_up_text = ""
         if new_level > level: level_up_text = f"\n\n🎉 <b>Уровень повышен!</b> Теперь уровень <b>{new_level}</b>"
         bait_text = ""
         if bait_active: bait_text = "\n🍯 Прикормка активна (+15% шанс, +10% награда)"
+
         await msg.edit_text(
             f"🎣 <b>Улов!</b>\n\n{fish_emoji} <b>{fish_name}</b>\n💰 Награда: <b>+{reward}</b> 🍬\n"
             f"✨ Опыт: <b>+{xp_gain}</b> XP\n\n📊 Уровень: <b>{new_level}</b> | XP: <b>{new_xp}/{xp_needed_for_level(new_level)}</b>\n"
-            f"🐟 Всего поймано: <b>{total_caught + 1}</b>{level_up_text}{bait_text}",
+            f"🐟 Всего поймано: <b>{total_caught + 1}</b>"
+            f"{level_up_text}{bait_text}{legendary_text}{event_text}{break_text}{ach_text}",
             parse_mode="HTML"
         )
     else:
         empty_roll = random.randint(1, 100)
-        if empty_roll <= 20 and has_rod:
-            update_fishing(user_id, has_rod=0, total_empty=total_empty + 1)
-            set_fishing_last_fish(user_id)
-            log_fishing(user_id, chat_id, "broke")
-            await msg.edit_text("💥 <b>Удочка сломалась!</b>\n\nПридётся купить новую: <code>.купить удочку</code>", parse_mode="HTML")
+        if empty_roll <= 20 and has_rod and not has_premium:
+            if use_fishing_item(user_id, "line"):
+                update_fishing(user_id, total_empty=total_empty + 1)
+                set_fishing_last_fish(user_id)
+                log_fishing(user_id, chat_id, "empty")
+                await msg.edit_text("🧵 <b>Леска спасла удочку от поломки!</b>", parse_mode="HTML")
+            else:
+                update_fishing(user_id, has_rod=0, total_empty=total_empty + 1)
+                set_fishing_last_fish(user_id)
+                log_fishing(user_id, chat_id, "broke")
+                await msg.edit_text("💥 <b>Удочка сломалась!</b>\n\nПридётся купить новую: <code>.купить удочку</code>", parse_mode="HTML")
         else:
             update_fishing(user_id, total_empty=total_empty + 1)
             set_fishing_last_fish(user_id)
@@ -5117,7 +5413,7 @@ async def fishing_top_cmd(message: types.Message):
 @cmd("рыбстата")
 async def fishing_stats_cmd(message: types.Message):
     info = get_fishing(message.from_user.id)
-    (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish) = info
+    (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish, inv, legendary) = info
     xp_needed = xp_needed_for_level(level)
     has_rod_text = "✅ Есть" if has_rod else "❌ Нет"
     bait_active = is_bait_active(bait_until)
@@ -5136,7 +5432,8 @@ async def fishing_stats_cmd(message: types.Message):
         cooldown_text = "✅ Готово к забросу"
     await message.reply(
         f"🎣 <b>Твоя рыбалка</b>\n\n📊 Уровень: <b>{level}</b>\n✨ XP: <b>{xp}/{xp_needed}</b>\n"
-        f"🐟 Поймано: <b>{total_caught}</b>\n📉 Пустых: <b>{total_empty}</b>\n🎯 Успешность: <b>{success_rate}%</b>\n\n"
+        f"🐟 Поймано: <b>{total_caught}</b>\n📉 Пустых: <b>{total_empty}</b>\n🎯 Успешность: <b>{success_rate}%</b>\n"
+        f"💎 Легендарных: <b>{legendary or 0}</b>\n\n"
         f"🎣 Удочка: {has_rod_text}\n🍯 Прикормка: {bait_text}\n⏰ Кулдаун: {cooldown_text}",
         parse_mode="HTML", disable_web_page_preview=True
     )
@@ -5176,6 +5473,194 @@ async def buy_rod_cmd(message: types.Message):
         conn.commit()
     update_fishing(user_id, has_rod=1)
     await message.reply(f"✅ <b>Удочка куплена!</b>\n\n🎣 +10% шанс улова\n⚠️ Может сломаться при неудачном забросе", parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= МАГАЗИН СНАСТЕЙ =================
+@cmd("магазин снастей")
+@cmd("снасти")
+async def fishing_shop_cmd(message: types.Message):
+    text = "🛒 <b>Магазин снастей</b>\n\n"
+    for key, gear in FISHING_GEAR.items():
+        stack = ""
+        if gear.get("stackable"):
+            stack = f" (x{gear.get('count', 1)})"
+        text += f"<b>{gear['name']}</b>{stack} — <b>{gear['price']}</b> 🍬\n   <i>{gear['desc']}</i>\n   Купить: <code>.купить {key}</code>\n\n"
+    text += "💡 Снасти дают пассивные бонусы к улову!"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("купить")
+async def fishing_buy_cmd(message: types.Message):
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply("📌 <code>.купить премиум-удочку</code>", parse_mode="HTML", disable_web_page_preview=True)
+    query = args[1].lower()
+    gear_key = None
+    for k, g in FISHING_GEAR.items():
+        if query == k or query in g["name"].lower():
+            gear_key = k
+            break
+    if not gear_key:
+        return await message.reply("❌ Снасть не найдена. Смотри: <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
+    gear = FISHING_GEAR[gear_key]
+    price = gear["price"]
+    user_id = message.from_user.id
+    balance = get_balance(user_id)
+    if balance < price:
+        return await message.reply(f"❌ Нужно <b>{price}</b> 🍬, у тебя <b>{balance}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    inv = get_fishing_inventory(user_id)
+    if not gear.get("stackable") and inv.get(gear_key, 0) > 0:
+        return await message.reply(f"⚠️ У тебя уже есть <b>{gear['name']}</b>.", parse_mode="HTML", disable_web_page_preview=True)
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (price, user_id))
+        conn.commit()
+    count = gear.get("count", 1) if gear.get("stackable") else 1
+    add_to_fishing_inventory(user_id, gear_key, count)
+    await message.reply(
+        f"{em('check', '✅')} <b>Куплено!</b>\n\n{gear['name']} — <b>{price}</b> 🍬\n💰 Осталось: <b>{get_balance(user_id)}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("инвентарь")
+@cmd("инв")
+async def fishing_inventory_cmd(message: types.Message):
+    user_id = message.from_user.id
+    inv = get_fishing_inventory(user_id)
+    info = get_fishing(user_id)
+    has_rod = info[5] if len(info) > 5 else 0
+
+    text = "🎒 <b>Твой инвентарь</b>\n\n"
+    if has_rod:
+        text += "🎣 <b>Обычная удочка</b>\n"
+    if not inv and not has_rod:
+        text += "<i>Пусто. Загляни в магазин: <code>.магазин снастей</code></i>\n"
+    else:
+        for key, count in inv.items():
+            gear = FISHING_GEAR.get(key)
+            if not gear: continue
+            cnt = f" (x{count})" if count > 1 else ""
+            text += f"{gear['name']}{cnt}\n   <i>{gear['desc']}</i>\n"
+
+    gear_bonus, gear_flat, has_boat, has_premium = get_fishing_gear_bonus(user_id)
+    text += f"\n📊 <b>Текущие бонусы:</b>\n"
+    text += f"• К улову: +{int(gear_bonus*100)}%\n"
+    text += f"• К награде: +{gear_flat} 🍬\n"
+    if has_boat: text += "• 🚤 Шанс легендарной рыбы +15%\n"
+    text += f"\n💰 Баланс: <b>{get_balance(user_id)}</b> 🍬"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("мои рыбные ачивки")
+@cmd("рыбные ачивки")
+async def fishing_ach_cmd(message: types.Message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT achievement FROM fishing_achievements WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        have = {r[0] for r in c.fetchall()}
+    text = "🎖 <b>Твои ачивки рыбалки</b>\n\n"
+    for key, ach in FISHING_ACHIEVEMENTS.items():
+        mark = "✅" if key in have else "🔒"
+        text += f"{mark} {ach['name']}\n"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("событие")
+@cmd("погода рыбалки")
+async def fishing_event_cmd(message: types.Message):
+    chat_id = message.chat.id
+    event = get_active_event(chat_id)
+    if not event:
+        return await message.reply("☀️ <b>Сейчас штиль.</b>\nСобытия меняются каждые ~30 минут.", parse_mode="HTML", disable_web_page_preview=True)
+    ev_key, bonus, expires = event
+    ev_data = FISHING_EVENTS.get(ev_key, {})
+    try:
+        exp_dt = datetime.strptime(expires[:19], "%Y-%m-%d %H:%M:%S")
+        left = int((exp_dt - datetime.now()).total_seconds() / 60)
+    except:
+        left = 0
+    text = (
+        f"{ev_data.get('name', ev_key)}\n\n"
+        f"📈 Бонус: <b>×{bonus}</b>\n"
+        f"⏰ Осталось: <b>{left} мин.</b>"
+    )
+    if ev_data.get("rare_boost"):
+        text += f"\n💎 Шанс редких ×{ev_data['rare_boost']}"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("турнир")
+async def fishing_tournament_cmd(message: types.Message):
+    args = message.text.split()
+    chat_id = message.chat.id
+
+    if len(args) >= 2 and args[1].lower() in ["участвовать", "join"]:
+        tour = get_active_tournament(chat_id)
+        if not tour:
+            return await message.reply("❌ Нет активного турнира.", parse_mode="HTML", disable_web_page_preview=True)
+        join_tournament(chat_id, message.from_user.id)
+        return await message.reply(f"{em('check', '✅')} Ты в турнире! Рыбачь как можно больше до конца часа.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if len(args) >= 2 and args[1].lower() in ["стоп", "end", "завершить"]:
+        if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1) and not await is_tg_admin(chat_id, message.from_user.id):
+            return await message.reply(f"{em('cross', '❌')} Только админ.", parse_mode="HTML", disable_web_page_preview=True)
+        winners = end_tournament(chat_id)
+        if not winners:
+            return await message.reply("⚠️ Нет активного турнира или участников.", parse_mode="HTML", disable_web_page_preview=True)
+        text = "🏆 <b>ТУРНИР ЗАВЕРШЁН!</b>\n\n"
+        medals = ["🥇", "🥈", "🥉"]
+        for i, (uid, caught, prize) in enumerate(winners):
+            try:
+                u = await bot.get_chat(uid)
+                name = user_link(uid, u.first_name, u.username)
+            except:
+                name = f"ID {uid}"
+            text += f"{medals[i]} {name} — <b>{caught}</b> 🐟 (+{prize} 🍬)\n"
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+    if not await is_tg_admin(chat_id, message.from_user.id) and message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
+        return await message.reply(f"{em('cross', '❌')} Только админ может запустить.", parse_mode="HTML", disable_web_page_preview=True)
+
+    tour = get_active_tournament(chat_id)
+    if tour:
+        started_by, started_at, expires_at, prize = tour
+        try:
+            exp_dt = datetime.strptime(expires_at[:19], "%Y-%m-%d %H:%M:%S")
+            left = int((exp_dt - datetime.now()).total_seconds() / 60)
+        except:
+            left = 0
+        members = get_tournament_members(chat_id, limit=10)
+        text = f"🏆 <b>Турнир рыбаков</b>\n⏰ Осталось: <b>{left} мин.</b>\n💰 Приз: <b>{prize}</b> 🍬\n\n"
+        if members:
+            text += "📋 <b>Участники:</b>\n"
+            medals = ["🥇", "🥈", "🥉"]
+            for i, (uid, caught) in enumerate(members):
+                try:
+                    u = await bot.get_chat(uid)
+                    name = user_link(uid, u.first_name, u.username)
+                except:
+                    name = f"ID {uid}"
+                m = medals[i] if i < 3 else f"{i+1}."
+                text += f"{m} {name} — <b>{caught}</b> 🐟\n"
+        else:
+            text += "<i>Пока никто не участвует.</i>\n"
+        text += f"\n📌 Записаться: <code>.турнир участвовать</code>"
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+    create_tournament(chat_id, message.from_user.id, prize=5000, duration_min=60)
+    join_tournament(chat_id, message.from_user.id)
+    await message.reply(
+        "🏆 <b>ТУРНИР РЫБАКОВ ЗАПУЩЕН!</b>\n\n"
+        "⏰ Длится: <b>1 час</b>\n"
+        "💰 Приз: <b>5 000</b> 🍬 (1 место), 2500 (2), 1250 (3)\n\n"
+        "📌 Записаться: <code>.турнир участвовать</code>\n"
+        "🎣 Рыбачь как можно больше!",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
 
 # ================= СЕТКИ =================
 @cmd("создать сетку")
@@ -5552,7 +6037,7 @@ async def catalog_delete_cmd(message: types.Message):
         return await message.reply(f"{em('cross', '❌')} Только агенты 2+.", parse_mode="HTML", disable_web_page_preview=True)
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        return await message.reply("📌 <code>-каталог @username</code>\n<code>-каталог t.me/chatname</code>\n<code>-каталог КОДЧАТА</code>\n<code>-каталог 123456789</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>-каталог @username</code>", parse_mode="HTML", disable_web_page_preview=True)
     raw = args[1].strip()
     target_chat_id = None
     target_username = None
@@ -6029,6 +6514,60 @@ async def auto_backup_loop():
             print(f"❌ Ошибка в auto_backup_loop: {e}")
         await asyncio.sleep(300)
 
+
+# ================= АВТО-СОБЫТИЯ РЫБАЛКИ =================
+async def auto_fishing_events_loop():
+    while True:
+        try:
+            await asyncio.sleep(1800)
+            with sqlite3.connect(DATABASE_PATH) as conn:
+                c = conn.cursor()
+                c.execute("SELECT DISTINCT chat_id FROM messages_stats WHERE date >= ?", ((datetime.now().date() - timedelta(days=3)).isoformat(),))
+                chats = [r[0] for r in c.fetchall()]
+            for chat_id in chats:
+                if random.randint(1, 100) <= 30:
+                    ev_key = random.choice(list(FISHING_EVENTS.keys()))
+                    ev = FISHING_EVENTS[ev_key]
+                    set_event(chat_id, ev_key, ev["bonus"], ev["duration"])
+                    try:
+                        await bot.send_message(chat_id, f"🌦 <b>Событие на рыбалке!</b>\n\n{ev['name']}\n📈 Бонус ×{ev['bonus']}\n⏰ Длится: {ev['duration']} мин.", parse_mode="HTML", disable_web_page_preview=True)
+                    except:
+                        pass
+        except Exception as e:
+            print(f"❌ auto_fishing_events_loop: {e}")
+        await asyncio.sleep(60)
+
+
+async def auto_tournament_end_loop():
+    while True:
+        try:
+            await asyncio.sleep(60)
+            with sqlite3.connect(DATABASE_PATH) as conn:
+                c = conn.cursor()
+                now = datetime.now().isoformat()
+                c.execute("SELECT chat_id FROM fishing_tournaments WHERE expires_at <= ?", (now,))
+                expired_chats = [r[0] for r in c.fetchall()]
+            for chat_id in expired_chats:
+                winners = end_tournament(chat_id)
+                if winners:
+                    text = "🏆 <b>ТУРНИР ЗАВЕРШЁН!</b>\n\n"
+                    medals = ["🥇", "🥈", "🥉"]
+                    for i, (uid, caught, prize) in enumerate(winners):
+                        try:
+                            u = await bot.get_chat(uid)
+                            name = user_link(uid, u.first_name, u.username)
+                        except:
+                            name = f"ID {uid}"
+                        text += f"{medals[i]} {name} — <b>{caught}</b> 🐟 (+{prize} 🍬)\n"
+                    try:
+                        await bot.send_message(chat_id, text, parse_mode="HTML", disable_web_page_preview=True)
+                    except:
+                        pass
+        except Exception as e:
+            print(f"❌ auto_tournament_end_loop: {e}")
+        await asyncio.sleep(30)
+
+
 # ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
@@ -6055,13 +6594,11 @@ async def all_messages(message: types.Message):
                     await message.delete()
                 except:
                     pass
-
                 try:
                     await bot.ban_chat_member(message.chat.id, message.from_user.id)
                     add_chat_ban(message.chat.id, message.from_user.id, "спам", message.from_user.id, None)
                 except Exception as e:
                     print(f"❌ Не удалось забанить: {e}")
-
                 user_id = message.from_user.id
                 alert = (
                     f"<b>ССЫЛКИ ЗАПРЕЩЕНЫ В ГРУППЕ</b>\n"
@@ -6160,6 +6697,14 @@ async def on_join(event: types.ChatMemberUpdated):
             return
     except: return
 
+    if not is_captcha_enabled(chat_id):
+        greeting = get_greeting(chat_id)
+        if greeting:
+            try:
+                await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML", disable_web_page_preview=True)
+            except: pass
+        return
+
     try:
         await bot.restrict_chat_member(
             chat_id=chat_id, user_id=user.id,
@@ -6172,39 +6717,159 @@ async def on_join(event: types.ChatMemberUpdated):
         )
     except: pass
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Я не бот", callback_data=f"captcha_pass:{user.id}:{chat_id}")]])
+    captcha_type = _random.choice(["emoji", "math", "odd"])
+
+    if captcha_type == "emoji":
+        round_data = _random.choice(CAPTCHA_EMOJI_ROUNDS)
+        question = round_data["question"]
+        options = round_data["options"][:]
+        _random.shuffle(options)
+        answer = round_data["answer"]
+        kb_buttons = []
+        for opt in options:
+            kb_buttons.append(InlineKeyboardButton(
+                text=opt,
+                callback_data=f"captcha_answer:{user.id}:{chat_id}:{opt}"
+            ))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[kb_buttons])
+        text_captcha = (
+            f"{em('wave', '👋')} Привет, {mention(user)}!\n\n"
+            f"🤖 <b>Проверка на бота</b>\n\n"
+            f"❓ {question}\n\n"
+            f"⏰ У тебя <b>2 минуты</b>."
+        )
+    elif captcha_type == "math":
+        a = _random.randint(2, 15)
+        b = _random.randint(2, 15)
+        op = _random.choice(["+", "-", "*"])
+        if op == "+":
+            answer = str(a + b)
+            question = f"{a} + {b}"
+        elif op == "-":
+            if a < b: a, b = b, a
+            answer = str(a - b)
+            question = f"{a} − {b}"
+        else:
+            answer = str(a * b)
+            question = f"{a} × {b}"
+
+        wrong = set()
+        ans_int = int(answer)
+        while len(wrong) < 3:
+            delta = _random.randint(-5, 5)
+            if delta == 0: continue
+            w = ans_int + delta
+            if w > 0 and w != ans_int:
+                wrong.add(str(w))
+        options = list(wrong) + [answer]
+        _random.shuffle(options)
+        kb_buttons = []
+        for opt in options:
+            kb_buttons.append(InlineKeyboardButton(
+                text=opt,
+                callback_data=f"captcha_answer:{user.id}:{chat_id}:{opt}"
+            ))
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[kb_buttons])
+        text_captcha = (
+            f"{em('wave', '👋')} Привет, {mention(user)}!\n\n"
+            f"🤖 <b>Проверка на бота</b>\n\n"
+            f"❓ Реши пример: <b>{question}</b>\n\n"
+            f"⏰ У тебя <b>2 минуты</b>."
+        )
+    else:
+        emojis, odd_emoji = _make_odd_one_out()
+        rows = []
+        row = []
+        for i, e in enumerate(emojis):
+            row.append(InlineKeyboardButton(
+                text=e,
+                callback_data=f"captcha_answer:{user.id}:{chat_id}:{i}"
+            ))
+            if len(row) == 3:
+                rows.append(row)
+                row = []
+        if row: rows.append(row)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+        correct_index = emojis.index(odd_emoji)
+        answer = str(correct_index)
+        text_captcha = (
+            f"{em('wave', '👋')} Привет, {mention(user)}!\n\n"
+            f"🤖 <b>Проверка на бота</b>\n\n"
+            f"❓ Найди отличающийся эмодзи\n\n"
+            f"⏰ У тебя <b>2 минуты</b>."
+        )
+
     try:
         captcha_msg = await bot.send_message(
             chat_id,
-            f"{em('wave', '👋')} Привет, {mention(user)}!\n\n🤖 Нажми кнопку в течение <b>2 минут</b>.",
-            reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True
+            text_captcha,
+            reply_markup=keyboard,
+            parse_mode="HTML",
+            disable_web_page_preview=True
         )
-        save_captcha(user.id, chat_id, captcha_msg.message_id)
+        save_captcha(user.id, chat_id, captcha_msg.message_id, captcha_type, answer)
         asyncio.create_task(captcha_timeout(user.id, chat_id))
-    except: pass
+    except Exception as e:
+        print(f"❌ Ошибка создания капчи: {e}")
+
 
 async def captcha_timeout(user_id, chat_id):
     await asyncio.sleep(120)
-    if get_captcha(user_id, chat_id) is not None:
+    cap = get_captcha(user_id, chat_id)
+    if cap:
         try:
             await bot.ban_chat_member(chat_id, user_id)
             await bot.unban_chat_member(chat_id, user_id)
         except: pass
-        msg_id = get_captcha(user_id, chat_id)
+        msg_id = cap[0]
         if msg_id:
             try: await bot.delete_message(chat_id, msg_id)
             except: pass
+        try:
+            await bot.send_message(
+                chat_id,
+                f"⏰ <b>Капча истекла</b> — юзер не подтвердил за 2 минуты.",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+        except: pass
         remove_captcha(user_id, chat_id)
 
-@dp.callback_query(lambda c: c.data and c.data.startswith("captcha_pass:"))
-async def captcha_pass_handler(callback: types.CallbackQuery):
-    data = callback.data.split(":")
-    target_user_id = int(data[1])
-    chat_id = int(data[2])
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("captcha_answer:"))
+async def captcha_answer_handler(callback: types.CallbackQuery):
+    parts = callback.data.split(":")
+    if len(parts) < 4:
+        return await callback.answer("⚠️ Ошибка капчи.", show_alert=True)
+    target_user_id = int(parts[1])
+    chat_id = int(parts[2])
+    given_answer = parts[3]
+
     if callback.from_user.id != target_user_id:
-        return await callback.answer("⛔ Не твоя капча!", show_alert=True)
-    if get_captcha(target_user_id, chat_id) is None:
-        return await callback.answer("⚠️ Неактивна.", show_alert=True)
+        return await callback.answer("⛔ Это не твоя капча!", show_alert=True)
+
+    cap = get_captcha(target_user_id, chat_id)
+    if not cap:
+        return await callback.answer("⚠️ Капча неактивна.", show_alert=True)
+
+    msg_id, captcha_type, correct_answer = cap
+
+    if given_answer != correct_answer:
+        try:
+            await bot.ban_chat_member(chat_id, target_user_id)
+            await bot.unban_chat_member(chat_id, target_user_id)
+        except: pass
+        try:
+            await bot.send_message(
+                chat_id,
+                f"🤖 {mention(callback.from_user)} <b>не прошёл капчу!</b>\n❌ Неверный ответ.",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+        except: pass
+        remove_captcha(target_user_id, chat_id)
+        try: await callback.message.delete()
+        except: pass
+        return await callback.answer("❌ Неверно!", show_alert=True)
+
     try:
         await bot.restrict_chat_member(
             chat_id=chat_id, user_id=target_user_id,
@@ -6217,9 +6882,11 @@ async def captcha_pass_handler(callback: types.CallbackQuery):
         )
     except Exception as e:
         return await callback.answer(f"{em('cross', '❌')} {e}", show_alert=True)
+
     remove_captcha(target_user_id, chat_id)
     try: await callback.message.delete()
     except: pass
+
     user = callback.from_user
     greeting = get_greeting(chat_id)
     if greeting:
@@ -6431,6 +7098,8 @@ async def main():
     print("✅ Бот запущен!")
     asyncio.create_task(auto_unban_loop())
     asyncio.create_task(auto_backup_loop())
+    asyncio.create_task(auto_fishing_events_loop())
+    asyncio.create_task(auto_tournament_end_loop())
     await dp.start_polling(bot)
 
 
