@@ -6725,6 +6725,97 @@ async def on_business_connection(connection: types.BusinessConnection):
         save_business_connection(connection.user.id, connection.id)
 
 
+# ================= ИМПОРТ БАЗЫ =================
+@dp.message(lambda m: m.text and m.text.strip().lower() in [".импорт", "/импорт", "!импорт"])
+async def import_db_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return await message.reply(f"{em('cross', '❌')} Только владелец бота.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if not message.reply_to_message or not message.reply_to_message.document:
+        return await message.reply(
+            f"{em('cross', '❌')} <b>Ответьте на .db файл командой .импорт</b>\n\n"
+            f"📌 1. Загрузи <code>bot.db</code> в чат\n"
+            f"📌 2. Ответь на него сообщением <code>.импорт</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    doc = message.reply_to_message.document
+    if not doc.file_name.lower().endswith(".db"):
+        return await message.reply(f"{em('cross', '❌')} Только <code>.db</code> файл.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+        return await message.reply(f"{em('cross', '❌')} Файл больше 20 МБ.", parse_mode="HTML", disable_web_page_preview=True)
+
+    status_msg = await message.reply("📥 Скачиваю файл...")
+
+    temp_path = f"temp_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+
+    try:
+        file = await bot.get_file(doc.file_id)
+        await bot.download_file(file.file_path, temp_path)
+
+        import sqlite3 as _sql
+        try:
+            with _sql.connect(temp_path) as test_conn:
+                test_cursor = test_conn.cursor()
+                test_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in test_cursor.fetchall()]
+        except Exception as e:
+            os.remove(temp_path)
+            return await status_msg.edit_text(f"{em('cross', '❌')} Файл повреждён: <code>{e}</code>", parse_mode="HTML")
+
+        missing = [t for t in ["users", "messages_stats", "admins"] if t not in tables]
+        if missing:
+            os.remove(temp_path)
+            return await status_msg.edit_text(
+                f"{em('cross', '❌')} Это не база Mos-бота.\nНет таблиц: <code>{', '.join(missing)}</code>",
+                parse_mode="HTML"
+            )
+
+        os.makedirs("backups", exist_ok=True)
+        old_backup = f"backups/old_before_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        import shutil
+        if os.path.exists(DATABASE_PATH):
+            shutil.copy2(DATABASE_PATH, old_backup)
+
+        with _sql.connect(temp_path) as test_conn:
+            tc = test_conn.cursor()
+            try:
+                tc.execute("SELECT COUNT(*) FROM users"); users_count = tc.fetchone()[0]
+            except: users_count = "?"
+            try:
+                tc.execute("SELECT COUNT(*) FROM messages_stats"); messages_count = tc.fetchone()[0]
+            except: messages_count = "?"
+            try:
+                tc.execute("SELECT COUNT(*) FROM admins"); admins_count = tc.fetchone()[0]
+            except: admins_count = "?"
+
+        shutil.move(temp_path, DATABASE_PATH)
+
+        try:
+            init_db()
+        except Exception as e:
+            print(f"⚠️ init_db после импорта: {e}")
+
+        size_mb = doc.file_size / (1024 * 1024) if doc.file_size else 0
+
+        await status_msg.edit_text(
+            f"{em('check', '✅')} <b>База импортирована!</b>\n\n"
+            f"👥 Пользователей: <b>{users_count}</b>\n"
+            f"💬 Сообщений: <b>{messages_count}</b>\n"
+            f"👑 Админов: <b>{admins_count}</b>\n"
+            f"💾 Размер: <b>{size_mb:.2f} МБ</b>\n\n"
+            f"⚠️ <b>ПЕРЕЗАПУСТИТЕ БОТА на Railway</b>\n"
+            f"📁 Старая база: <code>{old_backup}</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    except Exception as e:
+        if os.path.exists(temp_path):
+            try: os.remove(temp_path)
+            except: pass
+        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")
+        
 # ================= ФОНОВЫЕ ЗАДАЧИ =================
 async def auto_unban_loop():
     while True:
