@@ -5605,6 +5605,249 @@ async def backup_cmd(message):
         await message.reply(f"{em('cross', '❌')} {e}", disable_web_page_preview=True)
 
 
+@cmd("бэкапы")
+async def list_backups_cmd(message):
+    if message.from_user.id != OWNER_ID: return
+    try:
+        if not os.path.exists("backups"):
+            return await message.reply("📭 Папка пуста.", disable_web_page_preview=True)
+        files = sorted([f for f in os.listdir("backups") if f.startswith("bot_")], reverse=True)
+        if not files:
+            return await message.reply("📭 Нет бэкапов.", disable_web_page_preview=True)
+        text = f"📋 <b>Бэкапы</b> ({len(files)}):\n\n"
+        for f in files[:20]:
+            path = os.path.join("backups", f)
+            size_kb = os.path.getsize(path) / 1024
+            text += f"📄 <code>{f}</code> — {size_kb:.1f} КБ\n"
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", disable_web_page_preview=True)
+
+
+@cmd("бэкапсейчас")
+async def backup_now_cmd(message):
+    if message.from_user.id != OWNER_ID: return
+    try:
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        import shutil
+        os.makedirs("backups", exist_ok=True)
+        shutil.copy2(DATABASE_PATH, f"backups/bot_{timestamp}.db")
+        with open(DATABASE_PATH, "rb") as f:
+            data = f.read()
+        size_kb = len(data) / 1024
+        await message.reply_document(types.BufferedInputFile(data, filename=f"mos_backup_{timestamp}.db"), caption=f"💾 <b>Бэкап</b>\n📅 {now.strftime('%d.%m.%Y %H:%M')}\n📦 {size_kb:.1f} КБ", parse_mode="HTML")
+    except Exception as e:
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", disable_web_page_preview=True)
+
+
+@cmd("импорт")
+async def import_db_cmd(message):
+    if message.from_user.id != OWNER_ID: return
+    if not message.reply_to_message or not message.reply_to_message.document:
+        return await message.reply(f"{em('cross', '❌')} Ответьте на <code>.db</code> файл.", parse_mode="HTML", disable_web_page_preview=True)
+    doc = message.reply_to_message.document
+    if not doc.file_name.lower().endswith(".db"):
+        return await message.reply(f"{em('cross', '❌')} Только <code>.db</code>.", parse_mode="HTML", disable_web_page_preview=True)
+    if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+        return await message.reply(f"{em('cross', '❌')} Файл > 20 МБ.", parse_mode="HTML", disable_web_page_preview=True)
+    status_msg = await message.reply("📥 Скачиваю...", disable_web_page_preview=True)
+    temp_path = f"temp_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    try:
+        file = await bot.get_file(doc.file_id)
+        await bot.download_file(file.file_path, temp_path)
+        import sqlite3 as _sql
+        try:
+            with _sql.connect(temp_path) as test_conn:
+                test_cursor = test_conn.cursor()
+                test_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in test_cursor.fetchall()]
+        except Exception as e:
+            os.remove(temp_path)
+            await status_msg.edit_text(f"{em('cross', '❌')} Файл повреждён: <code>{e}</code>", parse_mode="HTML")
+            return
+        missing = [t for t in ["users", "messages_stats", "agents"] if t not in tables]
+        if missing:
+            os.remove(temp_path)
+            await status_msg.edit_text(f"{em('cross', '❌')} Не база Mos-бота. Нет: <code>{', '.join(missing)}</code>", parse_mode="HTML")
+            return
+        os.makedirs("backups", exist_ok=True)
+        old_backup = f"backups/old_before_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        import shutil
+        if os.path.exists(DATABASE_PATH):
+            shutil.copy2(DATABASE_PATH, old_backup)
+        with _sql.connect(temp_path) as test_conn:
+            test_cursor = test_conn.cursor()
+            try:
+                test_cursor.execute("SELECT COUNT(*) FROM users"); users_count = test_cursor.fetchone()[0]
+            except: users_count = "?"
+            try:
+                test_cursor.execute("SELECT COUNT(*) FROM messages_stats"); messages_count = test_cursor.fetchone()[0]
+            except: messages_count = "?"
+            try:
+                test_cursor.execute("SELECT COUNT(*) FROM agents"); agents_count = test_cursor.fetchone()[0]
+            except: agents_count = "?"
+        shutil.move(temp_path, DATABASE_PATH)
+        size_mb = doc.file_size / (1024 * 1024) if doc.file_size else 0
+        await status_msg.edit_text(f"{em('check', '✅')} <b>База импортирована!</b>\n\n👥 {users_count}\n💬 {messages_count}\n🛡 {agents_count}\n💾 {size_mb:.1f} МБ\n\n⚠️ <b>Перезапустите бота</b>", parse_mode="HTML")
+    except Exception as e:
+        if os.path.exists(temp_path):
+            try: os.remove(temp_path)
+            except: pass
+        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")
+
+
+@cmd("откат")
+async def restore_old_backup_cmd(message):
+    if message.from_user.id != OWNER_ID: return
+    if not os.path.exists("backups"):
+        return await message.reply("📭 Нет бэкапов.", disable_web_page_preview=True)
+    files = sorted([f for f in os.listdir("backups") if f.startswith("bot_") or f.startswith("old_before_")], reverse=True)
+    if not files:
+        return await message.reply("📭 Нет бэкапов.", disable_web_page_preview=True)
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit():
+        text = f"📋 <b>Бэкапы</b> ({len(files)}):\n\n"
+        for i, f in enumerate(files[:15], 1):
+            path = os.path.join("backups", f)
+            size_kb = os.path.getsize(path) / 1024
+            text += f"<b>{i}.</b> <code>{f}</code> — {size_kb:.1f} КБ\n"
+        text += f"\n📌 <code>.откат N</code>"
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    num = int(args[1])
+    if num < 1 or num > len(files):
+        return await message.reply(f"{em('cross', '❌')} Номер от 1 до {len(files)}", parse_mode="HTML", disable_web_page_preview=True)
+    src = os.path.join("backups", files[num - 1])
+    try:
+        os.makedirs("backups", exist_ok=True)
+        import shutil
+        safety = f"backups/before_rollback_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        if os.path.exists(DATABASE_PATH):
+            shutil.copy2(DATABASE_PATH, safety)
+        shutil.copy2(src, DATABASE_PATH)
+        await message.reply(f"{em('check', '✅')} <b>Откат выполнен!</b>\n\n📄 {files[num-1]}\n🛡 Сохранено: <code>{safety}</code>\n\n⚠️ <b>Перезапустите бота</b>", parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("перенос")
+async def transfer_account_cmd(message):
+    if message.from_user.id != OWNER_ID:
+        return await message.reply(f"{em('cross', '❌')} Только владелец бота.", parse_mode="HTML", disable_web_page_preview=True)
+    args = message.text.split()
+    if len(args) < 3:
+        return await message.reply("📌 <code>.перенос @от @кому</code>", parse_mode="HTML", disable_web_page_preview=True)
+    async def get_uid(s):
+        s = s.strip()
+        try:
+            if s.isdigit(): return int(s)
+            u = await bot.get_chat(s if s.startswith("@") else f"@{s}")
+            return u.id
+        except: return None
+    from_id = await get_uid(args[1]); to_id = await get_uid(args[2])
+    if not from_id or not to_id:
+        return await message.reply(f"{em('cross', '❌')} Не удалось определить.", parse_mode="HTML", disable_web_page_preview=True)
+    if from_id == to_id:
+        return await message.reply(f"{em('cross', '❌')} Один и тот же юзер.", parse_mode="HTML", disable_web_page_preview=True)
+    if to_id == OWNER_ID:
+        return await message.reply(f"{em('cross', '❌')} Нельзя на владельца.", parse_mode="HTML", disable_web_page_preview=True)
+    status_msg = await message.reply(f"♻️ Переношу...\n📤 <code>{from_id}</code>\n📥 <code>{to_id}</code>", parse_mode="HTML", disable_web_page_preview=True)
+    stats = {}
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT gender, birth_date, birth_visibility, city, bio, motto, show_citizenship, is_hidden FROM user_profiles WHERE user_id = ?", (from_id,))
+        prof = c.fetchone()
+        if prof:
+            c.execute("INSERT OR REPLACE INTO user_profiles (user_id, gender, birth_date, birth_visibility, city, bio, motto, show_citizenship, is_hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (to_id, *prof))
+            stats["Профиль"] = 1
+        c.execute("SELECT text FROM user_about WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO user_about (user_id, text) VALUES (?, ?)", (to_id, r[0]))
+            stats["О себе"] = 1
+        c.execute("SELECT chat_id, nick FROM user_nicks WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, nick in rows:
+            c.execute("INSERT OR REPLACE INTO user_nicks (user_id, chat_id, nick) VALUES (?, ?, ?)", (to_id, chat_id, nick))
+        stats["Ники"] = len(rows)
+        c.execute("SELECT chat_id, rank FROM user_ranks WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, rank in rows:
+            c.execute("INSERT OR REPLACE INTO user_ranks (user_id, chat_id, rank) VALUES (?, ?, ?)", (to_id, chat_id, rank))
+        stats["Звания"] = len(rows)
+        c.execute("SELECT chat_id, rank FROM admins WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, rank in rows:
+            c.execute("INSERT OR REPLACE INTO admins (user_id, chat_id, rank, added_by) VALUES (?, ?, ?, ?)", (to_id, chat_id, rank, message.from_user.id))
+        stats["Ранги чатов"] = len(rows)
+        c.execute("SELECT chat_id, became_at FROM citizenship WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO citizenship (user_id, chat_id, became_at) VALUES (?, ?, ?)", (to_id, r[0], r[1]))
+            stats["Гражданство"] = 1
+        c.execute("SELECT balance FROM candies WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO candies (user_id, balance) VALUES (?, ?)", (to_id, r[0]))
+            stats["🍬 Ириски"] = r[0]
+            c.execute("UPDATE candies SET balance = 0 WHERE user_id = ?", (from_id,))
+        c.execute("SELECT balance, total_farmed FROM coins WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO coins (user_id, balance, total_farmed, last_tax, last_farm) VALUES (?, ?, ?, CURRENT_TIMESTAMP, NULL)", (to_id, r[0], r[1]))
+            stats["☢️ Коины"] = r[0]
+            c.execute("UPDATE coins SET balance = 0 WHERE user_id = ?", (from_id,))
+        c.execute("SELECT chat_id, achievement_id, given_by, given_at FROM user_achievements WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, ach_id, giver, given_at in rows:
+            try:
+                c.execute("INSERT OR IGNORE INTO user_achievements (user_id, chat_id, achievement_id, given_by, given_at) VALUES (?, ?, ?, ?, ?)", (to_id, chat_id, ach_id, giver, given_at))
+            except: pass
+        stats["🎖 Ачивки"] = len(rows)
+        c.execute("SELECT expires_at, emoji FROM vip_users WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO vip_users (user_id, expires_at, emoji) VALUES (?, ?, ?)", (to_id, r[0], r[1]))
+            c.execute("DELETE FROM vip_users WHERE user_id = ?", (from_id,))
+            stats["💎 VIP"] = 1
+        c.execute("SELECT chat_id, date, count FROM messages_stats WHERE user_id = ?", (from_id,))
+        rows = c.fetchall(); moved = 0
+        for chat_id, date, count in rows:
+            try:
+                c.execute("INSERT INTO messages_stats (user_id, chat_id, date, count) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, chat_id, date) DO UPDATE SET count = count + ?", (to_id, chat_id, date, count, count))
+                moved += 1
+            except: pass
+        c.execute("DELETE FROM messages_stats WHERE user_id = ?", (from_id,))
+        stats["📊 Статистика"] = moved
+        c.execute("SELECT chat_id, name, emoji, text FROM rp_commands WHERE created_by = ?", (from_id,))
+        rows = c.fetchall()
+        for chat_id, name, emoji, text in rows:
+            try: c.execute("INSERT OR REPLACE INTO rp_commands (chat_id, name, emoji, text, created_by) VALUES (?, ?, ?, ?, ?)", (chat_id, name, emoji, text, to_id))
+            except: pass
+        c.execute("DELETE FROM rp_commands WHERE created_by = ?", (from_id,))
+        stats["РП"] = len(rows)
+        c.execute("SELECT name, emoji, text FROM global_rp_commands WHERE user_id = ?", (from_id,))
+        rows = c.fetchall()
+        for name, emoji, text in rows:
+            try: c.execute("INSERT OR REPLACE INTO global_rp_commands (user_id, name, emoji, text) VALUES (?, ?, ?, ?)", (to_id, name, emoji, text))
+            except: pass
+        c.execute("DELETE FROM global_rp_commands WHERE user_id = ?", (from_id,))
+        stats["ГМРП"] = len(rows)
+        c.execute("UPDATE warns SET user_id = ? WHERE user_id = ?", (to_id, from_id))
+        stats["⚠️ Варны"] = c.rowcount
+        c.execute("SELECT rank FROM agent_ranks WHERE user_id = ?", (from_id,))
+        r = c.fetchone()
+        if r:
+            c.execute("INSERT OR REPLACE INTO agents (user_id, added_by) VALUES (?, ?)", (to_id, message.from_user.id))
+            c.execute("INSERT OR REPLACE INTO agent_ranks (user_id, rank, added_by) VALUES (?, ?, ?)", (to_id, r[0], message.from_user.id))
+            c.execute("DELETE FROM agents WHERE user_id = ?", (from_id,))
+            c.execute("DELETE FROM agent_ranks WHERE user_id = ?", (from_id,))
+            stats["👑 Агент"] = r[0]
+        conn.commit()
+    lines = "\n".join([f"  • {k}: <b>{v}</b>" for k, v in stats.items()]) or "  <i>нет данных</i>"
+    await status_msg.edit_text(f"{em('check', '✅')} <b>Перенос выполнен!</b>\n\n📤 <code>{from_id}</code>\n📥 <code>{to_id}</code>\n\n<b>Перенесено:</b>\n{lines}", parse_mode="HTML", disable_web_page_preview=True)
+
+
 # ================= ГЛОБАЛЬНЫЕ ФОНОВЫЕ ЗАДАЧИ =================
 async def auto_backup_loop():
     while True:
