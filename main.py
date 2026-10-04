@@ -129,10 +129,25 @@ def user_link(user_id, first_name="Пользователь", username=None):
 def auto_premium(text: str) -> str:
     if not text:
         return text
+
+    # Защищаем уже готовые <tg-emoji>...</tg-emoji>
+    protected = []
+    def _protect(match):
+        protected.append(match.group(0))
+        return f"\x00PREMPROT{len(protected)-1}\x00"
+
+    text = re.sub(r'<tg-emoji[^>]*>.*?</tg-emoji>', _protect, text, flags=re.DOTALL)
+
+    # Заменяем обычные эмодзи на <tg-emoji>
     for uni, key in UNICODE_TO_KEY.items():
         eid = EMOJI.get(key)
         if eid and uni in text:
             text = text.replace(uni, f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>')
+
+    # Возвращаем защищённое
+    for i, p in enumerate(protected):
+        text = text.replace(f"\x00PREMPROT{i}\x00", p)
+
     return text
 
 
@@ -147,9 +162,23 @@ def html_escape_text(text: str) -> str:
 
 
 def apply_monospace(text: str) -> str:
-    """Преобразует markdown-бэктики в HTML: ```...``` → <pre>, `...` → <code>."""
+    """Преобразует markdown-подобное форматирование в HTML."""
     if not text:
         return text
+
+    # Защита от повторной обработки <tg-emoji>, <a>, <b> и т.д.
+    protected = []
+    def _protect(match):
+        protected.append(match.group(0))
+        return f"\x00PROT{len(protected)-1}\x00"
+
+    # Защищаем уже существующие HTML-теги
+    text = re.sub(
+        r'<(tg-emoji|a|b|i|u|s|code|pre|blockquote|tg-spoiler)\b[^>]*>.*?</\1>',
+        _protect, text, flags=re.DOTALL
+    )
+    text = re.sub(r'<tg-emoji[^>]*/>', _protect, text)
+    text = re.sub(r'<(b|i|u|s|code|pre|blockquote|tg-spoiler)\s*/>', _protect, text)
 
     def _escape(s):
         return (s
@@ -157,15 +186,61 @@ def apply_monospace(text: str) -> str:
             .replace("<", "&lt;")
             .replace(">", "&gt;"))
 
+    # 1. ```блок``` → <pre>
     def _replace_pre(match):
         return f"<pre>{_escape(match.group(1))}</pre>"
-
     text = re.sub(r"```([\s\S]+?)```", _replace_pre, text)
 
+    # 2. `инлайн` → <code>
     def _replace_code(match):
         return f"<code>{_escape(match.group(1))}</code>"
-
     text = re.sub(r"`([^`\n]+?)`", _replace_code, text)
+
+    # 3. **жирный** → <b>
+    def _replace_bold(match):
+        return f"<b>{_escape(match.group(1))}</b>"
+    text = re.sub(r"\*\*(.+?)\*\*", _replace_bold, text, flags=re.DOTALL)
+
+    # 4. __курсив__ → <i>
+    def _replace_italic(match):
+        return f"<i>{_escape(match.group(1))}</i>"
+    text = re.sub(r"__(.+?)__", _replace_italic, text, flags=re.DOTALL)
+
+    # 5. --подчёркнутый-- → <u>
+    def _replace_underline(match):
+        return f"<u>{_escape(match.group(1))}</u>"
+    text = re.sub(r"--(.+?)--", _replace_underline, text, flags=re.DOTALL)
+
+    # 6. ~~зачёркнутый~~ → <s>
+    def _replace_strike(match):
+        return f"<s>{_escape(match.group(1))}</s>"
+    text = re.sub(r"~~(.+?)~~", _replace_strike, text, flags=re.DOTALL)
+
+    # 7. ||спойлер|| → <tg-spoiler>
+    def _replace_spoiler(match):
+        return f"<tg-spoiler>{_escape(match.group(1))}</tg-spoiler>"
+    text = re.sub(r"\|\|(.+?)\|\|", _replace_spoiler, text, flags=re.DOTALL)
+
+    # 8. Цитаты: строки, начинающиеся с "> "
+    def _replace_quote_block(match):
+        inner = match.group(0)
+        lines = inner.split("\n")
+        cleaned = []
+        for ln in lines:
+            if ln.startswith("&gt; "):
+                cleaned.append(ln[5:])
+            elif ln.startswith("> "):
+                cleaned.append(ln[2:])
+            else:
+                cleaned.append(ln)
+        content = "\n".join(cleaned)
+        return f"<blockquote>{content}</blockquote>"
+    # Находим блоки подряд идущих строк с ">" в начале
+    text = re.sub(r"(^|\n)(?:&gt; .*|> .*)(?:\n(?:&gt; .*|> .*))*", lambda m: ("\n" if m.group(1) else "") + _replace_quote_block(m), text)
+
+    # 9. Возвращаем защищённые куски
+    for i, p in enumerate(protected):
+        text = text.replace(f"\x00PROT{i}\x00", p)
 
     return text
 
@@ -320,7 +395,9 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
         # ⚠️ Владельца в agents НЕ добавляем
-        conn.commit()# ================= РАНГИ ЧАТА =================
+        conn.commit()
+
+# ================= РАНГИ ЧАТА =================
 def get_rank(chat_id, user_id):
     if user_id == OWNER_ID:
         return 5
@@ -1338,7 +1415,9 @@ def is_bait_active(bait_until_str):
         return False
 
 def xp_needed_for_level(level):
-    return LEVEL_XP_BASE * level# ================= СЕТКА =================
+    return LEVEL_XP_BASE * level
+
+# ================= СЕТКА =================
 def create_grid(name, creator_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2209,7 +2288,9 @@ async def auto_unban_loop():
                 except: pass
         except Exception as e:
             print(f"Ошибка в auto_unban_loop: {e}")
-        await asyncio.sleep(300)# ================= /START =================
+        await asyncio.sleep(300)
+
+# ================= /START =================
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     try:
@@ -3048,7 +3129,9 @@ async def grant_admin_cmd(message: types.Message):
         mark_bot_promoted(target.id, message.chat.id, message.from_user.id)
         await message.reply(f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b>!\n👮 Выдал: {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)# ================= МОДЕРАЦИЯ =================
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+
+# ================= МОДЕРАЦИЯ =================
 @cmd("бан")
 async def ban_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
@@ -4288,7 +4371,9 @@ async def list_reports_cmd(message: types.Message):
     cnt = count_pending_reports(message.chat.id)
     if cnt == 0:
         return await message.reply("📭 Нет активных репортов.", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"📊 <b>Активных репортов:</b> {cnt}", parse_mode="HTML", disable_web_page_preview=True)# ================= ГРАЖДАНСТВО =================
+    await message.reply(f"📊 <b>Активных репортов:</b> {cnt}", parse_mode="HTML", disable_web_page_preview=True)
+
+# ================= ГРАЖДАНСТВО =================
 @dp.message(lambda m: m.text and m.text.lower().strip() == "+гражданство")
 async def become_citizen_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
@@ -4729,7 +4814,7 @@ async def get_note_cmd(message: types.Message):
     except Exception as e:
         print(f"HTML ERROR: {e}")
         await message.reply(note_text, disable_web_page_preview=True)
-    
+
 # ================= VIP =================
 @cmd("вип")
 async def vip_info_cmd(message: types.Message):
@@ -5140,7 +5225,9 @@ async def buy_rod_cmd(message: types.Message):
         c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (price, user_id))
         conn.commit()
     update_fishing(user_id, has_rod=1)
-    await message.reply(f"✅ <b>Удочка куплена!</b>\n\n🎣 +10% шанс улова\n⚠️ Может сломаться при неудачном забросе", parse_mode="HTML", disable_web_page_preview=True)# ================= СЕТКИ =================
+    await message.reply(f"✅ <b>Удочка куплена!</b>\n\n🎣 +10% шанс улова\n⚠️ Может сломаться при неудачном забросе", parse_mode="HTML", disable_web_page_preview=True)
+
+# ================= СЕТКИ =================
 @cmd("создать сетку")
 async def create_grid_cmd(message: types.Message):
     if message.chat.type != "private": return
@@ -5990,7 +6077,9 @@ async def auto_backup_loop():
                     except: pass
         except Exception as e:
             print(f"❌ Ошибка в auto_backup_loop: {e}")
-        await asyncio.sleep(300)# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
+        await asyncio.sleep(300)
+
+# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot:
