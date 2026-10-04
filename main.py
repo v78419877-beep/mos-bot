@@ -247,11 +247,8 @@ AGENT_RANKS = {
 
 
 # ================= ДОСТУПЫ К КОМАНДАМ (ДК) =================
-# Уровни: -2=только создатель, -1=отключено, 0=все, 1-5=ранг+
 DEFAULT_ACCESS = {
-    # ---- Общие (для всех) ----
-       # ---- Браки ----
-    "брак": 0,"развод": 0,"профиль": 0, "анкета": 0, "мойид": 0, "пинг": 0, "помощь": 0,
+    "брак": 0, "развод": 0, "профиль": 0, "анкета": 0, "мойид": 0, "пинг": 0, "помощь": 0,
     "команды": 0, "инфо": 0, "ид": 0, "чатид": 0, "топ": 0,
     "моя стата": 0, "мой брак": 0, "моя пара": 0, "браки": 0,
     "мой вип": 0, "ник": 0, "о себе": 0, "звание": 0, "девиз": 0,
@@ -268,45 +265,35 @@ DEFAULT_ACCESS = {
     "репорт": 0, "админы": 0, "каталог": 0, "каталог чатов": 0,
     "оповещения": 3, "командыстатус": 3,
 
-    # ---- Модерация ----
     "бан": 2, "разбан": 2, "мут": 1, "размут": 1, "кик": 1,
     "варн": 1, "варны": 1, "снятьварн": 2, "сбросварнов": 3,
     "наказания": 1, "баны": 1, "пин": 1, "закрепить": 1,
     "анпин": 1, "открепить": 1, "унпин": 1, "репорты": 2,
 
-    # ---- Управление чатом ----
     "правила": 3, "приветствие": 3, "фильтрссылок": 3,
     "заявки": 4, "капча": 3, "автомод": 3, "автомодерация": 3,
     "обновить чат": 3, "обновитьчат": 3, "кто не писал": 2,
     "неактивные": 2,
 
-    # ---- Управление админами ----
     "повысить": 3, "понизить": 3, "разжаловать": 3, "снять": 3,
     "восстановить": 3,
 
-    # ---- Агенты ----
     "агенты": 4, "скрытые": 5,
 
-    # ---- Сетки ----
     "создать сетку": 5, "чаты": 1, "глобан": 2, "глоразбан": 2,
     "гломут": 2, "глоразмут": 2, "сетка повысить": 3,
     "сетка понизить": 3, "сетка +админ": 5,
 
-    # ---- Каталог ----
     "каталог добавить": 3,
 
-    # ---- Заметки ----
     "заметка": 3, "заметки": 3,
 
-    # ---- Экономика админ ----
     "пополнить": 3,
 
-    # ---- Владельцу бота ----
     "инфобот": -2, "бэкап": -2, "бэкапы": -2, "бэкапсейчас": -2,
     "импорт": -2, "откат": -2, "опасно": -2, "безопасно": -2,
     "перенос": -2, "перенос анкета": -2, "рассылка": -2,
 
-    # ---- ДК сам ----
     "дк": 3, "дк список": 3, "дк сброс": 3,
 }
 
@@ -340,7 +327,10 @@ ALIASES = {
 
 
 def _canonical(cmd_name):
-    return ALIASES.get(cmd_name, cmd_name)# ================= БАЗА ДАННЫХ =================
+    return ALIASES.get(cmd_name, cmd_name)
+
+
+# ================= БАЗА ДАННЫХ =================
 def init_db():
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -481,7 +471,6 @@ def init_db():
             chat_id INTEGER, command TEXT, min_rank INTEGER DEFAULT 0,
             UNIQUE(chat_id, command))""")
 
-        # ============ МИГРАЦИИ ============
         def _add_column(table, column, col_type, default=None):
             try:
                 if default is not None:
@@ -1850,7 +1839,6 @@ def count_pending_reports(source_chat_id):
 
 # ================= РЫБАЛКА 2.0 =================
 FISH_LIST = [
-    # Обычные
     ("Окунь", "🐟", 1, 3, 100),
     ("Карась", "🐠", 2, 5, 90),
     ("Лещ", "🐠", 3, 8, 80),
@@ -1861,7 +1849,6 @@ FISH_LIST = [
     ("Пескарь", "🐟", 2, 5, 55),
     ("Линь", "🐠", 5, 12, 50),
     ("Язь", "🐟", 6, 14, 45),
-    # Средние
     ("Щука", "🐡", 8, 18, 40),
     ("Судак", "🐡", 10, 22, 38),
     ("Сом", "🦈", 15, 30, 30),
@@ -1871,19 +1858,16 @@ FISH_LIST = [
     ("Белый амур", "🐟", 16, 32, 20),
     ("Налим", "🐡", 12, 26, 18),
     ("Хариус", "🐠", 10, 22, 15),
-    # Редкие
     ("Осётр", "🐟", 25, 50, 10),
     ("Стерлядь", "🐠", 20, 45, 8),
     ("Таймень", "🐡", 30, 60, 6),
     ("Муксун", "🐟", 28, 55, 5),
     ("Нельма", "🐠", 32, 65, 4),
     ("Кумжа", "🐟", 25, 50, 3.5),
-    # Очень редкие
     ("Королевский лосось", "🐠", 50, 100, 2),
     ("Белуга", "🐟", 60, 120, 1.5),
     ("Кета", "🐡", 45, 90, 1.2),
     ("Кижуч", "🐟", 55, 110, 1),
-    # Супер редкие
     ("Золотая рыбка", "✨", 100, 200, 0.5),
     ("Лунная рыба", "🌙", 150, 300, 0.2),
     ("Рыба-дракон", "🐉", 200, 400, 0.1),
@@ -2304,7 +2288,10 @@ STANDARD_RP = {
     "шлёпнуть": {"emoji": "✋", "text": "{actor} шлёпнул(а) {target} ✋😳", "self_text": "{actor} шлёпнул(а) себя... зачем? ✋"},
     "лизнуть": {"emoji": "👅", "text": "{actor} лизнул(а) {target} 👅", "self_text": "{actor} лизнул(а) себя 🤔"},
     "укусить за ухо": {"emoji": "👂", "text": "{actor} нежно укусил(а) {target} за ушко 👂💕", "self_text": "{actor} укусил(а) себя за ухо 👂"},
-}# ================= СЕТКА =================
+}
+
+
+# ================= СЕТКА =================
 def create_grid(name, creator_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -3176,99 +3163,7 @@ def reject_pending_link(link_id, reviewed_by):
                 c.execute("UPDATE user_about SET text = ? WHERE user_id = ?", (new_text, chat_id))
         c.execute("UPDATE pending_links SET status = 'rejected', reviewed_by = ? WHERE id = ?", (reviewed_by, link_id))
         conn.commit()
-    return True
-   
-# ================= ИМПОРТ БАЗЫ =================
-@dp.message(lambda m: m.text and m.text.strip().lower() in [".импорт", "/импорт", "!импорт"])
-async def import_db_cmd(message: types.Message):
-    if message.from_user.id != OWNER_ID:
-        return await message.reply(f"{em('cross', '❌')} Только владелец бота.", parse_mode="HTML", disable_web_page_preview=True)
-
-    if not message.reply_to_message or not message.reply_to_message.document:
-        return await message.reply(
-            f"{em('cross', '❌')} <b>Ответьте на .db файл командой .импорт</b>\n\n"
-            f"📌 1. Загрузи <code>bot.db</code> в чат\n"
-            f"📌 2. Ответь на него сообщением <code>.импорт</code>",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-
-    doc = message.reply_to_message.document
-    if not doc.file_name.lower().endswith(".db"):
-        return await message.reply(f"{em('cross', '❌')} Только <code>.db</code> файл.", parse_mode="HTML", disable_web_page_preview=True)
-
-    if doc.file_size and doc.file_size > 20 * 1024 * 1024:
-        return await message.reply(f"{em('cross', '❌')} Файл больше 20 МБ.", parse_mode="HTML", disable_web_page_preview=True)
-
-    status_msg = await message.reply("📥 Скачиваю файл...")
-
-    temp_path = f"temp_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-
-    try:
-        file = await bot.get_file(doc.file_id)
-        await bot.download_file(file.file_path, temp_path)
-
-        import sqlite3 as _sql
-        try:
-            with _sql.connect(temp_path) as test_conn:
-                test_cursor = test_conn.cursor()
-                test_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                tables = [row[0] for row in test_cursor.fetchall()]
-        except Exception as e:
-            os.remove(temp_path)
-            return await status_msg.edit_text(f"{em('cross', '❌')} Файл повреждён: <code>{e}</code>", parse_mode="HTML")
-
-        missing = [t for t in ["users", "messages_stats", "admins"] if t not in tables]
-        if missing:
-            os.remove(temp_path)
-            return await status_msg.edit_text(
-                f"{em('cross', '❌')} Это не база Mos-бота.\nНет таблиц: <code>{', '.join(missing)}</code>",
-                parse_mode="HTML"
-            )
-
-        os.makedirs("backups", exist_ok=True)
-        old_backup = f"backups/old_before_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        import shutil
-        if os.path.exists(DATABASE_PATH):
-            shutil.copy2(DATABASE_PATH, old_backup)
-
-        with _sql.connect(temp_path) as test_conn:
-            tc = test_conn.cursor()
-            try:
-                tc.execute("SELECT COUNT(*) FROM users"); users_count = tc.fetchone()[0]
-            except: users_count = "?"
-            try:
-                tc.execute("SELECT COUNT(*) FROM messages_stats"); messages_count = tc.fetchone()[0]
-            except: messages_count = "?"
-            try:
-                tc.execute("SELECT COUNT(*) FROM admins"); admins_count = tc.fetchone()[0]
-            except: admins_count = "?"
-
-        shutil.move(temp_path, DATABASE_PATH)
-
-        try:
-            init_db()
-        except Exception as e:
-            print(f"⚠️ init_db после импорта: {e}")
-
-        size_mb = doc.file_size / (1024 * 1024) if doc.file_size else 0
-
-        await status_msg.edit_text(
-            f"{em('check', '✅')} <b>База импортирована!</b>\n\n"
-            f"👥 Пользователей: <b>{users_count}</b>\n"
-            f"💬 Сообщений: <b>{messages_count}</b>\n"
-            f"👑 Админов: <b>{admins_count}</b>\n"
-            f"💾 Размер: <b>{size_mb:.2f} МБ</b>\n\n"
-            f"⚠️ <b>ПЕРЕЗАПУСТИТЕ БОТА на Railway</b>\n"
-            f"📁 Старая база: <code>{old_backup}</code>",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-
-    except Exception as e:
-        if os.path.exists(temp_path):
-            try: os.remove(temp_path)
-            except: pass
-        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")
-# ================= /START =================
+    return True# ================= /START =================
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     try:
@@ -3953,7 +3848,10 @@ async def command_notify_status_cmd(message: types.Message):
         f"• <code>+команды</code> — включить\n"
         f"• <code>-команды</code> — выключить"
     )
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)# ================= МОДЕРАЦИЯ =================
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= МОДЕРАЦИЯ =================
 @cmd("бан")
 async def ban_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
@@ -5206,7 +5104,10 @@ async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker",
 
 
 @cmd("антисtickerбан")
-async def ast_ban_cmd(message): await _set_automod_time(message, "antisticker", "ban")# ================= РЫБАЛКА =================
+async def ast_ban_cmd(message): await _set_automod_time(message, "antisticker", "ban")
+
+
+# ================= РЫБАЛКА =================
 @cmd("рыбалка")
 @cmd("рыба")
 @cmd("рыбачить")
@@ -5285,7 +5186,6 @@ async def fishing_cmd(message: types.Message):
             reward = 0
             legendary_text = ""
 
-        # Кладём рыбу в садок
         add_fish_to_storage(user_id, fish_name, fish_emoji, 1)
 
         xp_gain = random.randint(5, 15)
@@ -6138,13 +6038,26 @@ async def my_stats_cmd(message: types.Message):
     except: return
     if not chart_buf: return await message.reply("📭 Нет данных.", disable_web_page_preview=True)
     await message.reply_photo(photo=types.BufferedInputFile(chart_buf.getvalue(), filename="my_stats.png"), caption=f"📊 Статистика за 30 дней", parse_mode="HTML")# ================= БРАКИ =================
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("брак ") and "@" in m.text)
-async def marriage_proposal_cmd(message: types.Message):
-    target, _ = await resolve_target(message)
-    if not target: return
-    if target.id == message.from_user.id: return
-    if get_marriage(message.chat.id, message.from_user.id): return
-    if get_marriage(message.chat.id, target.id): return
+
+# Обработчик простого слова "брак" (ответом)
+@dp.message(lambda m: m.text and m.text.lower().strip() == "брак")
+async def marriage_bare_cmd(message: types.Message):
+    if not message.reply_to_message:
+        return await message.reply(
+            "💍 <b>Как жениться:</b>\n\n"
+            "• Ответь на сообщение юзера: <code>брак</code>\n"
+            "• Или напиши: <code>брак @username</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    target = message.reply_to_message.from_user
+    if target.id == message.from_user.id:
+        return
+    if target.is_bot:
+        return await message.reply("❌ Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, message.from_user.id):
+        return await message.reply("❌ Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, target.id):
+        return await message.reply(f"❌ {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
     div = get_divorced_marriage(message.chat.id, message.from_user.id)
     if div:
         restore_marriage(div[0])
@@ -6154,84 +6067,152 @@ async def marriage_proposal_cmd(message: types.Message):
         InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
         InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
     ]])
-    await message.reply(f"💍 {mention(message.from_user)} → {mention(target)}", parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb)
+    await message.reply(
+        f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+    )
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("брак ") and "@" not in m.text and not m.text.lower().startswith("брак продлить"))
-async def marriage_proposal_reply(message: types.Message):
-    if not message.reply_to_message: return
-    target = message.reply_to_message.from_user
-    if target.id == message.from_user.id: return
-    if get_marriage(message.chat.id, message.from_user.id): return
-    if get_marriage(message.chat.id, target.id): return
+# Обработчик "брак @username"
+@dp.message(lambda m: m.text and m.text.lower().strip().startswith("брак ") and "@" in m.text)
+async def marriage_proposal_cmd(message: types.Message):
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply("❌ Ответьте на сообщение юзера или укажите @username.", parse_mode="HTML", disable_web_page_preview=True)
+    if target.id == message.from_user.id:
+        return
+    if target.is_bot:
+        return await message.reply("❌ Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, message.from_user.id):
+        return await message.reply("❌ Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, target.id):
+        return await message.reply(f"❌ {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
     div = get_divorced_marriage(message.chat.id, message.from_user.id)
     if div:
         restore_marriage(div[0])
-        return await message.reply("💞 <b>Восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
     add_proposal(message.chat.id, message.from_user.id, target.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
         InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
     ]])
-    await message.reply("💍 <b>Предложение!</b>", parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb)
+    await message.reply(
+        f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+    )
+
+
+# Обработчик "брак" ответом (с доп. текстом после)
+@dp.message(lambda m: m.text and m.text.lower().strip().startswith("брак ") and "@" not in m.text
+    and not m.text.lower().startswith("брак продлить") and not m.text.lower().startswith("брак цена")
+    and not m.text.lower().startswith("брак режим"))
+async def marriage_proposal_reply(message: types.Message):
+    if not message.reply_to_message:
+        return await message.reply(
+            "💍 <b>Как жениться:</b>\n\n"
+            "• Ответь на сообщение юзера: <code>брак</code>\n"
+            "• Или напиши: <code>брак @username</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    target = message.reply_to_message.from_user
+    if target.id == message.from_user.id:
+        return
+    if target.is_bot:
+        return await message.reply("❌ Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, message.from_user.id):
+        return await message.reply("❌ Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, target.id):
+        return await message.reply(f"❌ {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    div = get_divorced_marriage(message.chat.id, message.from_user.id)
+    if div:
+        restore_marriage(div[0])
+        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
+    add_proposal(message.chat.id, message.from_user.id, target.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
+        InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
+    ]])
+    await message.reply(
+        f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+    )
 
 
 @dp.callback_query(lambda c: c.data and (c.data.startswith("marry_accept:") or c.data.startswith("marry_reject:")))
 async def marriage_response(callback: types.CallbackQuery):
-    action, from_id_str, to_id_str, chat_id_str = callback.data.split(":")
+    parts = callback.data.split(":")
+    if len(parts) < 4:
+        return await callback.answer("⚠️ Ошибка.", show_alert=True)
+    action, from_id_str, to_id_str, chat_id_str = parts
     from_id = int(from_id_str); to_id = int(to_id_str); chat_id = int(chat_id_str)
     if callback.from_user.id != to_id:
-        return await callback.answer("⛔ Не тебе!", show_alert=True)
+        return await callback.answer("⛔ Это не тебе!", show_alert=True)
     if get_proposal(chat_id, from_id, to_id) is None:
-        return await callback.answer("⚠️ Неактивно.", show_alert=True)
+        return await callback.answer("⚠️ Уже неактивно.", show_alert=True)
     try:
-        fu = await bot.get_chat(from_id); tu = await bot.get_chat(to_id)
-    except: return await callback.answer("❌ Ошибка.", show_alert=True)
+        fu = await bot.get_chat(from_id)
+        tu = await bot.get_chat(to_id)
+    except:
+        return await callback.answer("❌ Ошибка загрузки.", show_alert=True)
     if action == "marry_accept":
         res = create_marriage(chat_id, from_id, fu.first_name, to_id, tu.first_name)
-        if not res: return await callback.answer("❌ Кто-то в браке.", show_alert=True)
+        if not res:
+            return await callback.answer("❌ Кто-то уже в браке.", show_alert=True)
         remove_proposal(chat_id, from_id, to_id)
         try: await callback.message.edit_reply_markup(reply_markup=None)
         except: pass
-        await bot.send_message(chat_id, f"💍💐 <b>Свадьба!</b>\n\n{mention_by_id(from_id, fu.first_name, fu.username)} и {mention_by_id(to_id, tu.first_name, tu.username)} теперь в браке!", parse_mode="HTML", disable_web_page_preview=True)
+        await bot.send_message(chat_id,
+            f"💍💐 <b>Свадьба!</b>\n\n{mention_by_id(from_id, fu.first_name, fu.username)} и {mention_by_id(to_id, tu.first_name, tu.username)} теперь в браке!",
+            parse_mode="HTML", disable_web_page_preview=True)
         await callback.answer("💍 Вы в браке!")
     else:
         remove_proposal(chat_id, from_id, to_id)
         try: await callback.message.edit_reply_markup(reply_markup=None)
         except: pass
-        await bot.send_message(chat_id, f"💔 {mention_by_id(to_id, tu.first_name, tu.username)} отказал(а).", parse_mode="HTML", disable_web_page_preview=True)
+        await bot.send_message(chat_id,
+            f"💔 {mention_by_id(to_id, tu.first_name, tu.username)} отказал(а).",
+            parse_mode="HTML", disable_web_page_preview=True)
         await callback.answer("❌ Отказано.")
 
 
 @cmd("развод")
 async def divorce_cmd(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
-    if not mar: return
+    if not mar:
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
     _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
     partner_id = u2_id if u1_id == message.from_user.id else u1_id
     partner_name = u2_name if u1_id == message.from_user.id else u1_name
     duration = format_marriage_duration(married_at, extra or 0)
     divorce_marriage(message.chat.id, message.from_user.id)
-    await message.reply(f"💔 {mention(message.from_user)} и {mention_by_id(partner_id, partner_name)} развелись.\n📅 Длился: <b>{duration}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(
+        f"💔 {mention(message.from_user)} и {mention_by_id(partner_id, partner_name)} развелись.\n📅 Длился: <b>{duration}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
 @cmd("мой брак")
 @cmd("моя пара")
 async def my_marriage_cmd(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
-    if not mar: return await message.reply("💔 Не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    if not mar:
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
     _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
     partner_id = u2_id if u1_id == message.from_user.id else u1_id
     partner_name = u2_name if u1_id == message.from_user.id else u1_name
     duration = format_marriage_duration(married_at, extra or 0)
-    await message.reply(f"💍 <b>Ваш брак</b>\n\n👫 {mention(message.from_user)} 💞 {mention_by_id(partner_id, partner_name)}\n📅 {married_at[:10]}\n⏳ Вместе: <b>{duration}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(
+        f"💍 <b>Ваш брак</b>\n\n👫 {mention(message.from_user)} 💞 {mention_by_id(partner_id, partner_name)}\n📅 {married_at[:10]}\n⏳ Вместе: <b>{duration}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
 @cmd("браки")
 async def marriages_list_cmd(message: types.Message):
     pairs = get_all_marriages(message.chat.id)
-    if not pairs: return await message.reply("📭 Нет браков.", parse_mode="HTML", disable_web_page_preview=True)
-    text = "💍 <b>Браки:</b>\n\n"
+    if not pairs:
+        return await message.reply("📭 В этом чате пока нет браков.", parse_mode="HTML", disable_web_page_preview=True)
+    text = "💍 <b>Браки в этом чате:</b>\n\n"
     for i, (u1_id, u1_name, u2_id, u2_name, married_at, extra) in enumerate(pairs, 1):
         duration = format_marriage_duration(married_at, extra or 0)
         text += f"{i}. {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)} — <i>{duration}</i>\n"
@@ -6491,182 +6472,132 @@ async def backup_cmd(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ {e}", disable_web_page_preview=True)
 
-@dp.message(lambda m: m.text and m.text.lower().strip() == "брак")
-async def marriage_bare_cmd(message: types.Message):
-    if not message.reply_to_message:
+
+# ================= ИМПОРТ БАЗЫ =================
+@dp.message(lambda m: m.text and m.text.strip().lower() in [".импорт", "/импорт", "!импорт"])
+async def import_db_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return await message.reply(f"{em('cross', '❌')} Только владелец бота.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if not message.reply_to_message or not message.reply_to_message.document:
         return await message.reply(
-            "💍 <b>Как жениться:</b>\n\n"
-            "• Ответь на сообщение юзера: <code>брак</code>\n"
-            "• Или напиши: <code>брак @username</code>",
+            f"{em('cross', '❌')} <b>Ответьте на .db файл командой .импорт</b>\n\n"
+            f"📌 1. Загрузи <code>bot.db</code> в чат\n"
+            f"📌 2. Ответь на него сообщением <code>.импорт</code>",
             parse_mode="HTML", disable_web_page_preview=True
         )
-    target = message.reply_to_message.from_user
-    if target.id == message.from_user.id:
-        return
-    if target.is_bot:
-        return await message.reply("❌ Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
-    if get_marriage(message.chat.id, message.from_user.id):
-        return await message.reply("❌ Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
-    if get_marriage(message.chat.id, target.id):
-        return await message.reply(f"❌ {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
-    div = get_divorced_marriage(message.chat.id, message.from_user.id)
-    if div:
-        restore_marriage(div[0])
-        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
-    add_proposal(message.chat.id, message.from_user.id, target.id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
-        InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
-    ]])
-    await message.reply(
-        f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
-        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
-    )
 
-# ================= БРАКИ =================
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("брак ") and "@" in m.text)
-async def marriage_proposal_cmd(message: types.Message):
-    target, _ = await resolve_target(message)
-    if not target:
-        return await message.reply("❌ Ответьте на сообщение юзера или укажите @username.", parse_mode="HTML", disable_web_page_preview=True)
-    if target.id == message.from_user.id:
-        return
-    if target.is_bot:
-        return await message.reply("❌ Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
-    if get_marriage(message.chat.id, message.from_user.id):
-        return await message.reply("❌ Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
-    if get_marriage(message.chat.id, target.id):
-        return await message.reply(f"❌ {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
-    div = get_divorced_marriage(message.chat.id, message.from_user.id)
-    if div:
-        restore_marriage(div[0])
-        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
-    add_proposal(message.chat.id, message.from_user.id, target.id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
-        InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
-    ]])
-    await message.reply(
-        f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
-        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
-    )
+    doc = message.reply_to_message.document
+    if not doc.file_name.lower().endswith(".db"):
+        return await message.reply(f"{em('cross', '❌')} Только <code>.db</code> файл.", parse_mode="HTML", disable_web_page_preview=True)
 
+    if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+        return await message.reply(f"{em('cross', '❌')} Файл больше 20 МБ.", parse_mode="HTML", disable_web_page_preview=True)
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("брак ") and "@" not in m.text
-    and not m.text.lower().startswith("брак продлить") and not m.text.lower().startswith("брак цена")
-    and not m.text.lower().startswith("брак режим"))
-async def marriage_proposal_reply(message: types.Message):
-    if not message.reply_to_message:
-        return await message.reply(
-            "💍 <b>Как жениться:</b>\n\n"
-            "• Ответь на сообщение юзера: <code>брак</code>\n"
-            "• Или напиши: <code>брак @username</code>",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-    target = message.reply_to_message.from_user
-    if target.id == message.from_user.id:
-        return
-    if target.is_bot:
-        return await message.reply("❌ Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
-    if get_marriage(message.chat.id, message.from_user.id):
-        return await message.reply("❌ Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
-    if get_marriage(message.chat.id, target.id):
-        return await message.reply(f"❌ {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
-    div = get_divorced_marriage(message.chat.id, message.from_user.id)
-    if div:
-        restore_marriage(div[0])
-        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
-    add_proposal(message.chat.id, message.from_user.id, target.id)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
-        InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
-    ]])
-    await message.reply(
-        f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
-        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
-    )
+    status_msg = await message.reply("📥 Скачиваю файл...")
 
+    temp_path = f"temp_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
 
-@dp.callback_query(lambda c: c.data and (c.data.startswith("marry_accept:") or c.data.startswith("marry_reject:")))
-async def marriage_response(callback: types.CallbackQuery):
-    parts = callback.data.split(":")
-    if len(parts) < 4:
-        return await callback.answer("⚠️ Ошибка.", show_alert=True)
-    action, from_id_str, to_id_str, chat_id_str = parts
-    from_id = int(from_id_str); to_id = int(to_id_str); chat_id = int(chat_id_str)
-    if callback.from_user.id != to_id:
-        return await callback.answer("⛔ Это не тебе!", show_alert=True)
-    if get_proposal(chat_id, from_id, to_id) is None:
-        return await callback.answer("⚠️ Уже неактивно.", show_alert=True)
     try:
-        fu = await bot.get_chat(from_id)
-        tu = await bot.get_chat(to_id)
-    except:
-        return await callback.answer("❌ Ошибка загрузки.", show_alert=True)
-    if action == "marry_accept":
-        res = create_marriage(chat_id, from_id, fu.first_name, to_id, tu.first_name)
-        if not res:
-            return await callback.answer("❌ Кто-то уже в браке.", show_alert=True)
-        remove_proposal(chat_id, from_id, to_id)
-        try: await callback.message.edit_reply_markup(reply_markup=None)
+        file = await bot.get_file(doc.file_id)
+        await bot.download_file(file.file_path, temp_path)
+
+        import sqlite3 as _sql
+        try:
+            with _sql.connect(temp_path) as test_conn:
+                test_cursor = test_conn.cursor()
+                test_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in test_cursor.fetchall()]
+        except Exception as e:
+            os.remove(temp_path)
+            return await status_msg.edit_text(f"{em('cross', '❌')} Файл повреждён: <code>{e}</code>", parse_mode="HTML")
+
+        missing = [t for t in ["users", "messages_stats", "admins"] if t not in tables]
+        if missing:
+            os.remove(temp_path)
+            return await status_msg.edit_text(
+                f"{em('cross', '❌')} Это не база Mos-бота.\nНет таблиц: <code>{', '.join(missing)}</code>",
+                parse_mode="HTML"
+            )
+
+        os.makedirs("backups", exist_ok=True)
+        old_backup = f"backups/old_before_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        import shutil
+        if os.path.exists(DATABASE_PATH):
+            shutil.copy2(DATABASE_PATH, old_backup)
+
+        with _sql.connect(temp_path) as test_conn:
+            tc = test_conn.cursor()
+            try:
+                tc.execute("SELECT COUNT(*) FROM users"); users_count = tc.fetchone()[0]
+            except: users_count = "?"
+            try:
+                tc.execute("SELECT COUNT(*) FROM messages_stats"); messages_count = tc.fetchone()[0]
+            except: messages_count = "?"
+            try:
+                tc.execute("SELECT COUNT(*) FROM admins"); admins_count = tc.fetchone()[0]
+            except: admins_count = "?"
+
+        shutil.move(temp_path, DATABASE_PATH)
+
+        try:
+            init_db()
+        except Exception as e:
+            print(f"⚠️ init_db после импорта: {e}")
+
+        size_mb = doc.file_size / (1024 * 1024) if doc.file_size else 0
+
+        await status_msg.edit_text(
+            f"{em('check', '✅')} <b>База импортирована!</b>\n\n"
+            f"👥 Пользователей: <b>{users_count}</b>\n"
+            f"💬 Сообщений: <b>{messages_count}</b>\n"
+            f"👑 Админов: <b>{admins_count}</b>\n"
+            f"💾 Размер: <b>{size_mb:.2f} МБ</b>\n\n"
+            f"⚠️ <b>ПЕРЕЗАПУСТИТЕ БОТА на Railway</b>\n"
+            f"📁 Старая база: <code>{old_backup}</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    except Exception as e:
+        if os.path.exists(temp_path):
+            try: os.remove(temp_path)
+            except: pass
+        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")
+
+
+# ================= ВОССТАНОВЛЕНИЕ БАЗЫ =================
+@dp.message(Command("restore"))
+@dp.message(lambda m: m.text and m.text.strip().lower() in [".restore", ".dbimport", "!restore"])
+async def restore_db_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return await message.reply("❌ Только владелец.", parse_mode="HTML")
+    if not message.reply_to_message or not message.reply_to_message.document:
+        return await message.reply(
+            "📌 Ответь на <code>.db</code> файл командой <code>/restore</code>",
+            parse_mode="HTML"
+        )
+    doc = message.reply_to_message.document
+    if not doc.file_name.lower().endswith(".db"):
+        return await message.reply("❌ Только .db", parse_mode="HTML")
+    status = await message.reply("📥 Импортирую...")
+    temp = f"temp_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    try:
+        file = await bot.get_file(doc.file_id)
+        await bot.download_file(file.file_path, temp)
+        import shutil
+        os.makedirs("backups", exist_ok=True)
+        shutil.copy2(DATABASE_PATH, f"backups/before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
+        shutil.move(temp, DATABASE_PATH)
+        try: init_db()
         except: pass
-        await bot.send_message(chat_id,
-            f"💍💐 <b>Свадьба!</b>\n\n{mention_by_id(from_id, fu.first_name, fu.username)} и {mention_by_id(to_id, tu.first_name, tu.username)} теперь в браке!",
-            parse_mode="HTML", disable_web_page_preview=True)
-        await callback.answer("💍 Вы в браке!")
-    else:
-        remove_proposal(chat_id, from_id, to_id)
-        try: await callback.message.edit_reply_markup(reply_markup=None)
-        except: pass
-        await bot.send_message(chat_id,
-            f"💔 {mention_by_id(to_id, tu.first_name, tu.username)} отказал(а).",
-            parse_mode="HTML", disable_web_page_preview=True)
-        await callback.answer("❌ Отказано.")
+        await status.edit_text("✅ <b>База импортирована!</b>\n⚠️ Перезапустите бота на Railway.", parse_mode="HTML")
+    except Exception as e:
+        if os.path.exists(temp):
+            try: os.remove(temp)
+            except: pass
+        await status.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode="HTML")
 
 
-@cmd("развод")
-async def divorce_cmd(message: types.Message):
-    mar = get_marriage(message.chat.id, message.from_user.id)
-    if not mar:
-        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
-    _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
-    partner_id = u2_id if u1_id == message.from_user.id else u1_id
-    partner_name = u2_name if u1_id == message.from_user.id else u1_name
-    duration = format_marriage_duration(married_at, extra or 0)
-    divorce_marriage(message.chat.id, message.from_user.id)
-    await message.reply(
-        f"💔 {mention(message.from_user)} и {mention_by_id(partner_id, partner_name)} развелись.\n📅 Длился: <b>{duration}</b>",
-        parse_mode="HTML", disable_web_page_preview=True
-    )
-
-
-@cmd("мой брак")
-@cmd("моя пара")
-async def my_marriage_cmd(message: types.Message):
-    mar = get_marriage(message.chat.id, message.from_user.id)
-    if not mar:
-        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
-    _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
-    partner_id = u2_id if u1_id == message.from_user.id else u1_id
-    partner_name = u2_name if u1_id == message.from_user.id else u1_name
-    duration = format_marriage_duration(married_at, extra or 0)
-    await message.reply(
-        f"💍 <b>Ваш брак</b>\n\n👫 {mention(message.from_user)} 💞 {mention_by_id(partner_id, partner_name)}\n📅 {married_at[:10]}\n⏳ Вместе: <b>{duration}</b>",
-        parse_mode="HTML", disable_web_page_preview=True
-    )
-
-
-@cmd("браки")
-async def marriages_list_cmd(message: types.Message):
-    pairs = get_all_marriages(message.chat.id)
-    if not pairs:
-        return await message.reply("📭 В этом чате пока нет браков.", parse_mode="HTML", disable_web_page_preview=True)
-    text = "💍 <b>Браки в этом чате:</b>\n\n"
-    for i, (u1_id, u1_name, u2_id, u2_name, married_at, extra) in enumerate(pairs, 1):
-        duration = format_marriage_duration(married_at, extra or 0)
-        text += f"{i}. {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)} — <i>{duration}</i>\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-    
 # ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
@@ -6993,38 +6924,6 @@ async def on_business_connection(connection: types.BusinessConnection):
         save_business_connection(connection.user.id, connection.id)
 
 
-# ================= ВОССТАНОВЛЕНИЕ БАЗЫ =================
-@dp.message(Command("restore"))
-@dp.message(lambda m: m.text and m.text.strip().lower() in [".restore", ".dbimport", "!restore"])
-async def restore_db_cmd(message: types.Message):
-    if message.from_user.id != OWNER_ID:
-        return await message.reply("❌ Только владелец.", parse_mode="HTML")
-    if not message.reply_to_message or not message.reply_to_message.document:
-        return await message.reply(
-            "📌 Ответь на <code>.db</code> файл командой <code>/restore</code>",
-            parse_mode="HTML"
-        )
-    doc = message.reply_to_message.document
-    if not doc.file_name.lower().endswith(".db"):
-        return await message.reply("❌ Только .db", parse_mode="HTML")
-    status = await message.reply("📥 Импортирую...")
-    temp = f"temp_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-    try:
-        file = await bot.get_file(doc.file_id)
-        await bot.download_file(file.file_path, temp)
-        import shutil
-        os.makedirs("backups", exist_ok=True)
-        shutil.copy2(DATABASE_PATH, f"backups/before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
-        shutil.move(temp, DATABASE_PATH)
-        try: init_db()
-        except: pass
-        await status.edit_text("✅ <b>База импортирована!</b>\n⚠️ Перезапустите бота на Railway.", parse_mode="HTML")
-    except Exception as e:
-        if os.path.exists(temp):
-            try: os.remove(temp)
-            except: pass
-        await status.edit_text(f"❌ Ошибка: <code>{e}</code>", parse_mode="HTML")
-        
 # ================= ФОНОВЫЕ ЗАДАЧИ =================
 async def auto_unban_loop():
     while True:
