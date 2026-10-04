@@ -6491,7 +6491,150 @@ async def backup_cmd(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ {e}", disable_web_page_preview=True)
 
+# ================= БРАКИ =================
+@dp.message(lambda m: m.text and m.text.lower().strip().startswith("брак ") and "@" in m.text)
+async def marriage_proposal_cmd(message: types.Message):
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply("❌ Ответьте на сообщение юзера или укажите @username.", parse_mode="HTML", disable_web_page_preview=True)
+    if target.id == message.from_user.id:
+        return
+    if target.is_bot:
+        return await message.reply("❌ Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, message.from_user.id):
+        return await message.reply("❌ Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, target.id):
+        return await message.reply(f"❌ {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    div = get_divorced_marriage(message.chat.id, message.from_user.id)
+    if div:
+        restore_marriage(div[0])
+        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
+    add_proposal(message.chat.id, message.from_user.id, target.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
+        InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
+    ]])
+    await message.reply(
+        f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+    )
 
+
+@dp.message(lambda m: m.text and m.text.lower().strip().startswith("брак ") and "@" not in m.text
+    and not m.text.lower().startswith("брак продлить") and not m.text.lower().startswith("брак цена")
+    and not m.text.lower().startswith("брак режим"))
+async def marriage_proposal_reply(message: types.Message):
+    if not message.reply_to_message:
+        return await message.reply(
+            "💍 <b>Как жениться:</b>\n\n"
+            "• Ответь на сообщение юзера: <code>брак</code>\n"
+            "• Или напиши: <code>брак @username</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    target = message.reply_to_message.from_user
+    if target.id == message.from_user.id:
+        return
+    if target.is_bot:
+        return await message.reply("❌ Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, message.from_user.id):
+        return await message.reply("❌ Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, target.id):
+        return await message.reply(f"❌ {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    div = get_divorced_marriage(message.chat.id, message.from_user.id)
+    if div:
+        restore_marriage(div[0])
+        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
+    add_proposal(message.chat.id, message.from_user.id, target.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
+        InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
+    ]])
+    await message.reply(
+        f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+    )
+
+
+@dp.callback_query(lambda c: c.data and (c.data.startswith("marry_accept:") or c.data.startswith("marry_reject:")))
+async def marriage_response(callback: types.CallbackQuery):
+    parts = callback.data.split(":")
+    if len(parts) < 4:
+        return await callback.answer("⚠️ Ошибка.", show_alert=True)
+    action, from_id_str, to_id_str, chat_id_str = parts
+    from_id = int(from_id_str); to_id = int(to_id_str); chat_id = int(chat_id_str)
+    if callback.from_user.id != to_id:
+        return await callback.answer("⛔ Это не тебе!", show_alert=True)
+    if get_proposal(chat_id, from_id, to_id) is None:
+        return await callback.answer("⚠️ Уже неактивно.", show_alert=True)
+    try:
+        fu = await bot.get_chat(from_id)
+        tu = await bot.get_chat(to_id)
+    except:
+        return await callback.answer("❌ Ошибка загрузки.", show_alert=True)
+    if action == "marry_accept":
+        res = create_marriage(chat_id, from_id, fu.first_name, to_id, tu.first_name)
+        if not res:
+            return await callback.answer("❌ Кто-то уже в браке.", show_alert=True)
+        remove_proposal(chat_id, from_id, to_id)
+        try: await callback.message.edit_reply_markup(reply_markup=None)
+        except: pass
+        await bot.send_message(chat_id,
+            f"💍💐 <b>Свадьба!</b>\n\n{mention_by_id(from_id, fu.first_name, fu.username)} и {mention_by_id(to_id, tu.first_name, tu.username)} теперь в браке!",
+            parse_mode="HTML", disable_web_page_preview=True)
+        await callback.answer("💍 Вы в браке!")
+    else:
+        remove_proposal(chat_id, from_id, to_id)
+        try: await callback.message.edit_reply_markup(reply_markup=None)
+        except: pass
+        await bot.send_message(chat_id,
+            f"💔 {mention_by_id(to_id, tu.first_name, tu.username)} отказал(а).",
+            parse_mode="HTML", disable_web_page_preview=True)
+        await callback.answer("❌ Отказано.")
+
+
+@cmd("развод")
+async def divorce_cmd(message: types.Message):
+    mar = get_marriage(message.chat.id, message.from_user.id)
+    if not mar:
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
+    partner_id = u2_id if u1_id == message.from_user.id else u1_id
+    partner_name = u2_name if u1_id == message.from_user.id else u1_name
+    duration = format_marriage_duration(married_at, extra or 0)
+    divorce_marriage(message.chat.id, message.from_user.id)
+    await message.reply(
+        f"💔 {mention(message.from_user)} и {mention_by_id(partner_id, partner_name)} развелись.\n📅 Длился: <b>{duration}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("мой брак")
+@cmd("моя пара")
+async def my_marriage_cmd(message: types.Message):
+    mar = get_marriage(message.chat.id, message.from_user.id)
+    if not mar:
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
+    partner_id = u2_id if u1_id == message.from_user.id else u1_id
+    partner_name = u2_name if u1_id == message.from_user.id else u1_name
+    duration = format_marriage_duration(married_at, extra or 0)
+    await message.reply(
+        f"💍 <b>Ваш брак</b>\n\n👫 {mention(message.from_user)} 💞 {mention_by_id(partner_id, partner_name)}\n📅 {married_at[:10]}\n⏳ Вместе: <b>{duration}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("браки")
+async def marriages_list_cmd(message: types.Message):
+    pairs = get_all_marriages(message.chat.id)
+    if not pairs:
+        return await message.reply("📭 В этом чате пока нет браков.", parse_mode="HTML", disable_web_page_preview=True)
+    text = "💍 <b>Браки в этом чате:</b>\n\n"
+    for i, (u1_id, u1_name, u2_id, u2_name, married_at, extra) in enumerate(pairs, 1):
+        duration = format_marriage_duration(married_at, extra or 0)
+        text += f"{i}. {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)} — <i>{duration}</i>\n"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    
 # ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
