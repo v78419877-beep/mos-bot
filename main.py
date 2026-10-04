@@ -6421,6 +6421,264 @@ async def global_ban_cmd(message: types.Message):
         except: pass
     await message.reply(f"{em('ban', '🚫')} {mention(target)} забанен ({success}/{len(chats)}).", parse_mode="HTML", disable_web_page_preview=True)
 
+# ================= СЕТКА — УПРАВЛЕНИЕ АДМИНАМИ =================
+
+@dp.message(lambda m: m.text and re.match(r'^сетка\s+\+админ\b', m.text.strip(), re.IGNORECASE))
+async def grid_add_admin_cmd(message: types.Message):
+    if message.chat.type == "private":
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    grid_id = get_chat_grid(message.chat.id)
+    if not grid_id:
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if not is_grid_moderator(grid_id, message.from_user.id, 5):
+        if message.from_user.id != OWNER_ID:
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply("📌 <code>сетка +админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+    if target.id == OWNER_ID:
+        return
+
+    # Проверка: бот должен быть админом с правом promotion
+    try:
+        bot_member = await bot.get_chat_member(message.chat.id, bot.id)
+        if bot_member.status not in ["administrator", "creator"]:
+            return await message.reply(f"{em('cross', '❌')} Я не админ в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+        if bot_member.status == "administrator" and not getattr(bot_member, "can_promote_members", False):
+            return await message.reply(f"{em('cross', '❌')} У меня нет права «Назначать админов».", parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        return await message.reply(f"{em('cross', '❌')} Ошибка прав бота: {e}", parse_mode="HTML", disable_web_page_preview=True)
+
+    try:
+        await bot.promote_chat_member(
+            chat_id=message.chat.id, user_id=target.id,
+            can_manage_chat=True, can_delete_messages=True, can_manage_video_chats=True,
+            can_restrict_members=True, can_promote_members=False, can_change_info=True,
+            can_invite_users=True, can_pin_messages=True
+        )
+    except Exception as e:
+        return await message.reply(f"{em('cross', '❌')} Не удалось выдать ТГ-права: {e}", parse_mode="HTML", disable_web_page_preview=True)
+
+    add_grid_moderator(grid_id, target.id, rank=4, is_admin=1)
+    mark_bot_promoted(target.id, message.chat.id, message.from_user.id)
+
+    await message.reply(
+        f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b> + админ сетки!",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(r'^сетка\s+-админ\b', m.text.strip(), re.IGNORECASE))
+async def grid_remove_admin_cmd(message: types.Message):
+    if message.chat.type == "private":
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    grid_id = get_chat_grid(message.chat.id)
+    if not grid_id:
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if not is_grid_moderator(grid_id, message.from_user.id, 5):
+        if message.from_user.id != OWNER_ID:
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply("📌 <code>сетка -админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+    if target.id == OWNER_ID:
+        return
+
+    results = []
+
+    # Снять ТГ-права
+    try:
+        await bot.promote_chat_member(
+            chat_id=message.chat.id, user_id=target.id,
+            can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
+            can_restrict_members=False, can_promote_members=False, can_change_info=False,
+            can_invite_users=False, can_pin_messages=False
+        )
+        results.append("✅ ТГ-права сняты")
+    except Exception as e:
+        results.append(f"⚠️ ТГ-права: {e}")
+
+    # Убрать из админов сетки + из bot_promoted
+    remove_grid_moderator(grid_id, target.id)
+    unmark_bot_promoted(target.id, message.chat.id)
+    results.append("✅ Убран из админов сетки")
+
+    await message.reply(
+        f"{em('check', '✅')} <b>Снято с {mention(target)}:</b>\n\n" + "\n".join(results),
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(r'^сетка\s+разжаловать\b', m.text.strip(), re.IGNORECASE))
+async def grid_demote_cmd(message: types.Message):
+    if message.chat.type == "private":
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    grid_id = get_chat_grid(message.chat.id)
+    if not grid_id:
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if not is_grid_moderator(grid_id, message.from_user.id, 3):
+        if message.from_user.id != OWNER_ID:
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 3 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply("📌 <code>сетка разжаловать @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+    if target.id == OWNER_ID:
+        return
+
+    # Убрать из админов сетки
+    remove_grid_moderator(grid_id, target.id)
+
+    # Снять ТГ-права (если были)
+    try:
+        await bot.promote_chat_member(
+            chat_id=message.chat.id, user_id=target.id,
+            can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
+            can_restrict_members=False, can_promote_members=False, can_change_info=False,
+            can_invite_users=False, can_pin_messages=False
+        )
+    except: pass
+
+    unmark_bot_promoted(target.id, message.chat.id)
+
+    # Убрать ранг в самой сетке (если есть таблица grid_user_ranks)
+    try:
+        remove_grid_user_rank(grid_id, target.id)
+    except: pass
+
+    await message.reply(
+        f"{em('cross', '❌')} {mention(target)} <b>разжалован в сетке</b> и потерял ТГ-права.",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(r'^сетка\s+повысить\b', m.text.strip(), re.IGNORECASE))
+async def grid_promote_cmd(message: types.Message):
+    if message.chat.type == "private":
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    grid_id = get_chat_grid(message.chat.id)
+    if not grid_id:
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if not is_grid_moderator(grid_id, message.from_user.id, 4):
+        if message.from_user.id != OWNER_ID:
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply("📌 <code>сетка повысить @user 3</code>", parse_mode="HTML", disable_web_page_preview=True)
+    if target.id == OWNER_ID:
+        return
+
+    args = message.text.split()
+    new_rank = 1
+    for a in args:
+        if a.isdigit():
+            new_rank = int(a)
+            break
+    if new_rank < 1: new_rank = 1
+    if new_rank > 4: new_rank = 4
+
+    # Установить ранг в сетке
+    try:
+        set_grid_user_rank(grid_id, target.id, new_rank, message.from_user.id)
+    except: pass
+
+    # Добавить в grid_moderators
+    add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
+
+    await message.reply(
+        f"🏆 {mention(target)} повышен в сетке до ранга <b>{new_rank}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(r'^сетка\s+понизить\b', m.text.strip(), re.IGNORECASE))
+async def grid_demote_rank_cmd(message: types.Message):
+    if message.chat.type == "private":
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    grid_id = get_chat_grid(message.chat.id)
+    if not grid_id:
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if not is_grid_moderator(grid_id, message.from_user.id, 4):
+        if message.from_user.id != OWNER_ID:
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply("📌 <code>сетка понизить @user 1</code>", parse_mode="HTML", disable_web_page_preview=True)
+    if target.id == OWNER_ID:
+        return
+
+    args = message.text.split()
+    new_rank = 1
+    for a in args:
+        if a.isdigit():
+            new_rank = int(a)
+            break
+    if new_rank < 1: new_rank = 1
+    if new_rank > 4: new_rank = 4
+
+    try:
+        set_grid_user_rank(grid_id, target.id, new_rank, message.from_user.id)
+    except: pass
+
+    add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
+
+    await message.reply(
+        f"📉 {mention(target)} понижен в сетке до ранга <b>{new_rank}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("сетка инфо")
+async def grid_info_cmd(message: types.Message):
+    if message.chat.type == "private":
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+    grid_id = get_chat_grid(message.chat.id)
+    if not grid_id:
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT name, creator_id FROM grids WHERE id = ?", (grid_id,))
+        g = c.fetchone()
+        c.execute("SELECT chat_id, hidden FROM grid_chats WHERE grid_id = ?", (grid_id,))
+        chats = c.fetchall()
+        c.execute("SELECT user_id, rank, is_admin FROM grid_moderators WHERE grid_id = ?", (grid_id,))
+        mods = c.fetchall()
+
+    text = f"🕸 <b>Сетка #{grid_id}</b>\n"
+    if g:
+        text += f"📛 Название: <b>{g[0]}</b>\n"
+        text += f"👑 Создатель: <code>{g[1]}</code>\n"
+    text += f"🗂 Чатов: <b>{len(chats)}</b>\n"
+    text += f"🛡 Модераторов: <b>{len(mods)}</b>\n\n"
+
+    if mods:
+        text += "<b>Модераторы сетки:</b>\n"
+        for uid, rank, is_admin in mods[:15]:
+            try:
+                u = await bot.get_chat(uid)
+                name = user_link(uid, u.first_name, u.username)
+            except:
+                name = f"<code>{uid}</code>"
+            badge = "👑" if is_admin else "🛡"
+            text += f"{badge} {name} — ранг {rank}\n"
+
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
 
 # ================= РЕПОРТЫ =================
 REPORT_COMMAND_RE = re.compile(r'^[.!\/]\s*репорт\b', re.IGNORECASE)
