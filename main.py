@@ -3942,6 +3942,81 @@ async def my_candies_cmd(message: types.Message):
         parse_mode="HTML", disable_web_page_preview=True
     )
 
+# ================= ПОПОЛНИТЬ =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*пополнить\b', m.text.strip(), re.IGNORECASE))
+async def add_candies_cmd(message: types.Message):
+    # Только владелец или агент 3+
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 3):
+        return await message.reply(
+            f"{em('cross', '❌')} Только владелец или агент ранга 3+.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    # Определяем цель и сумму
+    target = None
+    amount = None
+
+    if message.reply_to_message:
+        target = message.reply_to_message.from_user
+        args = message.text.split()
+        for a in args[1:]:
+            if a.lstrip("-").isdigit():
+                amount = int(a)
+                break
+    else:
+        args = message.text.split()
+        # Форматы: .пополнить @user 100 | .пополнить 123456789 100 | .пополнить 100 (себе)
+        if len(args) >= 3:
+            try:
+                if args[1].startswith("@"):
+                    target = await bot.get_chat(args[1])
+                elif args[1].lstrip("-").isdigit():
+                    target = await bot.get_chat(int(args[1]))
+            except:
+                return await message.reply(f"{em('cross', '❌')} Пользователь не найден.", parse_mode="HTML", disable_web_page_preview=True)
+            if args[2].lstrip("-").isdigit():
+                amount = int(args[2])
+        elif len(args) == 2 and args[1].lstrip("-").isdigit():
+            target = message.from_user
+            amount = int(args[1])
+
+    if not target:
+        return await message.reply(
+            "📌 <b>Формат:</b>\n"
+            "• <code>.пополнить @user 100</code>\n"
+            "• <code>.пополнить 100</code> (себе)\n"
+            "• Ответом на сообщение: <code>.пополнить 100</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    if amount is None or amount == 0:
+        return await message.reply("❌ Укажи сумму (положительное число).", parse_mode="HTML", disable_web_page_preview=True)
+
+    if abs(amount) > 1000000:
+        return await message.reply("❌ Максимум 1 000 000 за раз.", parse_mode="HTML", disable_web_page_preview=True)
+
+    # Начисляем
+    add_candies(target.id, amount, message.from_user.id)
+    new_balance = get_balance(target.id)
+
+    sign = "+" if amount > 0 else ""
+    await message.reply(
+        f"{em('check', '✅')} <b>Пополнено!</b>\n\n"
+        f"👤 Кому: {mention(target)}\n"
+        f"💰 Сумма: <b>{sign}{amount}</b> 🍬\n"
+        f"💼 Баланс: <b>{new_balance}</b> 🍬",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+    # Уведомим получателя (если не сам пополняет)
+    if target.id != message.from_user.id:
+        try:
+            await bot.send_message(
+                target.id,
+                f"🎁 <b>Вам начислено {sign}{amount} 🍬</b>\n👤 От: {message.from_user.first_name}",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+        except: pass
 
 @cmd("мешки")
 async def top_candies_cmd(message: types.Message):
