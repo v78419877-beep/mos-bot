@@ -4694,11 +4694,10 @@ async def create_note_cmd(message: types.Message):
     parts = message.text.split("\n", 1)
     name = parts[0].replace("+Заметка", "").replace("+заметка", "").strip()
     if not name or len(parts) < 2: return
-    nl_idx = message.text.find("\n")
+     nl_idx = message.text.find("\n")
     raw_body_html = _extract_html_after(message, nl_idx + 1)[:3500]
 
     cleaned_body, links = extract_links_from_text(raw_body_html)
-    cleaned_body = auto_premium(cleaned_body)
     note_id = add_note(message.chat.id, name, cleaned_body, message.from_user.id)
 
     if not note_id:
