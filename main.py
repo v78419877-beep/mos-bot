@@ -4693,8 +4693,9 @@ async def create_note_cmd(message: types.Message):
         return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ.", parse_mode="HTML", disable_web_page_preview=True)
     parts = message.text.split("\n", 1)
     name = parts[0].replace("+Заметка", "").replace("+заметка", "").strip()
-    if not name or len(parts) < 2: return
-     nl_idx = message.text.find("\n")
+    if not name or len(parts) < 2:
+        return
+    nl_idx = message.text.find("\n")
     raw_body_html = _extract_html_after(message, nl_idx + 1)[:3500]
 
     cleaned_body, links = extract_links_from_text(raw_body_html)
