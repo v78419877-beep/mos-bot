@@ -5086,6 +5086,114 @@ async def list_grid_chats(message: types.Message):
         except: pass
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
+# ================= +ЧАТ / -ЧАТ (закрыть/открыть чат) =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+чат\b', m.text.strip(), re.IGNORECASE))
+async def open_chat_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    # Проверка прав: ТГ-админ, создатель, ранг 3+, агент
+    has_rights = (
+        message.from_user.id == OWNER_ID
+        or has_agent_rank(message.from_user.id, 1)
+        or await is_tg_admin(message.chat.id, message.from_user.id)
+        or has_permission(message.chat.id, message.from_user.id, 3)
+    )
+    if not has_rights:
+        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+
+    # Проверка, что бот админ и может менять настройки
+    try:
+        bm = await bot.get_chat_member(message.chat.id, bot.id)
+        if bm.status not in ["administrator", "creator"]:
+            return await message.reply(f"{em('cross', '❌')} Я не админ в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+        if bm.status == "administrator" and not getattr(bm, "can_change_info", False):
+            return await message.reply(f"{em('cross', '❌')} У меня нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        return await message.reply(f"{em('cross', '❌')} Ошибка прав бота: {e}", parse_mode="HTML", disable_web_page_preview=True)
+
+    try:
+        # Открываем все базовые права
+        await bot.set_chat_permissions(
+            chat_id=message.chat.id,
+            permissions=types.ChatPermissions(
+                can_send_messages=True,
+                can_send_audios=True,
+                can_send_documents=True,
+                can_send_photos=True,
+                can_send_videos=True,
+                can_send_video_notes=True,
+                can_send_voice_notes=True,
+                can_send_polls=True,
+                can_send_other_messages=True,
+                can_add_web_page_previews=True,
+                can_change_info=False,
+                can_invite_users=True,
+                can_pin_messages=False,
+                can_manage_topics=False,
+            )
+        )
+    except Exception as e:
+        return await message.reply(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    await message.reply(
+        f"{em('check', '✅')} <b>Чат открыт</b> для общения!\n👮 {mention(message.from_user)}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-чат\b', m.text.strip(), re.IGNORECASE))
+async def close_chat_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    has_rights = (
+        message.from_user.id == OWNER_ID
+        or has_agent_rank(message.from_user.id, 1)
+        or await is_tg_admin(message.chat.id, message.from_user.id)
+        or has_permission(message.chat.id, message.from_user.id, 3)
+    )
+    if not has_rights:
+        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+
+    try:
+        bm = await bot.get_chat_member(message.chat.id, bot.id)
+        if bm.status not in ["administrator", "creator"]:
+            return await message.reply(f"{em('cross', '❌')} Я не админ в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+        if bm.status == "administrator" and not getattr(bm, "can_change_info", False):
+            return await message.reply(f"{em('cross', '❌')} У меня нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        return await message.reply(f"{em('cross', '❌')} Ошибка прав бота: {e}", parse_mode="HTML", disable_web_page_preview=True)
+
+    try:
+        # Закрываем право писать обычным участникам
+        await bot.set_chat_permissions(
+            chat_id=message.chat.id,
+            permissions=types.ChatPermissions(
+                can_send_messages=False,
+                can_send_audios=False,
+                can_send_documents=False,
+                can_send_photos=False,
+                can_send_videos=False,
+                can_send_video_notes=False,
+                can_send_voice_notes=False,
+                can_send_polls=False,
+                can_send_other_messages=False,
+                can_add_web_page_previews=False,
+                can_change_info=False,
+                can_invite_users=False,
+                can_pin_messages=False,
+                can_manage_topics=False,
+            )
+        )
+    except Exception as e:
+        return await message.reply(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    await message.reply(
+        f"{em('cross', '❌')} <b>Чат закрыт</b> для общения!\n👮 {mention(message.from_user)}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("глобан"))
 async def global_ban_cmd(message: types.Message):
