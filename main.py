@@ -127,27 +127,6 @@ def user_link(user_id, first_name="Пользователь", username=None):
     return f'<b>{first_name}</b>'
 
 def auto_premium(text: str) -> str:
-    if not text:
-        return text
-
-    # Защищаем уже готовые <tg-emoji>...</tg-emoji>
-    protected = []
-    def _protect(match):
-        protected.append(match.group(0))
-        return f"\x00PREMPROT{len(protected)-1}\x00"
-
-    text = re.sub(r'<tg-emoji[^>]*>.*?</tg-emoji>', _protect, text, flags=re.DOTALL)
-
-    # Заменяем обычные эмодзи на <tg-emoji>
-    for uni, key in UNICODE_TO_KEY.items():
-        eid = EMOJI.get(key)
-        if eid and uni in text:
-            text = text.replace(uni, f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>')
-
-    # Возвращаем защищённое
-    for i, p in enumerate(protected):
-        text = text.replace(f"\x00PREMPROT{i}\x00", p)
-
     return text
 
 
@@ -161,137 +140,130 @@ def html_escape_text(text: str) -> str:
         .replace(">", "&gt;"))
 
 
-def apply_monospace(text: str) -> str:
-    """Преобразует markdown-подобное форматирование в HTML."""
-    if not text:
-        return text
+# ================= НОВОЕ: TELEGRAM ENTITIES → HTML =================
+def entities_to_html(message: types.Message) -> str:
+    """
+    Конвертирует текст сообщения с его entities (форматирование Telegram)
+    в HTML-строку. Поддерживает: bold, italic, underline, strikethrough,
+    spoiler, code, pre, blockquote, text_link, custom_emoji.
+    """
+    if not message.text:
+        return ""
+    text = message.text
+    entities = message.entities or []
+    if not entities:
+        return html_escape_text(text)
 
-    # Защита от повторной обработки <tg-emoji>, <a>, <b> и т.д.
-    protected = []
-    def _protect(match):
-        protected.append(match.group(0))
-        return f"\x00PROT{len(protected)-1}\x00"
+    sorted_ents = sorted(entities, key=lambda e: (e.offset, -e.length))
 
-    # Защищаем уже существующие HTML-теги
-    text = re.sub(
-        r'<(tg-emoji|a|b|i|u|s|code|pre|blockquote|tg-spoiler)\b[^>]*>.*?</\1>',
-        _protect, text, flags=re.DOTALL
-    )
-    text = re.sub(r'<tg-emoji[^>]*/>', _protect, text)
-    text = re.sub(r'<(b|i|u|s|code|pre|blockquote|tg-spoiler)\s*/>', _protect, text)
+    def render_range(start: int, end: int, ent_list) -> str:
+        result = []
+        pos = start
+        inner = [e for e in ent_list if e.offset >= start and e.offset + e.length <= end]
+        top_level = []
+        for e in inner:
+            if not top_level or e.offset >= top_level[-1].offset + top_level[-1].length:
+                top_level.append(e)
 
-    def _escape(s):
-        return (s
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;"))
+        for e in top_level:
+            if e.offset > pos:
+                result.append(html_escape_text(text[pos:e.offset]))
+            inner_text = render_range(
+                e.offset, e.offset + e.length,
+                [x for x in inner if x is not e]
+            )
+            raw = text[e.offset:e.offset + e.length]
 
-    # 1. ```блок``` → <pre>
-    def _replace_pre(match):
-        return f"<pre>{_escape(match.group(1))}</pre>"
-    text = re.sub(r"```([\s\S]+?)```", _replace_pre, text)
-
-    # 2. `инлайн` → <code>
-    def _replace_code(match):
-        return f"<code>{_escape(match.group(1))}</code>"
-    text = re.sub(r"`([^`\n]+?)`", _replace_code, text)
-
-    # 3. **жирный** → <b>
-    def _replace_bold(match):
-        return f"<b>{_escape(match.group(1))}</b>"
-    text = re.sub(r"\*\*(.+?)\*\*", _replace_bold, text, flags=re.DOTALL)
-
-    # 4. __курсив__ → <i>
-    def _replace_italic(match):
-        return f"<i>{_escape(match.group(1))}</i>"
-    text = re.sub(r"__(.+?)__", _replace_italic, text, flags=re.DOTALL)
-
-    # 5. --подчёркнутый-- → <u>
-    def _replace_underline(match):
-        return f"<u>{_escape(match.group(1))}</u>"
-    text = re.sub(r"--(.+?)--", _replace_underline, text, flags=re.DOTALL)
-
-    # 6. ~~зачёркнутый~~ → <s>
-    def _replace_strike(match):
-        return f"<s>{_escape(match.group(1))}</s>"
-    text = re.sub(r"~~(.+?)~~", _replace_strike, text, flags=re.DOTALL)
-
-    # 7. ||спойлер|| → <tg-spoiler>
-    def _replace_spoiler(match):
-        return f"<tg-spoiler>{_escape(match.group(1))}</tg-spoiler>"
-    text = re.sub(r"\|\|(.+?)\|\|", _replace_spoiler, text, flags=re.DOTALL)
-
-    # 8. Цитаты: строки, начинающиеся с "> "
-    def _replace_quote_block(match):
-        inner = match.group(0)
-        lines = inner.split("\n")
-        cleaned = []
-        for ln in lines:
-            if ln.startswith("&gt; "):
-                cleaned.append(ln[5:])
-            elif ln.startswith("> "):
-                cleaned.append(ln[2:])
+            if e.type == "bold":
+                result.append(f"<b>{inner_text}</b>")
+            elif e.type == "italic":
+                result.append(f"<i>{inner_text}</i>")
+            elif e.type == "underline":
+                result.append(f"<u>{inner_text}</u>")
+            elif e.type == "strikethrough":
+                result.append(f"<s>{inner_text}</s>")
+            elif e.type == "spoiler":
+                result.append(f"<tg-spoiler>{inner_text}</tg-spoiler>")
+            elif e.type == "code":
+                result.append(f"<code>{html_escape_text(raw)}</code>")
+            elif e.type == "pre":
+                lang = getattr(e, "language", None)
+                if lang:
+                    result.append(f'<pre><code class="language-{lang}">{html_escape_text(raw)}</code></pre>')
+                else:
+                    result.append(f"<pre>{html_escape_text(raw)}</pre>")
+            elif e.type == "blockquote":
+                result.append(f"<blockquote>{inner_text}</blockquote>")
+            elif e.type == "expandable_blockquote":
+                result.append(f"<blockquote expandable>{inner_text}</blockquote>")
+            elif e.type == "text_link":
+                url = getattr(e, "url", "") or ""
+                result.append(f'<a href="{url}">{inner_text}</a>')
+            elif e.type == "custom_emoji":
+                cid = getattr(e, "custom_emoji_id", None)
+                if cid:
+                    result.append(f'<tg-emoji emoji-id="{cid}">{html_escape_text(raw)}</tg-emoji>')
+                else:
+                    result.append(html_escape_text(raw))
             else:
-                cleaned.append(ln)
-        content = "\n".join(cleaned)
-        return f"<blockquote>{content}</blockquote>"
-    # Находим блоки подряд идущих строк с ">" в начале
-    text = re.sub(r"(^|\n)(?:&gt; .*|> .*)(?:\n(?:&gt; .*|> .*))*", lambda m: ("\n" if m.group(1) else "") + _replace_quote_block(m), text)
+                result.append(inner_text)
+            pos = e.offset + e.length
+        if pos < end:
+            result.append(html_escape_text(text[pos:end]))
+        return "".join(result)
 
-    # 9. Возвращаем защищённые куски
-    for i, p in enumerate(protected):
-        text = text.replace(f"\x00PROT{i}\x00", p)
+    return render_range(0, len(text), sorted_ents).strip()
 
-    return text
+
+def entities_to_html_from(message: types.Message, char_index: int) -> str:
+    """
+    Конвертирует в HTML часть сообщения начиная с char_index
+    (с сохранением форматирования Telegram-entities).
+    """
+    if not message.text:
+        return ""
+    text = message.text
+    entities = message.entities or []
+
+    shifted = []
+    for e in entities:
+        if e.offset + e.length <= char_index:
+            continue
+        new_off = max(0, e.offset - char_index)
+        if e.offset < char_index:
+            new_len = e.offset + e.length - char_index
+        else:
+            new_len = e.length
+        clone = type(e)(
+            type=e.type,
+            offset=new_off,
+            length=new_len,
+            url=getattr(e, "url", None),
+            language=getattr(e, "language", None),
+            custom_emoji_id=getattr(e, "custom_emoji_id", None),
+        )
+        shifted.append(clone)
+
+    fragment = text[char_index:]
+    fake = types.Message(
+        message_id=0,
+        date=message.date,
+        chat=message.chat,
+        from_user=message.from_user,
+        text=fragment,
+        entities=shifted,
+    )
+    return entities_to_html(fake).strip()
 
 
 def text_with_premium_emoji(message: types.Message) -> str:
     """Возвращает HTML-текст сообщения с заменой премиум-эмодзи на <tg-emoji>."""
-    if not message.text:
-        return ""
-    text = message.text
-    entities = message.entities or []
-    custom = [e for e in entities if e.type == "custom_emoji" and getattr(e, "custom_emoji_id", None)]
-    if not custom:
-        return html_escape_text(text)
-    custom.sort(key=lambda e: e.offset)
-    result = []
-    last = 0
-    for ent in custom:
-        result.append(html_escape_text(text[last:ent.offset]))
-        emoji_char = text[ent.offset:ent.offset + ent.length]
-        result.append(f'<tg-emoji emoji-id="{ent.custom_emoji_id}">{emoji_char}</tg-emoji>')
-        last = ent.offset + ent.length
-    result.append(html_escape_text(text[last:]))
-    return "".join(result)
+    return entities_to_html(message)
 
 
 def _extract_html_after(message: types.Message, char_index: int) -> str:
-    """HTML-текст, начиная с char_index, с заменой премиум-эмодзи."""
-    if not message.text:
-        return ""
-    text = message.text
-    entities = message.entities or []
-    custom = [e for e in entities if e.type == "custom_emoji" and getattr(e, "custom_emoji_id", None)]
-    custom.sort(key=lambda e: e.offset)
-    result = []
-    last = char_index
-    for ent in custom:
-        if ent.offset + ent.length <= char_index:
-            continue
-        if ent.offset < char_index:
-            before = text[char_index:ent.offset]
-            result.append(html_escape_text(before))
-            emoji_char = text[ent.offset:ent.offset + ent.length]
-            result.append(f'<tg-emoji emoji-id="{ent.custom_emoji_id}">{emoji_char}</tg-emoji>')
-            last = ent.offset + ent.length
-            continue
-        result.append(html_escape_text(text[last:ent.offset]))
-        emoji_char = text[ent.offset:ent.offset + ent.length]
-        result.append(f'<tg-emoji emoji-id="{ent.custom_emoji_id}">{emoji_char}</tg-emoji>')
-        last = ent.offset + ent.length
-    result.append(html_escape_text(text[last:]))
-    return "".join(result).strip()
+    """HTML-текст, начиная с char_index, с сохранением форматирования Telegram."""
+    return entities_to_html_from(message, char_index)
 
 
 # ================= РАНГИ ЧАТА =================
@@ -393,8 +365,6 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER,
             result TEXT, fish_name TEXT, reward INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
-
-        # ⚠️ Владельца в agents НЕ добавляем
         conn.commit()
 
 # ================= РАНГИ ЧАТА =================
@@ -1343,7 +1313,7 @@ FISH_LIST = [
 ]
 
 BAIT_DURATION_HOURS = 1
-FISH_COOLDOWN_SECONDS = 7200  # 2 часа
+FISH_COOLDOWN_SECONDS = 7200
 LEVEL_XP_BASE = 50
 
 def get_fishing(user_id):
@@ -2504,7 +2474,6 @@ async def profile_cmd(message: types.Message):
 
     today_count, all_count = get_user_stats(target.id, message.chat.id)
 
-    # ===== СТАТУС =====
     in_antispam = is_in_antispam(target.id)
     in_ignore = is_ignored(message.chat.id, target.id)
     if in_antispam and in_ignore:
@@ -2516,7 +2485,6 @@ async def profile_cmd(message: types.Message):
     else:
         status = f"{em('check', '✅')} Чист"
 
-    # ===== РОЛЬ =====
     role_line = ""
     if target.id == OWNER_ID:
         role_line = "👑 <b>Владелец бота</b>"
@@ -2527,18 +2495,13 @@ async def profile_cmd(message: types.Message):
     elif is_agent(target.id):
         role_line = "🛡 <b>Агент поддержки Mos</b>"
 
-    # ===== РАНГ =====
     rank = get_rank(message.chat.id, target.id)
     rank_name = RANK_NAMES.get(rank, "👤 Участник")
 
-    # ===== НИК = ИМЯ =====
     nick = get_user_nick(target.id, message.chat.id)
     display_name = nick or target.first_name
-
-    # ===== ЗВАНИЕ =====
     rank_text = get_user_rank_text(target.id, message.chat.id)
 
-    # ===== ГРАЖДАНСТВО =====
     cit = get_citizenship_info(target.id)
     cit_line = ""
     if cit:
@@ -2551,19 +2514,15 @@ async def profile_cmd(message: types.Message):
         cit_duration = format_citizenship_duration(cit_date)
         cit_line = f"🏠 Гражданин «{cit_title}» {cit_duration}"
 
-    # ===== VIP ЭМОДЗИ =====
     vip_emoji = get_vip_emoji(target.id)
 
-    # ===== АЧИВКИ =====
     user_ach = get_user_achievements(target.id, message.chat.id)
     ach_text = ""
     if user_ach:
         ach_text = " ".join([f"{a[2]}{a[1]}" for a in user_ach])
 
-    # ===== О СЕБЕ =====
     about = get_user_about(target.id)
 
-    # ===== СБОРКА =====
     lines = []
     lines.append(f"{em('user', '👤')} <b>Профиль {vip_emoji}{display_name}{vip_emoji}</b>")
     lines.append("")
@@ -2598,7 +2557,6 @@ async def profile_cmd(message: types.Message):
 
     text = "\n".join(lines)
 
-    # ===== ГРАФИК =====
     chart_buf = None
     try:
         chart_buf = generate_user_chat_activity_chart(target.id, message.chat.id, days=30)
@@ -2647,7 +2605,6 @@ async def profile_full_cmd(message: types.Message):
     profile = get_user_profile(target.id)
     gender, birth_date, city, bio, is_hidden, birth_visibility, motto, show_cit = profile
 
-    # ===== ПРОВЕРКА ДОСТУПА =====
     viewer_id = message.from_user.id
     is_owner_viewer = (viewer_id == OWNER_ID)
     is_agent_viewer = is_agent(viewer_id)
@@ -4126,7 +4083,6 @@ async def rules_cmd(message: types.Message):
 
         cleaned_text, links = extract_links_from_text(raw_text_html)
         cleaned_text = auto_premium(cleaned_text)
-        cleaned_text = apply_monospace(cleaned_text)
         set_chat_rules(message.chat.id, cleaned_text, message.from_user.id)
 
         if links:
@@ -4185,7 +4141,7 @@ async def greeting_cmd(message: types.Message):
     if not sub:
         current = get_greeting(message.chat.id)
         if not current:
-            return await message.reply("📭 Приветствие не установлено.\n\n📌 <code>.приветствие установить</code>\n\n🔤 Плейсхолдеры: <code>{name}</code>, <code>{chat}</code>, <code>{rules}</code>, <code>{link}</code>\n🔗 Ссылки: <code>[текст](url)</code> или <code>{url}</code>\n📝 Моно: <code>`код`</code> или <code>```блок```</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📭 Приветствие не установлено.\n\n📌 <code>.приветствие установить</code>\n\n🔤 Плейсхолдеры: <code>{name}</code>, <code>{chat}</code>, <code>{rules}</code>, <code>{link}</code>\n🔗 Ссылки: <code>[текст](url)</code> или <code>{url}</code>", parse_mode="HTML", disable_web_page_preview=True)
         return await message.reply(f"📜 <b>Текущее:</b>\n\n<code>{current}</code>", parse_mode="HTML", disable_web_page_preview=True)
     if sub.startswith("установить"):
         parts = message.text.split("\n", 1)
@@ -4197,7 +4153,6 @@ async def greeting_cmd(message: types.Message):
             return await message.reply(f"{em('cross', '❌')} Текст пустой.", parse_mode="HTML", disable_web_page_preview=True)
         cleaned_text, links = extract_links_from_text(raw_text_html)
         cleaned_text = auto_premium(cleaned_text)
-        cleaned_text = apply_monospace(cleaned_text)
         set_greeting(message.chat.id, cleaned_text, message.from_user.id)
         if links:
             chat_title = message.chat.title or "чат"
@@ -4470,7 +4425,6 @@ async def set_about_cmd(message: types.Message):
     raw_html = _extract_html_after(message, nl_idx + 1)[:500]
     cleaned, links = extract_links_from_text(raw_html)
     cleaned = auto_premium(cleaned)
-    cleaned = apply_monospace(cleaned)
     set_user_about(message.from_user.id, cleaned)
     if links:
         chat_title = message.chat.title or "ЛС"
@@ -4740,7 +4694,6 @@ async def create_note_cmd(message: types.Message):
 
     cleaned_body, links = extract_links_from_text(raw_body_html)
     cleaned_body = auto_premium(cleaned_body)
-    cleaned_body = apply_monospace(cleaned_body)
     note_id = add_note(message.chat.id, name, cleaned_body, message.from_user.id)
 
     if not note_id:
@@ -4795,10 +4748,7 @@ async def get_note_cmd(message: types.Message):
 
     note_text = note[2]
 
-    # Чистим вложенные <tg-emoji>: регекс убирает внешние обёртки,
-    # оставляя только одну <tg-emoji> вокруг эмодзи.
     import re as _re
-    # Многократно применяем, пока есть вложенность
     for _ in range(5):
         new_text = _re.sub(
             r'<tg-emoji emoji-id="(\d+)">\s*<tg-emoji emoji-id="\d+">([^<]*)</tg-emoji>\s*</tg-emoji>',
