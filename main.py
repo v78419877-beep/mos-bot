@@ -126,14 +126,6 @@ def user_link(user_id, first_name="Пользователь", username=None):
         return f'<a href="https://t.me/{username}">{first_name}</a>'
     return f'<b>{first_name}</b>'
 
-def auto_premium(text: str) -> str:
-    if not text:
-        return text
-    for uni, key in UNICODE_TO_KEY.items():
-        eid = EMOJI.get(key)
-        if eid and uni in text:
-            text = text.replace(uni, f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>')
-    return text
 
 def html_escape_text(text: str) -> str:
     """Экранирование HTML-спецсимволов."""
@@ -145,7 +137,7 @@ def html_escape_text(text: str) -> str:
         .replace(">", "&gt;"))
 
 
-# ================= НОВОЕ: TELEGRAM ENTITIES → HTML =================
+# ================= TELEGRAM ENTITIES → HTML =================
 def entities_to_html(message: types.Message) -> str:
     """
     Конвертирует текст сообщения с его entities (форматирование Telegram)
@@ -4087,7 +4079,6 @@ async def rules_cmd(message: types.Message):
         raw_text_html = _extract_html_after(message, nl_idx + 1)[:3500]
 
         cleaned_text, links = extract_links_from_text(raw_text_html)
-        cleaned_text = auto_premium(cleaned_text)
         set_chat_rules(message.chat.id, cleaned_text, message.from_user.id)
 
         if links:
@@ -4157,7 +4148,6 @@ async def greeting_cmd(message: types.Message):
         if not raw_text_html:
             return await message.reply(f"{em('cross', '❌')} Текст пустой.", parse_mode="HTML", disable_web_page_preview=True)
         cleaned_text, links = extract_links_from_text(raw_text_html)
-        cleaned_text = auto_premium(cleaned_text)
         set_greeting(message.chat.id, cleaned_text, message.from_user.id)
         if links:
             chat_title = message.chat.title or "чат"
@@ -4429,7 +4419,6 @@ async def set_about_cmd(message: types.Message):
         return await message.reply("📌 <code>+О себе</code> (текст на новой строке)", parse_mode="HTML", disable_web_page_preview=True)
     raw_html = _extract_html_after(message, nl_idx + 1)[:500]
     cleaned, links = extract_links_from_text(raw_html)
-    cleaned = auto_premium(cleaned)
     set_user_about(message.from_user.id, cleaned)
     if links:
         chat_title = message.chat.title or "ЛС"
