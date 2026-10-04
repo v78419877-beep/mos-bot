@@ -2608,7 +2608,57 @@ async def commands_link_cmd(message: types.Message):
         parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
     )
 
+# ================= ИНФОБОТ =================
+@cmd("инфобот")
+async def bot_info_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return await message.reply(
+            f"{em('cross', '❌')} Только владелец.\n🆔 Ваш ID: <code>{message.from_user.id}</code>\n👑 ID владельца: <code>{OWNER_ID}</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    start = datetime.now()
+    sent = await message.reply("🏓 Считаю...")
+    ping_ms = int((datetime.now() - start).total_seconds() * 1000)
+    try: await sent.delete()
+    except: pass
 
+    uptime = datetime.now() - BOT_START_TIME
+    days = uptime.days
+    hours = uptime.seconds // 3600
+    minutes = (uptime.seconds % 3600) // 60
+    if days > 0: uptime_str = f"{days} д. {hours} ч."
+    elif hours > 0: uptime_str = f"{hours} ч. {minutes} мин."
+    else: uptime_str = f"{minutes} мин."
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM users"); total_users = c.fetchone()[0] or 0
+        c.execute("SELECT SUM(count) FROM messages_stats"); total_messages = c.fetchone()[0] or 0
+        c.execute("SELECT COUNT(DISTINCT chat_id) FROM messages_stats"); total_chats = c.fetchone()[0] or 0
+        c.execute("SELECT COUNT(*) FROM agents"); total_agents = c.fetchone()[0] or 0
+        c.execute("SELECT COUNT(*) FROM antispam"); total_antispam = c.fetchone()[0] or 0
+
+    try:
+        db_size = os.path.getsize(DATABASE_PATH)
+        if db_size < 1024: db_size_str = f"{db_size} Б"
+        elif db_size < 1024 * 1024: db_size_str = f"{db_size / 1024:.1f} КБ"
+        else: db_size_str = f"{db_size / (1024 * 1024):.2f} МБ"
+    except:
+        db_size_str = "—"
+
+    text = (
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"⏱ Аптайм: <b>{uptime_str}</b>\n"
+        f"🏓 Пинг: <b>{ping_ms} мс</b>\n"
+        f"💾 База: <b>{db_size_str}</b>\n\n"
+        f"👥 Пользователей: <b>{total_users}</b>\n"
+        f"💬 Сообщений: <b>{total_messages}</b>\n"
+        f"🗂 Чатов: <b>{total_chats}</b>\n"
+        f"🛡 Агентов: <b>{total_agents}</b>\n"
+        f"🚫 В антиспаме: <b>{total_antispam}</b>"
+    )
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    
 @cmd("помощь")
 async def help_cmd(message: types.Message):
     online, offline, statuses = get_agents_status()
