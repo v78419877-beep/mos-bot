@@ -44,8 +44,6 @@ def _match_command(message: types.Message, name_lower: str) -> bool:
     if not txt:
         return False
     txt_lower = txt.lower()
-    if txt_lower == name_lower:
-        return True
     words_needed = name_lower.split()
     words_have = txt_lower.split()
     if len(words_have) < len(words_needed):
@@ -90,21 +88,6 @@ EMOJI = {
     "wallet": "5269472440337078683", "music": "5172447776205702031",
 }
 
-UNICODE_TO_KEY = {
-    "🔇": "mute", "✏️": "pencil", "👋": "wave", "📊": "stats",
-    "🚫": "ban", "🆔": "id", "✅": "check", "🏓": "ping",
-    "❌": "cross", "🗓": "calendar", "🆘": "sos", "⚙️": "gear",
-    "🛡": "shield", "🔑": "key", "👤": "user", "✍️": "write",
-    "📌": "pin", "👽": "alien",
-    "📣": "announce", "👩‍🎨": "artist", "👍": "like", "👎": "dislike",
-    "❤️": "heart", "🎓": "education", "🎨": "art", "🧹": "broom",
-    "💼": "briefcase", "🛠": "wrench", "✂️": "crop", "🔔": "notify",
-    "🏆": "sport", "🎭": "mask", "📱": "qr", "👁": "eye",
-    "👥": "people", "✉️": "envelope", "💳": "card", "🧪": "lab",
-    "💊": "medicine", "🎙": "audio", "🎬": "video", "✔️": "verified",
-    "👛": "wallet", "🎵": "music",
-}
-
 def em(name, fallback="•"):
     eid = EMOJI.get(name)
     if not eid:
@@ -140,9 +123,9 @@ def html_escape_text(text: str) -> str:
 # ================= TELEGRAM ENTITIES → HTML =================
 def entities_to_html(message: types.Message) -> str:
     """
-    Конвертирует текст сообщения с его entities (форматирование Telegram)
-    в HTML-строку. Поддерживает: bold, italic, underline, strikethrough,
-    spoiler, code, pre, blockquote, text_link, custom_emoji.
+    Конвертирует текст сообщения с его entities в HTML.
+    КЛЮЧЕВОЕ: несколько custom_emoji подряд с одинаковым offset группируются
+    в один <tg-emoji>...</tg-emoji> блок.
     """
     if not message.text:
         return ""
@@ -151,25 +134,36 @@ def entities_to_html(message: types.Message) -> str:
     if not entities:
         return html_escape_text(text)
 
-    sorted_ents = sorted(entities, key=lambda e: (e.offset, -e.length))
+    # Сортируем по offset, при равенстве — по length (сначала короткие)
+    sorted_ents = sorted(entities, key=lambda e: (e.offset, e.length))
+
+    # Убираем перекрытия (оставляем самые "внешние" и валидные)
+    cleaned = []
+    for e in sorted_ents:
+        if e.offset < 0 or e.offset + e.length > len(text):
+            continue
+        cleaned.append(e)
 
     def render_range(start: int, end: int, ent_list) -> str:
+        """Рекурсивно рендерит диапазон с учётом вложенных entities."""
         result = []
         pos = start
         inner = [e for e in ent_list if e.offset >= start and e.offset + e.length <= end]
-        top_level = []
+        # Только "верхнеуровневые" внутри диапазона
+        top = []
         for e in inner:
-            if not top_level or e.offset >= top_level[-1].offset + top_level[-1].length:
-                top_level.append(e)
+            if not top or e.offset >= top[-1].offset + top[-1].length:
+                top.append(e)
+            # если перекрывается — пропускаем (некорректный entity)
 
-        for e in top_level:
+        for e in top:
             if e.offset > pos:
                 result.append(html_escape_text(text[pos:e.offset]))
+            raw = text[e.offset:e.offset + e.length]
             inner_text = render_range(
                 e.offset, e.offset + e.length,
                 [x for x in inner if x is not e]
             )
-            raw = text[e.offset:e.offset + e.length]
 
             if e.type == "bold":
                 result.append(f"<b>{inner_text}</b>")
@@ -209,14 +203,11 @@ def entities_to_html(message: types.Message) -> str:
             result.append(html_escape_text(text[pos:end]))
         return "".join(result)
 
-    return render_range(0, len(text), sorted_ents).strip()
+    return render_range(0, len(text), cleaned).strip()
 
 
 def entities_to_html_from(message: types.Message, char_index: int) -> str:
-    """
-    Конвертирует в HTML часть сообщения начиная с char_index
-    (с сохранением форматирования Telegram-entities).
-    """
+    """HTML части сообщения начиная с char_index."""
     if not message.text:
         return ""
     text = message.text
@@ -254,12 +245,10 @@ def entities_to_html_from(message: types.Message, char_index: int) -> str:
 
 
 def text_with_premium_emoji(message: types.Message) -> str:
-    """Возвращает HTML-текст сообщения с заменой премиум-эмодзи на <tg-emoji>."""
     return entities_to_html(message)
 
 
 def _extract_html_after(message: types.Message, char_index: int) -> str:
-    """HTML-текст, начиная с char_index, с сохранением форматирования Telegram."""
     return entities_to_html_from(message, char_index)
 
 
@@ -2050,8 +2039,21 @@ LINK_PATTERN = re.compile(r'\[([^\]]+)\]\((https?://[^\s\)]+)\)|\{(https?://[^\s
 PLACEHOLDER = "[ссылка на проверке]"
 
 def extract_links_from_text(text: str):
+    """Извлекает ссылки, защищая уже существующие HTML-теги от порчи."""
     if not text:
         return text, []
+
+    # Защищаем существующие HTML-теги <tg-emoji>, <a>, <b>, <code> и т.д.
+    protected = []
+    def _protect(match):
+        protected.append(match.group(0))
+        return f"\x00LINKPROT{len(protected)-1}\x00"
+
+    text = re.sub(
+        r'<(tg-emoji|a|b|i|u|s|code|pre|blockquote|tg-spoiler)\b[^>]*>.*?</\1>',
+        _protect, text, flags=re.DOTALL
+    )
+
     links = []
     def replacer(match):
         if match.group(1) and match.group(2):
@@ -2062,7 +2064,13 @@ def extract_links_from_text(text: str):
             link_text = link_url
         links.append({"text": link_text, "url": link_url})
         return PLACEHOLDER
+
     cleaned = LINK_PATTERN.sub(replacer, text)
+
+    # Восстанавливаем защищённые теги
+    for i, p in enumerate(protected):
+        cleaned = cleaned.replace(f"\x00LINKPROT{i}\x00", p)
+
     return cleaned, links
 
 def save_pending_links(source_type, source_chat_id, source_key, links, submitted_by):
@@ -4061,13 +4069,18 @@ async def remove_ignore_only(message: types.Message):
 
 # ================= ПРАВИЛА =================
 @cmd("правила")
+@cmd("rules")
 async def rules_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         rules = get_chat_rules(message.chat.id)
         if not rules:
             return await message.reply("📭 Правила не установлены.", parse_mode="HTML", disable_web_page_preview=True)
-        return await message.reply(f"📜 <b>Правила чата:</b>\n\n{rules}", parse_mode="HTML", disable_web_page_preview=True)
+        try:
+            return await message.reply(f"📜 <b>Правила чата:</b>\n\n{rules}", parse_mode="HTML", disable_web_page_preview=True)
+        except Exception as e:
+            print(f"❌ Ошибка вывода правил: {e}")
+            return await message.reply(f"📜 Правила чата:\n\n{rules}", disable_web_page_preview=True)
     sub = args[1].strip().lower()
     if sub.startswith("установить"):
         if not has_permission(message.chat.id, message.from_user.id, 3):
@@ -4101,9 +4114,14 @@ async def rules_cmd(message: types.Message):
         except Exception as e:
             return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
         return
+    # Если sub — не команда, просто показываем правила
     rules = get_chat_rules(message.chat.id)
     if rules:
-        await message.reply(f"📜 <b>Правила:</b>\n\n{rules}", parse_mode="HTML", disable_web_page_preview=True)
+        try:
+            await message.reply(f"📜 <b>Правила:</b>\n\n{rules}", parse_mode="HTML", disable_web_page_preview=True)
+        except Exception as e:
+            print(f"❌ Ошибка: {e}")
+            await message.reply(f"📜 Правила:\n\n{rules}", disable_web_page_preview=True)
 
 # ================= ФИЛЬТР ССЫЛОК =================
 @cmd("фильтрссылок")
@@ -4137,7 +4155,7 @@ async def greeting_cmd(message: types.Message):
     if not sub:
         current = get_greeting(message.chat.id)
         if not current:
-            return await message.reply("📭 Приветствие не установлено.\n\n📌 <code>.приветствие установить</code>\n\n🔤 Плейсхолдеры: <code>{name}</code>, <code>{chat}</code>, <code>{rules}</code>, <code>{link}</code>\n🔗 Ссылки: <code>[текст](url)</code> или <code>{url}</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📭 Приветствие не установлено.\n\n📌 <code>.приветствие установить</code>\n\n🔤 Плейсхолдеры: <code>{name}</code>, <code>{chat}</code>, <code>{rules}</code>, <code>{link}</code>", parse_mode="HTML", disable_web_page_preview=True)
         return await message.reply(f"📜 <b>Текущее:</b>\n\n<code>{current}</code>", parse_mode="HTML", disable_web_page_preview=True)
     if sub.startswith("установить"):
         parts = message.text.split("\n", 1)
@@ -4687,22 +4705,8 @@ async def create_note_cmd(message: types.Message):
     nl_idx = message.text.find("\n")
     raw_body_html = _extract_html_after(message, nl_idx + 1)[:3500]
 
-    # ============ ДИАГНОСТИКА ============
-    print("=" * 60)
-    print("🔍 RAW TEXT:", repr(message.text))
-    print("🔍 ENTITIES:", message.entities)
-    for e in (message.entities or []):
-        print(f"   → type={e.type}, offset={e.offset}, length={e.length}, cid={getattr(e,'custom_emoji_id',None)}")
-    print("🔍 AFTER _extract_html_after:", repr(raw_body_html))
-    # ====================================
-
     cleaned_body, links = extract_links_from_text(raw_body_html)
     note_id = add_note(message.chat.id, name, cleaned_body, message.from_user.id)
-
-    # ============ ДИАГНОСТИКА ============
-    print("🔍 SAVED TO DB:", repr(cleaned_body))
-    print("=" * 60)
-    # ====================================
 
     if not note_id:
         return await message.reply(f"{em('cross', '❌')} Заметка уже есть.", parse_mode="HTML", disable_web_page_preview=True)
@@ -4755,18 +4759,6 @@ async def get_note_cmd(message: types.Message):
         return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML", disable_web_page_preview=True)
 
     note_text = note[2]
-
-    import re as _re
-    for _ in range(5):
-        new_text = _re.sub(
-            r'<tg-emoji emoji-id="(\d+)">\s*<tg-emoji emoji-id="\d+">([^<]*)</tg-emoji>\s*</tg-emoji>',
-            r'<tg-emoji emoji-id="\1">\2</tg-emoji>',
-            note_text
-        )
-        if new_text == note_text:
-            break
-        note_text = new_text
-
     try:
         await message.reply(note_text, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
@@ -6043,7 +6035,6 @@ async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot:
         return
 
-    # ===== ФИЛЬТР ССЫЛОК =====
     if message.chat.type in ["group", "supergroup"]:
         if is_link_filter_enabled(message.chat.id):
             is_staff = (
@@ -6088,7 +6079,6 @@ async def all_messages(message: types.Message):
                     pass
                 return
 
-    # ===== ОБЫЧНАЯ ЛОГИКА =====
     try:
         member = await bot.get_chat_member(message.chat.id, message.from_user.id)
         if member.status == "creator":
@@ -6113,7 +6103,6 @@ async def all_messages(message: types.Message):
         )
         conn.commit()
 
-    # РП-команды
     if message.text and not message.text.startswith(('.', '+', '-', '!', '/')):
         txt = message.text.strip()
         with sqlite3.connect(DATABASE_PATH) as conn:
