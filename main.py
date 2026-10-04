@@ -4668,6 +4668,19 @@ async def list_rp_cmd(message: types.Message):
     text += f"\n\n📌 <code>.обнять @user</code> или ответом"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
+
+@dp.message(lambda m: m.text and m.text.lower().strip().startswith("-мрп"))
+async def delete_rp_cmd(message: types.Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return
+    name = args[1].strip()
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM rp_commands WHERE chat_id = ? AND name = ? AND created_by = ?",
+                  (message.chat.id, name, message.from_user.id))
+        conn.commit()
+    await message.reply(f"{em('check', '✅')} Удалено.", parse_mode="HTML", disable_web_page_preview=True)
+
 # ================= +ГМРП =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+гмрп\b', m.text.strip(), re.IGNORECASE))
 async def create_global_rp_cmd(message: types.Message):
@@ -4712,20 +4725,6 @@ async def create_global_rp_cmd(message: types.Message):
             )
         except Exception as e:
             return await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("-мрп"))
-async def delete_rp_cmd(message: types.Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2: return
-    name = args[1].strip()
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM rp_commands WHERE chat_id = ? AND name = ? AND created_by = ?",
-                  (message.chat.id, name, message.from_user.id))
-        conn.commit()
-    await message.reply(f"{em('check', '✅')} Удалено.", parse_mode="HTML", disable_web_page_preview=True)
-
 
 # ================= ПРАВИЛА =================
 @cmd("правила")
