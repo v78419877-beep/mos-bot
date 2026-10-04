@@ -4598,27 +4598,58 @@ async def standard_rp_handler(message: types.Message):
     )
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("+мрп"))
+# ================= +МРП =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+мрп\b', m.text.strip(), re.IGNORECASE))
 async def create_rp_cmd(message: types.Message):
     if not get_vip(message.from_user.id):
         return await message.reply(f"{em('cross', '❌')} Только VIP.", parse_mode="HTML", disable_web_page_preview=True)
-    parts = message.text.split("/", 2)
+
+    # Убираем . / ! и +мрп
+    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
+    raw = re.sub(r'^\+мрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
+
+    # Формат: Название / 😀 / текст
+    parts = raw.split("/", 2)
     if len(parts) < 3:
-        return await message.reply("📌 <code>+Мрп Название / 😀 / текст</code>", parse_mode="HTML", disable_web_page_preview=True)
-    name = parts[0].replace("+Мрп", "").replace("+мрп", "").strip()[:30]
+        return await message.reply(
+            "📌 <b>Формат:</b>\n"
+            "<code>+мрп ущипнуть / 🤏 / ущипнул</code>\n\n"
+            "💡 Текст автоматически подставит <b>автора</b> и <b>цель</b>:\n"
+            "→ <i>Иван ущипнул Петю</i>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    name = parts[0].strip().lower()[:30]
     emoji = parts[1].strip()[:5]
-    first_slash = message.text.find("/")
-    second_slash = message.text.find("/", first_slash + 1)
-    text_html = _extract_html_after(message, second_slash + 1)[:300] if second_slash != -1 else ""
+    action_text = parts[2].strip()[:300]
+
+    if not name or not emoji or not action_text:
+        return await message.reply("❌ Заполни все 3 поля.", parse_mode="HTML", disable_web_page_preview=True)
+
+    # Автоподстановка {actor} и {target}, если их нет в тексте
+    if "{actor}" not in action_text and "{target}" not in action_text:
+        # Строим текст: {actor} + действие + {target}
+        # Но если пользователь написал что-то с глаголом, вставляем в конец
+        full_text = f"{{actor}} {action_text} {{target}}"
+    else:
+        full_text = action_text
+
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         try:
             c.execute("INSERT INTO rp_commands (chat_id, name, emoji, text, created_by) VALUES (?, ?, ?, ?, ?)",
-                      (message.chat.id, name, emoji, text_html, message.from_user.id))
+                      (message.chat.id, name, emoji, full_text, message.from_user.id))
             conn.commit()
-            await message.reply(f"{em('check', '✅')} РП: {emoji} <b>{name}</b>", parse_mode="HTML", disable_web_page_preview=True)
-        except:
-            await message.reply(f"{em('cross', '❌')} Уже есть.", parse_mode="HTML", disable_web_page_preview=True)
+            await message.reply(
+                f"{em('check', '✅')} РП <b>{emoji} {name}</b> создано!\n\n"
+                f"📝 Шаблон: {full_text}\n\n"
+                f"📌 Проверить: <code>{name}</code> (ответом на юзера)",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+        except sqlite3.IntegrityError:
+            return await message.reply(f"{em('cross', '❌')} Уже есть. Удалить: <code>-мрп {name}</code>", parse_mode="HTML", disable_web_page_preview=True)
+        except Exception as e:
+            return await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("мрп")
@@ -4636,6 +4667,51 @@ async def list_rp_cmd(message: types.Message):
     text += f"<b>🌐 Стандартные ({len(STANDARD_RP)}):</b>\n  " + ", ".join(f"<code>{n}</code>" for n in list(STANDARD_RP.keys())[:30])
     text += f"\n\n📌 <code>.обнять @user</code> или ответом"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+# ================= +ГМРП =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+гмрп\b', m.text.strip(), re.IGNORECASE))
+async def create_global_rp_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 4):
+        return await message.reply(f"{em('cross', '❌')} Только владелец или Гл. Агент.", parse_mode="HTML", disable_web_page_preview=True)
+
+    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
+    raw = re.sub(r'^\+гмрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
+
+    parts = raw.split("/", 2)
+    if len(parts) < 3:
+        return await message.reply(
+            "📌 <b>Формат:</b>\n"
+            "<code>+гмрп ущипнуть / 🤏 / ущипнул</code>\n\n"
+            "💡 Автор и цель подставляются автоматически.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    name = parts[0].strip().lower()[:30]
+    emoji = parts[1].strip()[:5]
+    action_text = parts[2].strip()[:300]
+
+    if not name or not emoji or not action_text:
+        return await message.reply("❌ Заполни все 3 поля.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if "{actor}" not in action_text and "{target}" not in action_text:
+        full_text = f"{{actor}} {action_text} {{target}}"
+    else:
+        full_text = action_text
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        try:
+            c.execute("INSERT OR REPLACE INTO global_rp_commands (user_id, name, emoji, text, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+                      (message.from_user.id, name, emoji, full_text))
+            conn.commit()
+            await message.reply(
+                f"{em('check', '✅')} Глобальное РП <b>{emoji} {name}</b> создано!\n\n"
+                f"📝 Шаблон: {full_text}\n\n"
+                f"🌐 Работает во всех чатах бота.",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+        except Exception as e:
+            return await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("-мрп"))
