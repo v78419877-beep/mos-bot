@@ -298,7 +298,7 @@ DEFAULT_ACCESS = {
 }
 
 
-# ================= АЛИАСЫ КОМАНД (для ДК) =================
+# ================= АЛИАСЫ КОМАНД =================
 ALIASES = {
     "рыба": "рыбалка",
     "рыбачить": "рыбалка",
@@ -541,7 +541,6 @@ def has_permission(chat_id, user_id, required_rank):
     return get_rank(chat_id, user_id) >= required_rank
 
 
-# ================= ДК (доступы к командам) =================
 def get_command_access(chat_id, command):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -617,36 +616,22 @@ async def check_command_access(message, command):
 
     if access == -1:
         if notify:
-            await message.reply(
-                f"{em('cross', '❌')} Команда отключена администрацией чата.",
-                parse_mode="HTML", disable_web_page_preview=True
-            )
+            await message.reply(f"{em('cross', '❌')} Команда отключена администрацией чата.", parse_mode="HTML", disable_web_page_preview=True)
         return False
-
     if access == -2:
         if notify:
-            await message.reply(
-                f"{em('cross', '❌')} Команда доступна только создателю чата.",
-                parse_mode="HTML", disable_web_page_preview=True
-            )
+            await message.reply(f"{em('cross', '❌')} Команда доступна только создателю чата.", parse_mode="HTML", disable_web_page_preview=True)
         return False
-
     if access == 0:
         return True
-
     if has_permission(chat_id, user_id, access):
         return True
-
     if notify:
-        await message.reply(
-            f"{em('cross', '❌')} Недостаточно прав.\n"
-            f"🔒 Нужен ранг: <b>{RANK_NAMES.get(access, access)}</b> или выше.",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
+        await message.reply(f"{em('cross', '❌')} Недостаточно прав.\n🔒 Нужен ранг: <b>{RANK_NAMES.get(access, access)}</b> или выше.", parse_mode="HTML", disable_web_page_preview=True)
     return False
 
 
-# ================= РАНГИ АГЕНТОВ =================
+# ================= АГЕНТЫ =================
 def is_agent(user_id):
     if user_id == OWNER_ID:
         return False
@@ -688,7 +673,6 @@ def has_agent_rank(user_id, min_rank):
     return get_agent_rank(user_id) >= min_rank
 
 
-# ================= СКРЫТЫЕ АГЕНТЫ =================
 def is_hidden_agent(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -714,7 +698,10 @@ def get_hidden_agents():
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT user_id FROM hidden_agents")
-        return [r[0] for r in c.fetchall()]# ================= АНТИСПАМ =================
+        return [r[0] for r in c.fetchall()]
+
+
+# ================= АНТИСПАМ =================
 def is_in_antispam(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -904,10 +891,7 @@ async def delete_later(message: types.Message, seconds: int = 60):
     try:
         await message.delete()
     except:
-        pass
-
-
-# ================= АВТОМОДЕРАЦИЯ =================
+        pass# ================= АВТОМОДЕРАЦИЯ =================
 BAD_WORDS = [
     "блять", "блядь", "блят", "бля", "сука", "сучка", "сучонок",
     "хуй", "хуя", "хую", "хуе", "хуё", "хуи", "хуйн", "хуйня", "хуёв",
@@ -1090,7 +1074,7 @@ async def apply_automod_punishment(chat_id, user_id, rule_name, settings):
     return None
 
 
-# ================= ИСТОРИЯ АНТИСПАМА =================
+# ================= АНТИСПАМ ИСТОРИЯ =================
 def log_antispam_action(user_id, action, reason, admin_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1128,7 +1112,7 @@ def cancel_last_antispam_add(user_id):
     return reason
 
 
-# ================= РАНГИ В СЕТКЕ =================
+# ================= РАНГ В СЕТКЕ =================
 def set_grid_user_rank(grid_id, user_id, rank, added_by):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1153,7 +1137,7 @@ def remove_grid_user_rank(grid_id, user_id):
         conn.commit()
 
 
-# ================= СТАТИСТИКА БАНОВ =================
+# ================= БАНЫ =================
 def get_all_user_bans(user_id):
     now = datetime.now().isoformat()
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -1214,7 +1198,6 @@ def get_global_stars_per_candy():
 def set_global_stars_per_candy(value):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("CREATE TABLE IF NOT EXISTS global_settings (key TEXT PRIMARY KEY, value TEXT)")
         c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES ('stars_per_candy', ?)", (str(value),))
         conn.commit()
 
@@ -1383,7 +1366,10 @@ def get_inactive_users(chat_id, days=7, limit=30):
             ORDER BY last_date ASC
             LIMIT ?
         """, (chat_id, cutoff, limit))
-        return c.fetchall()# ================= КОНФЕТКИ =================
+        return c.fetchall()
+
+
+# ================= КОНФЕТКИ =================
 def get_balance(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1507,7 +1493,7 @@ def add_chat_coins(chat_id, amount):
         conn.commit()
 
 
-# ================= АГЕНТЫ — СТАТУС =================
+# ================= АГЕНТЫ - СТАТУС =================
 def update_agent_activity(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1834,10 +1820,7 @@ def count_pending_reports(source_chat_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM reports WHERE source_chat_id = ? AND status = 'pending'", (source_chat_id,))
-        return c.fetchone()[0] or 0
-
-
-# ================= РЫБАЛКА 2.0 =================
+        return c.fetchone()[0] or 0# ================= РЫБАЛКА =================
 FISH_LIST = [
     ("Окунь", "🐟", 1, 3, 100),
     ("Карась", "🐠", 2, 5, 90),
@@ -2125,7 +2108,6 @@ def update_legendary_count(user_id):
         conn.commit()
 
 
-# ================= ХРАНИЛИЩЕ РЫБЫ =================
 def get_fish_storage(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2176,17 +2158,14 @@ def get_fish_price(fish_name):
             elif weight >= 3: return price + 5
             elif weight >= 0.5: return price + 10
             else: return price + 20
-
     for fish in LEGENDARY_FISH:
         if fish[0] == fish_name:
             min_r, max_r = fish[2], fish[3]
             avg = (min_r + max_r) // 2
             return max(50, avg // 10)
-
     return 5
 
 
-# ================= ТУРНИРЫ =================
 def get_active_tournament(chat_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2250,7 +2229,7 @@ def end_tournament(chat_id):
     return winners
 
 
-# ================= СТАНДАРТНЫЕ РП-КОМАНДЫ =================
+# ================= СТАНДАРТНЫЕ РП =================
 STANDARD_RP = {
     "обнять": {"emoji": "🤗", "text": "{actor} крепко обнял(а) {target} 💞", "self_text": "{actor} обнял(а) самого себя 🤗"},
     "поцеловать": {"emoji": "💋", "text": "{actor} нежно поцеловал(а) {target} 💕", "self_text": "{actor} поцеловал(а) себя в зеркало 💋"},
@@ -2398,7 +2377,7 @@ def remove_grid_mute(grid_id, user_id):
         conn.commit()
 
 
-# ================= БРАКИ =================
+# ================= БРАКИ (DB) =================
 def get_marriage(chat_id, user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2652,7 +2631,7 @@ def delete_achievement(aid):
         conn.commit()
 
 
-# ================= УПРАВЛЕНИЕ ЧАТОМ =================
+# ================= ЧАТ НАСТРОЙКИ =================
 def update_chat_setting(chat_id, field, value):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -3362,7 +3341,67 @@ async def bot_info_cmd(message: types.Message):
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= .ПРОФИЛЬ =================
+# ================= МОЙ ПОЛ (ИСПРАВЛЕНО) =================
+@dp.message(lambda m: m.text and re.match(r'^мой\s+пол\s+\S+', m.text.strip(), re.IGNORECASE))
+async def set_gender_cmd(message: types.Message):
+    parts = message.text.strip().split(maxsplit=2)
+    if len(parts) < 3:
+        return await message.reply(
+            "📌 <code>мой пол М</code> или <code>мой пол Ж</code>",
+            parse_mode="HTML"
+        )
+    v = parts[2].strip().lower()
+    if v in ["м", "муж", "мужской"]: v = "Мужской"
+    elif v in ["ж", "жен", "женский"]: v = "Женский"
+    else: v = "Другой"
+    update_user_profile(message.from_user.id, "gender", v)
+    await message.reply(f"✅ Пол: <b>{v}</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() == "-мой пол")
+async def remove_gender_cmd(message: types.Message):
+    update_user_profile(message.from_user.id, "gender", None)
+    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= МОЙ ДР (ИСПРАВЛЕНО) =================
+@dp.message(lambda m: m.text and re.match(r'^мой\s+др\s+\S+', m.text.strip(), re.IGNORECASE))
+async def set_birth_cmd(message: types.Message):
+    parts = message.text.strip().split()
+    if len(parts) < 3:
+        return await message.reply(
+            "📌 <code>мой др 01.01.2000</code>",
+            parse_mode="HTML"
+        )
+    date = parts[2].strip()
+    vis = parts[3].lower() if len(parts) >= 4 else "месяц"
+    update_user_profile(message.from_user.id, "birth_date", date)
+    update_user_profile(message.from_user.id, "birth_visibility", vis)
+    await message.reply(f"✅ ДР: <b>{date}</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() == "-мой др")
+async def remove_birth_cmd(message: types.Message):
+    update_user_profile(message.from_user.id, "birth_date", None)
+    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= МОЙ ГОРОД =================
+@dp.message(lambda m: m.text and m.text.lower().strip().startswith("!мой город"))
+async def set_city_cmd(message: types.Message):
+    args = message.text.split(maxsplit=2)
+    if len(args) < 3: return
+    update_user_profile(message.from_user.id, "city", args[2].strip()[:50])
+    await message.reply(f"✅ Город: <b>{args[2].strip()[:50]}</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() == "-мой город")
+async def remove_city_cmd(message: types.Message):
+    update_user_profile(message.from_user.id, "city", None)
+    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= ПРОФИЛЬ (VIP-эмодзи здесь!) =================
 @cmd("профиль")
 async def profile_cmd(message: types.Message):
     target = None
@@ -3423,6 +3462,7 @@ async def profile_cmd(message: types.Message):
         cit_duration = format_citizenship_duration(cit_date)
         cit_line = f"🏠 Гражданин «{cit_title}» {cit_duration}"
 
+    # VIP-эмодзи ТОЛЬКО здесь
     vip_emoji = get_vip_emoji(target.id)
 
     user_ach = get_user_achievements(target.id, message.chat.id)
@@ -3477,6 +3517,104 @@ async def profile_cmd(message: types.Message):
             caption=text,
             parse_mode="HTML"
         )
+    else:
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= АНКЕТА (ИСПРАВЛЕНО — роли и ачивки, БЕЗ VIP-эмодзи) =================
+@cmd("анкета")
+async def profile_full_cmd(message: types.Message):
+    target = None
+    if message.reply_to_message:
+        target = message.reply_to_message.from_user
+    else:
+        args = message.text.split()
+        if len(args) >= 2:
+            try:
+                if args[1].startswith('@'): target = await bot.get_chat(args[1])
+                elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
+            except: pass
+    if not target: target = message.from_user
+
+    register_user(target.id, target.first_name, target.username or "")
+    user_info = get_user_info(target.id)
+    if not user_info:
+        first_seen = datetime.now()
+    else:
+        try: first_seen = datetime.strptime(user_info[0], "%Y-%m-%d %H:%M:%S")
+        except: first_seen = datetime.now()
+
+    profile = get_user_profile(target.id)
+    gender, birth_date, city, bio, is_hidden, birth_visibility, motto, show_cit = profile
+
+    viewer_id = message.from_user.id
+    is_owner_viewer = (viewer_id == OWNER_ID)
+    is_agent_viewer = is_agent(viewer_id)
+    is_self = (viewer_id == target.id)
+    can_see_full = is_owner_viewer or is_agent_viewer or is_self or (not is_hidden)
+    if not can_see_full:
+        return await message.reply(f"🔒 {mention(target)} скрыл анкету.", parse_mode="HTML", disable_web_page_preview=True)
+
+    day, week, month, total = get_activity_stats(target.id)
+
+    # === РОЛИ ===
+    role_line = ""
+    if target.id == OWNER_ID:
+        role_line = "👑 <b>Владелец бота</b>"
+    elif get_rank(message.chat.id, target.id) == 5:
+        role_line = "⚜️ <b>Владелец чата</b>"
+    elif is_bot_promoted(target.id, message.chat.id):
+        role_line = "🛡 <b>Telegram-админ</b>"
+    elif is_agent(target.id):
+        role_line = "🛡 <b>Агент поддержки Mos</b>"
+
+    # === АЧИВКИ ===
+    user_ach = get_user_achievements(target.id, message.chat.id)
+    ach_text = ""
+    if user_ach:
+        ach_text = " ".join([f"{a[2]}{a[1]}" for a in user_ach])
+
+    # === ГРАЖДАНСТВО ===
+    cit_line = ""
+    cit = get_citizenship_info(target.id)
+    if cit and (show_cit or is_owner_viewer or is_agent_viewer or is_self):
+        cit_chat_id, cit_date = cit
+        try:
+            cit_chat = await bot.get_chat(cit_chat_id)
+            cit_title = cit_chat.title or "Чат"
+        except: cit_title = "Чат"
+        cit_line = f"\n🏠 Гражданин «{cit_title}» {format_citizenship_duration(cit_date)}"
+
+    reg_date = first_seen.strftime("%d.%m.%Y")
+    time_in = format_time_since(first_seen.strftime("%Y-%m-%d"))
+
+    # БЕЗ VIP-эмодзи здесь
+    text = (
+        f"👤 <b>Это {mention(target)}</b>\n"
+        f"🆔 <code>{target.id}</code>\n"
+    )
+    if role_line:
+        text += f"{role_line}\n"
+    text += (
+        f"\n⏱ В Mos с {reg_date} ({time_in})\n"
+        f"👨 Пол: {gender or '—'}\n"
+        f"📆 ДР: {birth_date or '—'}\n"
+        f"🗺 Город: {city or '—'}\n"
+        f"📊 Активность: {format_number(day)}|{format_number(week)}|{format_number(month)}|{format_number(total)}"
+        f"{cit_line}"
+    )
+    if ach_text:
+        text += f"\n\n🎖 <b>Ачивки:</b> {ach_text}"
+    if motto:
+        text += f"\n\n💭 {motto}"
+    if bio:
+        text += f"\n\n📝 {bio}"
+
+    chart = None
+    try: chart = generate_user_activity_chart(target.id, days=30)
+    except: pass
+    if chart:
+        await message.reply_photo(photo=types.BufferedInputFile(chart.getvalue(), filename="anketa.png"), caption=text, parse_mode="HTML")
     else:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
@@ -5169,7 +5307,6 @@ async def fishing_cmd(message: types.Message):
                     chosen = fish
                     break
             fish_name, fish_emoji, min_r, max_r, _ = chosen
-            reward = 0
             update_legendary_count(user_id)
             legendary_text = "\n\n💎 <b>ЛЕГЕНДАРНАЯ РЫБА!</b>"
         else:
@@ -5183,7 +5320,6 @@ async def fishing_cmd(message: types.Message):
                     chosen = fish
                     break
             fish_name, fish_emoji, min_r, max_r, _ = chosen
-            reward = 0
             legendary_text = ""
 
         add_fish_to_storage(user_id, fish_name, fish_emoji, 1)
@@ -5901,56 +6037,6 @@ async def show_motto_cmd(message: types.Message):
     await message.reply(f"💭 {motto}", parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= АНКЕТА =================
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("мой пол"))
-async def set_gender_cmd(message: types.Message):
-    args = message.text.split(maxsplit=2)
-    if len(args) < 3: return
-    v = args[2].strip().lower()
-    if v in ["м", "муж", "мужской"]: v = "Мужской"
-    elif v in ["ж", "жен", "женский"]: v = "Женский"
-    else: v = "Другой"
-    update_user_profile(message.from_user.id, "gender", v)
-    await message.reply(f"✅ Пол: <b>{v}</b>", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip() == "-мой пол")
-async def remove_gender_cmd(message: types.Message):
-    update_user_profile(message.from_user.id, "gender", None)
-    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("!мой город"))
-async def set_city_cmd(message: types.Message):
-    args = message.text.split(maxsplit=2)
-    if len(args) < 3: return
-    update_user_profile(message.from_user.id, "city", args[2].strip()[:50])
-    await message.reply(f"✅ Город: <b>{args[2].strip()[:50]}</b>", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip() == "-мой город")
-async def remove_city_cmd(message: types.Message):
-    update_user_profile(message.from_user.id, "city", None)
-    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("мой др"))
-async def set_birth_cmd(message: types.Message):
-    args = message.text.split()
-    if len(args) < 3: return
-    date = args[2].strip()
-    vis = args[3].lower() if len(args) >= 4 else "месяц"
-    update_user_profile(message.from_user.id, "birth_date", date)
-    update_user_profile(message.from_user.id, "birth_visibility", vis)
-    await message.reply(f"✅ ДР: <b>{date}</b>", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip() == "-мой др")
-async def remove_birth_cmd(message: types.Message):
-    update_user_profile(message.from_user.id, "birth_date", None)
-    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
-
-
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+анкета", "+ анкета"])
 async def show_profile_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "is_hidden", 0)
@@ -5961,75 +6047,6 @@ async def show_profile_cmd(message: types.Message):
 async def hide_profile_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "is_hidden", 1)
     await message.reply("✅ Анкета скрыта.", parse_mode="HTML", disable_web_page_preview=True)
-
-
-# ================= АНКЕТА ПРОСМОТР =================
-@cmd("анкета")
-async def profile_full_cmd(message: types.Message):
-    target = None
-    if message.reply_to_message: target = message.reply_to_message.from_user
-    else:
-        args = message.text.split()
-        if len(args) >= 2:
-            try:
-                if args[1].startswith('@'): target = await bot.get_chat(args[1])
-                elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
-            except: pass
-    if not target: target = message.from_user
-
-    register_user(target.id, target.first_name, target.username or "")
-    user_info = get_user_info(target.id)
-    if not user_info: first_seen = datetime.now()
-    else:
-        try: first_seen = datetime.strptime(user_info[0], "%Y-%m-%d %H:%M:%S")
-        except: first_seen = datetime.now()
-
-    profile = get_user_profile(target.id)
-    gender, birth_date, city, bio, is_hidden, birth_visibility, motto, show_cit = profile
-
-    viewer_id = message.from_user.id
-    is_owner_viewer = (viewer_id == OWNER_ID)
-    is_agent_viewer = is_agent(viewer_id)
-    is_self = (viewer_id == target.id)
-    can_see_full = is_owner_viewer or is_agent_viewer or is_self or (not is_hidden)
-    if not can_see_full:
-        return await message.reply(f"🔒 {mention(target)} скрыл анкету.", parse_mode="HTML", disable_web_page_preview=True)
-
-    day, week, month, total = get_activity_stats(target.id)
-    cit = get_citizenship_info(target.id)
-    cit_line = ""
-    if cit and (show_cit or is_owner_viewer or is_agent_viewer or is_self):
-        cit_chat_id, cit_date = cit
-        try:
-            cit_chat = await bot.get_chat(cit_chat_id)
-            cit_title = cit_chat.title or "Чат"
-        except: cit_title = "Чат"
-        cit_line = f"\n🏠 Гражданин «{cit_title}» {format_citizenship_duration(cit_date)}"
-
-    reg_date = first_seen.strftime("%d.%m.%Y")
-    time_in = format_time_since(first_seen.strftime("%Y-%m-%d"))
-    vip_emoji = get_vip_emoji(target.id)
-
-    text = (
-        f"👤 <b>Это {vip_emoji}{mention(target)}{vip_emoji}</b>\n"
-        f"🆔 <code>{target.id}</code>\n\n"
-        f"⏱ В Mos с {reg_date} ({time_in})\n"
-        f"👨 Пол: {gender or '—'}\n"
-        f"📆 ДР: {birth_date or '—'}\n"
-        f"🗺 Город: {city or '—'}\n"
-        f"📊 Активность: {format_number(day)}|{format_number(week)}|{format_number(month)}|{format_number(total)}"
-        f"{cit_line}"
-    )
-    if motto: text += f"\n\n💭 {motto}"
-    if bio: text += f"\n\n📝 {bio}"
-
-    chart = None
-    try: chart = generate_user_activity_chart(target.id, days=30)
-    except: pass
-    if chart:
-        await message.reply_photo(photo=types.BufferedInputFile(chart.getvalue(), filename="anketa.png"), caption=text, parse_mode="HTML")
-    else:
-        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("моя стата")
@@ -6473,7 +6490,7 @@ async def backup_cmd(message: types.Message):
         await message.reply(f"❌ {e}", disable_web_page_preview=True)
 
 
-# ================= ИМПОРТ БАЗЫ =================
+# ================= ИМПОРТ =================
 @dp.message(lambda m: m.text and m.text.strip().lower() in [".импорт", "/импорт", "!импорт"])
 async def import_db_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID:
@@ -6495,7 +6512,6 @@ async def import_db_cmd(message: types.Message):
         return await message.reply(f"{em('cross', '❌')} Файл больше 20 МБ.", parse_mode="HTML", disable_web_page_preview=True)
 
     status_msg = await message.reply("📥 Скачиваю файл...")
-
     temp_path = f"temp_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
 
     try:
@@ -6565,17 +6581,13 @@ async def import_db_cmd(message: types.Message):
         await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")
 
 
-# ================= ВОССТАНОВЛЕНИЕ БАЗЫ =================
 @dp.message(Command("restore"))
 @dp.message(lambda m: m.text and m.text.strip().lower() in [".restore", ".dbimport", "!restore"])
 async def restore_db_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID:
         return await message.reply("❌ Только владелец.", parse_mode="HTML")
     if not message.reply_to_message or not message.reply_to_message.document:
-        return await message.reply(
-            "📌 Ответь на <code>.db</code> файл командой <code>/restore</code>",
-            parse_mode="HTML"
-        )
+        return await message.reply("📌 Ответь на <code>.db</code> файл командой <code>/restore</code>", parse_mode="HTML")
     doc = message.reply_to_message.document
     if not doc.file_name.lower().endswith(".db"):
         return await message.reply("❌ Только .db", parse_mode="HTML")
@@ -6915,13 +6927,6 @@ async def on_bot_added(event: types.ChatMemberUpdated):
         try:
             await bot.send_message(chat_id, f"👋 Я <b>{BOT_NAME}</b>!\n⚙️ Дайте права администратора.\n🆘 {SUPPORT_CHAT_LINK}", parse_mode="HTML")
         except: pass
-
-
-# ================= BUSINESS =================
-@dp.business_connection()
-async def on_business_connection(connection: types.BusinessConnection):
-    if connection.is_enabled:
-        save_business_connection(connection.user.id, connection.id)
 
 
 # ================= ФОНОВЫЕ ЗАДАЧИ =================
