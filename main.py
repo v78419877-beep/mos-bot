@@ -6491,6 +6491,38 @@ async def backup_cmd(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ {e}", disable_web_page_preview=True)
 
+@dp.message(lambda m: m.text and m.text.lower().strip() == "брак")
+async def marriage_bare_cmd(message: types.Message):
+    if not message.reply_to_message:
+        return await message.reply(
+            "💍 <b>Как жениться:</b>\n\n"
+            "• Ответь на сообщение юзера: <code>брак</code>\n"
+            "• Или напиши: <code>брак @username</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    target = message.reply_to_message.from_user
+    if target.id == message.from_user.id:
+        return
+    if target.is_bot:
+        return await message.reply("❌ Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, message.from_user.id):
+        return await message.reply("❌ Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, target.id):
+        return await message.reply(f"❌ {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    div = get_divorced_marriage(message.chat.id, message.from_user.id)
+    if div:
+        restore_marriage(div[0])
+        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
+    add_proposal(message.chat.id, message.from_user.id, target.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
+        InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry_reject:{message.from_user.id}:{target.id}:{message.chat.id}")
+    ]])
+    await message.reply(
+        f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+    )
+
 # ================= БРАКИ =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("брак ") and "@" in m.text)
 async def marriage_proposal_cmd(message: types.Message):
