@@ -4938,25 +4938,32 @@ async def vip_info_cmd(message: types.Message):
     )
 
 
-@cmd("купить вип")
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*купить\s+вип\b', m.text.strip(), re.IGNORECASE))
 async def buy_vip_cmd(message: types.Message):
+    if not await check_command_access(message, "купить вип"):
+        return
     args = message.text.split()
-    months = 1; target = message.from_user
+    months = 1
+    target = message.from_user
     for a in args[2:]:
         if a.isdigit(): months = int(a)
         else:
             try: target = await bot.get_chat(a)
             except: pass
-    if months < 1 or months > 12: return
+    if months < 1 or months > 12:
+        return await message.reply("📌 <code>.купить вип [месяцев 1-12]</code>", parse_mode="HTML", disable_web_page_preview=True)
     total = get_vip_price(message.chat.id) * months
     if get_balance(message.from_user.id) < total:
-        return await message.reply(f"❌ Нужно {total} 🍬", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"❌ Нужно <b>{total}</b> 🍬, у вас <b>{get_balance(message.from_user.id)}</b>", parse_mode="HTML", disable_web_page_preview=True)
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (total, message.from_user.id))
         conn.commit()
     new_exp = add_vip_months(target.id, months)
-    await message.reply(f"💎 <b>VIP активирован!</b>\n📅 До: <b>{new_exp.strftime('%d.%m.%Y')}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(
+        f"💎 <b>VIP активирован!</b>\n\n👤 Кому: {mention(target)}\n📅 До: <b>{new_exp.strftime('%d.%m.%Y')}</b>\n💰 -{total} 🍬",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
 @cmd("мой вип")
