@@ -129,45 +129,10 @@ def user_link(user_id, first_name="Пользователь", username=None):
 def auto_premium(text: str) -> str:
     if not text:
         return text
-
-    # Защищаем уже готовые <tg-emoji>...</tg-emoji>
-    protected = []
-    def _protect(match):
-        protected.append(match.group(0))
-        return f"\x00PREMPROT{len(protected)-1}\x00"
-
-    text = re.sub(r'<tg-emoji[^>]*>.*?</tg-emoji>', _protect, text, flags=re.DOTALL)
-
-    # Заменяем обычные эмодзи на <tg-emoji>
     for uni, key in UNICODE_TO_KEY.items():
         eid = EMOJI.get(key)
         if eid and uni in text:
             text = text.replace(uni, f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>')
-
-    # Возвращаем защищённое
-    for i, p in enumerate(protected):
-        text = text.replace(f"\x00PREMPROT{i}\x00", p)
-
-    return text
-
-    # Защищаем уже готовые <tg-emoji>...</tg-emoji>
-    protected = []
-    def _protect(match):
-        protected.append(match.group(0))
-        return f"\x00PREMPROT{len(protected)-1}\x00"
-
-    text = re.sub(r'<tg-emoji[^>]*>.*?</tg-emoji>', _protect, text, flags=re.DOTALL)
-
-    # Заменяем обычные эмодзи на <tg-emoji>
-    for uni, key in UNICODE_TO_KEY.items():
-        eid = EMOJI.get(key)
-        if eid and uni in text:
-            text = text.replace(uni, f'<tg-emoji emoji-id="{eid}">{uni}</tg-emoji>')
-
-    # Возвращаем защищённое
-    for i, p in enumerate(protected):
-        text = text.replace(f"\x00PREMPROT{i}\x00", p)
-
     return text
 
 def html_escape_text(text: str) -> str:
