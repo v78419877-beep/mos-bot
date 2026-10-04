@@ -68,7 +68,7 @@ def cmd(name: str):
     return decorator
 
 
-# ================= ПРЕМИУМ-ЭМОДЗИ =================
+# ================= ЭМОДЗИ =================
 EMOJI = {
     "mute": "5239939553720041034", "pencil": "5395444784611480792",
     "wave": "5215248074498128418", "stats": "5884161133174067365",
@@ -126,7 +126,7 @@ def html_escape_text(text: str) -> str:
     return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
-# ================= TELEGRAM ENTITIES → HTML =================
+# ================= ENTITIES → HTML =================
 def entities_to_html(message: types.Message) -> str:
     if not message.text:
         return ""
@@ -245,7 +245,7 @@ DEFAULT_ACCESS = {
     "анпин": 1, "открепить": 1, "унпин": 1, "репорты": 2,
 
     "правила": 3, "приветствие": 3, "фильтрссылок": 3,
-    "заявки": 4, "капча": 3, "автомод": 3, "автомодерация": 3,
+    "капча": 3, "автомод": 3, "автомодерация": 3,
     "обновить чат": 3, "обновитьчат": 3, "кто не писал": 2, "неактивные": 2,
 
     "повысить": 3, "понизить": 3, "разжаловать": 3, "снять": 3, "восстановить": 3,
@@ -258,7 +258,6 @@ DEFAULT_ACCESS = {
     "инфобот": -2, "бэкап": -2, "импорт": -2,
 
     "дк": 3, "дк список": 3, "дк сброс": 3,
-    "погода": 0,
 }
 
 
@@ -315,7 +314,6 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS grids (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, creator_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS grid_chats (grid_id INTEGER, chat_id INTEGER, hidden INTEGER DEFAULT 0, description TEXT, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(grid_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS grid_moderators (grid_id INTEGER, user_id INTEGER, rank INTEGER DEFAULT 1, is_admin INTEGER DEFAULT 0, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(grid_id, user_id))")
-        c.execute("CREATE TABLE IF NOT EXISTS grid_bans (grid_id INTEGER, user_id INTEGER, reason TEXT, banned_by INTEGER, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(grid_id, user_id))")
         c.execute("""CREATE TABLE IF NOT EXISTS grid_user_ranks (
             grid_id INTEGER, user_id INTEGER, rank INTEGER DEFAULT 1, added_by INTEGER,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(grid_id, user_id))""")
@@ -336,6 +334,7 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS vip_settings (chat_id INTEGER PRIMARY KEY, price INTEGER DEFAULT 100)")
         c.execute("CREATE TABLE IF NOT EXISTS vip_users (user_id INTEGER PRIMARY KEY, expires_at TIMESTAMP, emoji TEXT)")
         c.execute("CREATE TABLE IF NOT EXISTS rp_commands (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, name TEXT, emoji TEXT, text TEXT, created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(chat_id, name))")
+        c.execute("CREATE TABLE IF NOT EXISTS global_rp_commands (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, emoji TEXT, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, name))")
         c.execute("CREATE TABLE IF NOT EXISTS chat_antispam_settings (chat_id INTEGER PRIMARY KEY, antispam_enabled INTEGER DEFAULT 1)")
         c.execute("CREATE TABLE IF NOT EXISTS stars_settings (chat_id INTEGER PRIMARY KEY, stars_per_candy INTEGER DEFAULT 2)")
         c.execute("CREATE TABLE IF NOT EXISTS stars_payments (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER, amount_candies INTEGER, stars_paid INTEGER, status TEXT DEFAULT 'pending', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -707,8 +706,7 @@ BAD_WORDS = [
     "пизда", "пизду", "пизде", "пизды", "пиздец", "пизд",
     "ебать", "ебал", "еба", "ебёт", "ебет", "ебан", "ебану", "ебуч",
     "ёбаный", "ебаный", "ёбн", "ёб", "ёпт",
-    "мудак", "мудила", "мудозвон",
-    "гандон", "гондон",
+    "мудак", "мудила", "мудозвон", "гандон", "гондон",
     "долбоеб", "долбоёб", "долбаеб", "долбаёб",
     "уебан", "уёбан", "уёбище", "уебище",
     "залупа", "залупу", "залупе",
@@ -718,20 +716,13 @@ BAD_WORDS = [
     "пидор", "пидар", "пидр", "пидарас", "пидорас",
     "шлюха", "шлюх", "шалава",
     "хер", "херн", "херов", "херня",
-    "жопа", "жоп", "жопу",
-    "срать", "сру", "срака", "срак",
-    "пердеть", "перд", "пердёж",
-    "член",
-    "яйца", "яиц", "яйцо",
-    "сперм", "сперма",
-    "минет", "миньет",
-    "трахать", "трахал", "трах",
-    "еби", "ёби",
+    "жопа", "жоп", "жопу", "срать", "сру", "срака", "срак",
+    "пердеть", "перд", "пердёж", "член",
+    "яйца", "яиц", "яйцо", "сперм", "сперма", "минет", "миньет",
+    "трахать", "трахал", "трах", "еби", "ёби",
     "сук", "падла", "падлю",
-    "казел", "козел", "козёл",
-    "быдло", "быдл",
-    "гнида", "гнид",
-    "тварь", "твар",
+    "казел", "козел", "козёл", "быдло", "быдл",
+    "гнида", "гнид", "тварь", "твар",
 ]
 
 
@@ -1120,7 +1111,7 @@ def get_inactive_users(chat_id, days=7, limit=30):
         return c.fetchall()
 
 
-# ================= КОНФЕТКИ =================
+# ================= ИРИСКИ =================
 def get_balance(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1235,7 +1226,7 @@ def add_chat_coins(chat_id, amount):
         conn.commit()
 
 
-# ================= АГЕНТЫ — СТАТУС =================
+# ================= АГЕНТЫ - СТАТУС =================
 def update_agent_activity(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2501,7 +2492,7 @@ def get_weather_emoji(code: int):
     else: return "🌡️ Погода"
 
 
-# ================= ПРОВЕРКА ССЫЛОК =================
+# ================= ССЫЛКИ =================
 LINK_PATTERN = re.compile(r'\[([^\]]+)\]\((https?://[^\s\)]+)\)|\{(https?://[^\s\}]+)\}')
 PLACEHOLDER = "[ссылка на проверке]"
 
@@ -2608,57 +2599,7 @@ async def commands_link_cmd(message: types.Message):
         parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
     )
 
-# ================= ИНФОБОТ =================
-@cmd("инфобот")
-async def bot_info_cmd(message: types.Message):
-    if message.from_user.id != OWNER_ID:
-        return await message.reply(
-            f"{em('cross', '❌')} Только владелец.\n🆔 Ваш ID: <code>{message.from_user.id}</code>\n👑 ID владельца: <code>{OWNER_ID}</code>",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-    start = datetime.now()
-    sent = await message.reply("🏓 Считаю...")
-    ping_ms = int((datetime.now() - start).total_seconds() * 1000)
-    try: await sent.delete()
-    except: pass
 
-    uptime = datetime.now() - BOT_START_TIME
-    days = uptime.days
-    hours = uptime.seconds // 3600
-    minutes = (uptime.seconds % 3600) // 60
-    if days > 0: uptime_str = f"{days} д. {hours} ч."
-    elif hours > 0: uptime_str = f"{hours} ч. {minutes} мин."
-    else: uptime_str = f"{minutes} мин."
-
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM users"); total_users = c.fetchone()[0] or 0
-        c.execute("SELECT SUM(count) FROM messages_stats"); total_messages = c.fetchone()[0] or 0
-        c.execute("SELECT COUNT(DISTINCT chat_id) FROM messages_stats"); total_chats = c.fetchone()[0] or 0
-        c.execute("SELECT COUNT(*) FROM agents"); total_agents = c.fetchone()[0] or 0
-        c.execute("SELECT COUNT(*) FROM antispam"); total_antispam = c.fetchone()[0] or 0
-
-    try:
-        db_size = os.path.getsize(DATABASE_PATH)
-        if db_size < 1024: db_size_str = f"{db_size} Б"
-        elif db_size < 1024 * 1024: db_size_str = f"{db_size / 1024:.1f} КБ"
-        else: db_size_str = f"{db_size / (1024 * 1024):.2f} МБ"
-    except:
-        db_size_str = "—"
-
-    text = (
-        f"📊 <b>Статистика бота</b>\n\n"
-        f"⏱ Аптайм: <b>{uptime_str}</b>\n"
-        f"🏓 Пинг: <b>{ping_ms} мс</b>\n"
-        f"💾 База: <b>{db_size_str}</b>\n\n"
-        f"👥 Пользователей: <b>{total_users}</b>\n"
-        f"💬 Сообщений: <b>{total_messages}</b>\n"
-        f"🗂 Чатов: <b>{total_chats}</b>\n"
-        f"🛡 Агентов: <b>{total_agents}</b>\n"
-        f"🚫 В антиспаме: <b>{total_antispam}</b>"
-    )
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-    
 @cmd("помощь")
 async def help_cmd(message: types.Message):
     online, offline, statuses = get_agents_status()
@@ -2697,6 +2638,52 @@ async def help_cmd(message: types.Message):
 @cmd("пинг")
 async def ping_cmd(message: types.Message):
     await message.reply(f"{em('ping', '🏓')} Понг!", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("инфобот")
+async def bot_info_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return await message.reply(
+            f"{em('cross', '❌')} Только владелец.\n🆔 Ваш ID: <code>{message.from_user.id}</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    start = datetime.now()
+    sent = await message.reply("🏓 Считаю...")
+    ping_ms = int((datetime.now() - start).total_seconds() * 1000)
+    try: await sent.delete()
+    except: pass
+    uptime = datetime.now() - BOT_START_TIME
+    days = uptime.days
+    hours = uptime.seconds // 3600
+    minutes = (uptime.seconds % 3600) // 60
+    if days > 0: uptime_str = f"{days} д. {hours} ч."
+    elif hours > 0: uptime_str = f"{hours} ч. {minutes} мин."
+    else: uptime_str = f"{minutes} мин."
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM users"); total_users = c.fetchone()[0] or 0
+        c.execute("SELECT SUM(count) FROM messages_stats"); total_messages = c.fetchone()[0] or 0
+        c.execute("SELECT COUNT(DISTINCT chat_id) FROM messages_stats"); total_chats = c.fetchone()[0] or 0
+        c.execute("SELECT COUNT(*) FROM agents"); total_agents = c.fetchone()[0] or 0
+        c.execute("SELECT COUNT(*) FROM antispam"); total_antispam = c.fetchone()[0] or 0
+    try:
+        db_size = os.path.getsize(DATABASE_PATH)
+        if db_size < 1024: db_size_str = f"{db_size} Б"
+        elif db_size < 1024 * 1024: db_size_str = f"{db_size / 1024:.1f} КБ"
+        else: db_size_str = f"{db_size / (1024 * 1024):.2f} МБ"
+    except: db_size_str = "—"
+    text = (
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"⏱ Аптайм: <b>{uptime_str}</b>\n"
+        f"🏓 Пинг: <b>{ping_ms} мс</b>\n"
+        f"💾 База: <b>{db_size_str}</b>\n\n"
+        f"👥 Пользователей: <b>{total_users}</b>\n"
+        f"💬 Сообщений: <b>{total_messages}</b>\n"
+        f"🗂 Чатов: <b>{total_chats}</b>\n"
+        f"🛡 Агентов: <b>{total_agents}</b>\n"
+        f"🚫 В антиспаме: <b>{total_antispam}</b>"
+    )
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("инфо")
@@ -4396,8 +4383,10 @@ async def fishing_shop_cmd(message: types.Message):
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
+# ================= КУПИТЬ (снасть) — не перехватывает "купить вип" =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*купить\s+\S+', m.text.strip(), re.IGNORECASE)
-    and not re.match(r'^\s*[.\/!]?\s*купить\s+вип\b', m.text.strip(), re.IGNORECASE))
+    and not re.match(r'^\s*[.\/!]?\s*купить\s+вип\b', m.text.strip(), re.IGNORECASE)
+    and not re.match(r'^\s*[.\/!]?\s*купить\s+коины\b', m.text.strip(), re.IGNORECASE))
 async def fishing_buy_cmd(message: types.Message):
     if not await check_command_access(message, "купить"):
         return
@@ -4559,63 +4548,21 @@ async def events_status_cmd(message: types.Message):
     await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= РП =================
-@dp.message(lambda m: m.text and not m.text.startswith(('.', '+', '-', '!', '/', 'брак')))
-async def standard_rp_handler(message: types.Message):
-    if not message.text: return
-    txt = message.text.strip()
-    if not txt: return
-    txt_lower = txt.lower()
-    rp_data = None; rp_name = None
-    if txt_lower in STANDARD_RP:
-        rp_name = txt_lower; rp_data = STANDARD_RP[txt_lower]
-    else:
-        for name in sorted(STANDARD_RP.keys(), key=len, reverse=True):
-            if txt_lower.startswith(name):
-                rest = txt_lower[len(name):]
-                if not rest or rest[0] == ' ':
-                    rp_name = name; rp_data = STANDARD_RP[name]; break
-    if not rp_data: return
-    actor = message.from_user; target = None
-    if message.reply_to_message: target = message.reply_to_message.from_user
-    if not target:
-        rest_text = txt[len(rp_name):].strip()
-        if rest_text:
-            try:
-                target_arg = rest_text.split()[0]
-                if target_arg.startswith('@'): target = await bot.get_chat(target_arg)
-                elif target_arg.isdigit(): target = await bot.get_chat(int(target_arg))
-            except: pass
-    if not target:
-        return await message.reply(
-            f"{rp_data['emoji']} {rp_data['self_text'].format(actor=mention(actor), target=mention(actor))}",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-    if target.is_bot: return
-    await message.reply(
-        f"{rp_data['emoji']} {rp_data['text'].format(actor=mention(actor), target=mention(target))}",
-        parse_mode="HTML", disable_web_page_preview=True
-    )
-
-
-# ================= +МРП =================
+# ================= МРП / ГМРП =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+мрп\b', m.text.strip(), re.IGNORECASE))
 async def create_rp_cmd(message: types.Message):
     if not get_vip(message.from_user.id):
         return await message.reply(f"{em('cross', '❌')} Только VIP.", parse_mode="HTML", disable_web_page_preview=True)
 
-    # Убираем . / ! и +мрп
     raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
     raw = re.sub(r'^\+мрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
 
-    # Формат: Название / 😀 / текст
     parts = raw.split("/", 2)
     if len(parts) < 3:
         return await message.reply(
             "📌 <b>Формат:</b>\n"
             "<code>+мрп ущипнуть / 🤏 / ущипнул</code>\n\n"
-            "💡 Текст автоматически подставит <b>автора</b> и <b>цель</b>:\n"
-            "→ <i>Иван ущипнул Петю</i>",
+            "💡 Автор и цель подставляются автоматически.",
             parse_mode="HTML", disable_web_page_preview=True
         )
 
@@ -4626,10 +4573,7 @@ async def create_rp_cmd(message: types.Message):
     if not name or not emoji or not action_text:
         return await message.reply("❌ Заполни все 3 поля.", parse_mode="HTML", disable_web_page_preview=True)
 
-    # Автоподстановка {actor} и {target}, если их нет в тексте
     if "{actor}" not in action_text and "{target}" not in action_text:
-        # Строим текст: {actor} + действие + {target}
-        # Но если пользователь написал что-то с глаголом, вставляем в конец
         full_text = f"{{actor}} {action_text} {{target}}"
     else:
         full_text = action_text
@@ -4648,8 +4592,6 @@ async def create_rp_cmd(message: types.Message):
             )
         except sqlite3.IntegrityError:
             return await message.reply(f"{em('cross', '❌')} Уже есть. Удалить: <code>-мрп {name}</code>", parse_mode="HTML", disable_web_page_preview=True)
-        except Exception as e:
-            return await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("мрп")
@@ -4669,11 +4611,12 @@ async def list_rp_cmd(message: types.Message):
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("-мрп"))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-мрп\b', m.text.strip(), re.IGNORECASE))
 async def delete_rp_cmd(message: types.Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2: return
-    name = args[1].strip()
+    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
+    raw = re.sub(r'^-мрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
+    if not raw: return
+    name = raw.lower()
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("DELETE FROM rp_commands WHERE chat_id = ? AND name = ? AND created_by = ?",
@@ -4681,7 +4624,8 @@ async def delete_rp_cmd(message: types.Message):
         conn.commit()
     await message.reply(f"{em('check', '✅')} Удалено.", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= +ГМРП =================
+
+# ================= ГМРП =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+гмрп\b', m.text.strip(), re.IGNORECASE))
 async def create_global_rp_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 4):
@@ -4725,6 +4669,145 @@ async def create_global_rp_cmd(message: types.Message):
             )
         except Exception as e:
             return await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-гмрп\b', m.text.strip(), re.IGNORECASE))
+async def delete_global_rp_cmd(message: types.Message):
+    if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 4):
+        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
+
+    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
+    raw = re.sub(r'^-гмрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
+    if not raw:
+        return await message.reply("📌 <code>-гмрп Название</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM global_rp_commands WHERE user_id = ? AND LOWER(name) = ?",
+                  (message.from_user.id, raw.lower()))
+        conn.commit()
+    await message.reply(f"{em('check', '✅')} Удалено.", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("гмрп")
+async def list_global_rp_cmd(message: types.Message):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, name, emoji FROM global_rp_commands WHERE user_id = ? ORDER BY id ASC",
+                  (message.from_user.id,))
+        rows = c.fetchall()
+    if not rows:
+        return await message.reply("📭 У тебя нет глобальных РП.\n📌 <code>+гмрп обнять / 🤗 / обнял</code>", parse_mode="HTML", disable_web_page_preview=True)
+    text = "🌐 <b>Твои глобальные РП:</b>\n\n"
+    for i, (rid, name, emoji) in enumerate(rows, 1):
+        text += f"{i}. {emoji} <code>{name}</code>\n"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= РП ХЕНДЛЕР =================
+@dp.message(lambda m: m.text and not m.text.startswith(('.', '+', '-', '!', '/')) and not m.text.lower().strip().startswith("брак"))
+async def standard_rp_handler(message: types.Message):
+    if not message.text: return
+    txt = message.text.strip()
+    if not txt: return
+    txt_lower = txt.lower()
+
+    # 1) КАСТОМНЫЕ и ГЛОБАЛЬНЫЕ РП
+    rp_emoji = None
+    rp_template = None
+    matched_name = None
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        # локальные
+        c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?",
+                  (message.chat.id, txt_lower))
+        row = c.fetchone()
+        if row:
+            rp_emoji, rp_template = row
+            matched_name = txt_lower
+        else:
+            first = txt_lower.split()[0] if txt_lower.split() else ""
+            if first and first != txt_lower:
+                c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?",
+                          (message.chat.id, first))
+                row = c.fetchone()
+                if row:
+                    rp_emoji, rp_template = row
+                    matched_name = first
+
+        # глобальные (если локальных нет)
+        if not rp_template:
+            c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (txt_lower,))
+            row = c.fetchone()
+            if row:
+                rp_emoji, rp_template = row
+                matched_name = txt_lower
+            else:
+                first = txt_lower.split()[0] if txt_lower.split() else ""
+                if first and first != txt_lower:
+                    c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (first,))
+                    row = c.fetchone()
+                    if row:
+                        rp_emoji, rp_template = row
+                        matched_name = first
+
+    if rp_template:
+        actor = message.from_user
+        target = None
+        if message.reply_to_message:
+            target = message.reply_to_message.from_user
+        else:
+            rest = txt[len(matched_name):].strip() if matched_name else ""
+            for w in rest.split():
+                if w.startswith('@'):
+                    try: target = await bot.get_chat(w); break
+                    except: pass
+                if w.isdigit():
+                    try: target = await bot.get_chat(int(w)); break
+                    except: pass
+
+        if target and not target.is_bot:
+            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(target))
+        else:
+            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(actor))
+
+        return await message.reply(f"{rp_emoji} {out}", parse_mode="HTML", disable_web_page_preview=True)
+
+    # 2) СТАНДАРТНЫЕ РП
+    rp_data = None
+    rp_name = None
+    if txt_lower in STANDARD_RP:
+        rp_name = txt_lower; rp_data = STANDARD_RP[txt_lower]
+    else:
+        for name in sorted(STANDARD_RP.keys(), key=len, reverse=True):
+            if txt_lower.startswith(name):
+                rest = txt_lower[len(name):]
+                if not rest or rest[0] == ' ':
+                    rp_name = name; rp_data = STANDARD_RP[name]; break
+    if not rp_data: return
+
+    actor = message.from_user; target = None
+    if message.reply_to_message: target = message.reply_to_message.from_user
+    if not target:
+        rest_text = txt[len(rp_name):].strip()
+        if rest_text:
+            try:
+                target_arg = rest_text.split()[0]
+                if target_arg.startswith('@'): target = await bot.get_chat(target_arg)
+                elif target_arg.isdigit(): target = await bot.get_chat(int(target_arg))
+            except: pass
+    if not target:
+        return await message.reply(
+            f"{rp_data['emoji']} {rp_data['self_text'].format(actor=mention(actor), target=mention(actor))}",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    if target.is_bot: return
+    await message.reply(
+        f"{rp_data['emoji']} {rp_data['text'].format(actor=mention(actor), target=mention(target))}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
 
 # ================= ПРАВИЛА =================
 @cmd("правила")
@@ -5003,7 +5086,20 @@ async def my_stats_cmd(message: types.Message):
 
 
 # ================= VIP =================
-# ================= ВИП ЦЕНА =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип\s+цена\s+\d+', m.text.strip(), re.IGNORECASE))
+async def vip_set_price_cmd(message: types.Message):
+    if not has_permission(message.chat.id, message.from_user.id, 4):
+        return await message.reply(f"{em('cross', '❌')} Нужен ранг 4+.", parse_mode="HTML", disable_web_page_preview=True)
+    args = message.text.split()
+    if len(args) < 3 or not args[2].isdigit():
+        return await message.reply("📌 <code>.вип цена 150</code>", parse_mode="HTML", disable_web_page_preview=True)
+    new_price = int(args[2])
+    if new_price < 1 or new_price > 100000:
+        return await message.reply("❌ Цена от 1 до 100 000 🍬", parse_mode="HTML", disable_web_page_preview=True)
+    set_vip_price(message.chat.id, new_price)
+    await message.reply(f"{em('check', '✅')} Новая цена VIP: <b>{new_price} 🍬</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип\s+цена\b', m.text.strip(), re.IGNORECASE))
 async def vip_price_info_cmd(message: types.Message):
     if not await check_command_access(message, "вип"):
@@ -5018,19 +5114,6 @@ async def vip_price_info_cmd(message: types.Message):
         parse_mode="HTML", disable_web_page_preview=True
     )
 
-
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип\s+цена\s+\d+', m.text.strip(), re.IGNORECASE))
-async def vip_set_price_cmd(message: types.Message):
-    if not has_permission(message.chat.id, message.from_user.id, 4):
-        return await message.reply(f"{em('cross', '❌')} Нужен ранг 4+.", parse_mode="HTML", disable_web_page_preview=True)
-    args = message.text.split()
-    if len(args) < 3 or not args[2].isdigit():
-        return await message.reply("📌 <code>.вип цена 150</code>", parse_mode="HTML", disable_web_page_preview=True)
-    new_price = int(args[2])
-    if new_price < 1 or new_price > 100000:
-        return await message.reply("❌ Цена от 1 до 100 000 🍬", parse_mode="HTML", disable_web_page_preview=True)
-    set_vip_price(message.chat.id, new_price)
-    await message.reply(f"{em('check', '✅')} Новая цена VIP: <b>{new_price} 🍬</b>", parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип(\s+\d+)?\s*$', m.text.strip(), re.IGNORECASE))
 async def vip_info_cmd(message: types.Message):
@@ -5057,15 +5140,14 @@ async def buy_vip_cmd(message: types.Message):
     if not await check_command_access(message, "купить вип"):
         return
     args = message.text.split()
-    months = 1
-    target = message.from_user
+    months = 1; target = message.from_user
     for a in args[2:]:
         if a.isdigit(): months = int(a)
         else:
             try: target = await bot.get_chat(a)
             except: pass
     if months < 1 or months > 12:
-        return await message.reply("📌 <code>.купить вип [месяцев 1-12]</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.купить вип [1-12]</code>", parse_mode="HTML", disable_web_page_preview=True)
     total = get_vip_price(message.chat.id) * months
     if get_balance(message.from_user.id) < total:
         return await message.reply(f"❌ Нужно <b>{total}</b> 🍬, у вас <b>{get_balance(message.from_user.id)}</b>", parse_mode="HTML", disable_web_page_preview=True)
@@ -5200,13 +5282,13 @@ async def list_grid_chats(message: types.Message):
         except: pass
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= +ЧАТ / -ЧАТ (закрыть/открыть чат) =================
+
+# ================= +ЧАТ / -ЧАТ =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+чат\b', m.text.strip(), re.IGNORECASE))
 async def open_chat_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
 
-    # Проверка прав: ТГ-админ, создатель, ранг 3+, агент
     has_rights = (
         message.from_user.id == OWNER_ID
         or has_agent_rank(message.from_user.id, 1)
@@ -5216,35 +5298,23 @@ async def open_chat_cmd(message: types.Message):
     if not has_rights:
         return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
 
-    # Проверка, что бот админ и может менять настройки
     try:
         bm = await bot.get_chat_member(message.chat.id, bot.id)
         if bm.status not in ["administrator", "creator"]:
-            return await message.reply(f"{em('cross', '❌')} Я не админ в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True)
         if bm.status == "administrator" and not getattr(bm, "can_change_info", False):
             return await message.reply(f"{em('cross', '❌')} У меня нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
         return await message.reply(f"{em('cross', '❌')} Ошибка прав бота: {e}", parse_mode="HTML", disable_web_page_preview=True)
 
     try:
-        # Открываем все базовые права
         await bot.set_chat_permissions(
             chat_id=message.chat.id,
             permissions=types.ChatPermissions(
-                can_send_messages=True,
-                can_send_audios=True,
-                can_send_documents=True,
-                can_send_photos=True,
-                can_send_videos=True,
-                can_send_video_notes=True,
-                can_send_voice_notes=True,
-                can_send_polls=True,
-                can_send_other_messages=True,
-                can_add_web_page_previews=True,
-                can_change_info=False,
-                can_invite_users=True,
-                can_pin_messages=False,
-                can_manage_topics=False,
+                can_send_messages=True, can_send_audios=True, can_send_documents=True,
+                can_send_photos=True, can_send_videos=True, can_send_video_notes=True,
+                can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True,
+                can_add_web_page_previews=True, can_invite_users=True,
             )
         )
     except Exception as e:
@@ -5273,31 +5343,20 @@ async def close_chat_cmd(message: types.Message):
     try:
         bm = await bot.get_chat_member(message.chat.id, bot.id)
         if bm.status not in ["administrator", "creator"]:
-            return await message.reply(f"{em('cross', '❌')} Я не админ в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True)
         if bm.status == "administrator" and not getattr(bm, "can_change_info", False):
             return await message.reply(f"{em('cross', '❌')} У меня нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
         return await message.reply(f"{em('cross', '❌')} Ошибка прав бота: {e}", parse_mode="HTML", disable_web_page_preview=True)
 
     try:
-        # Закрываем право писать обычным участникам
         await bot.set_chat_permissions(
             chat_id=message.chat.id,
             permissions=types.ChatPermissions(
-                can_send_messages=False,
-                can_send_audios=False,
-                can_send_documents=False,
-                can_send_photos=False,
-                can_send_videos=False,
-                can_send_video_notes=False,
-                can_send_voice_notes=False,
-                can_send_polls=False,
-                can_send_other_messages=False,
+                can_send_messages=False, can_send_audios=False, can_send_documents=False,
+                can_send_photos=False, can_send_videos=False, can_send_video_notes=False,
+                can_send_voice_notes=False, can_send_polls=False, can_send_other_messages=False,
                 can_add_web_page_previews=False,
-                can_change_info=False,
-                can_invite_users=False,
-                can_pin_messages=False,
-                can_manage_topics=False,
             )
         )
     except Exception as e:
@@ -5307,6 +5366,157 @@ async def close_chat_cmd(message: types.Message):
         f"{em('cross', '❌')} <b>Чат закрыт</b> для общения!\n👮 {mention(message.from_user)}",
         parse_mode="HTML", disable_web_page_preview=True
     )
+
+
+# ================= СЕТКА РОУТЕР =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*сетка\s+(инфо|info|\+админ|\+админка|\+adm|-админ|-админка|-adm|разжаловать|снять|повысить|понизить)\b', m.text.strip(), re.IGNORECASE))
+async def grid_command_router(message: types.Message):
+    if message.chat.type == "private":
+        return await message.reply("⚠️ Команды сетки работают только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
+    parts = raw.split()
+
+    if len(parts) < 2:
+        return await message.reply("📌 <code>сетка инфо</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    action = parts[1].lower()
+
+    if action in ["инфо", "info"]:
+        grid_id = get_chat_grid(message.chat.id)
+        if not grid_id:
+            return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT name, creator_id FROM grids WHERE id = ?", (grid_id,))
+            g = c.fetchone()
+            c.execute("SELECT chat_id, hidden FROM grid_chats WHERE grid_id = ?", (grid_id,))
+            chats = c.fetchall()
+            c.execute("SELECT user_id, rank, is_admin FROM grid_moderators WHERE grid_id = ?", (grid_id,))
+            mods = c.fetchall()
+        text = f"🕸 <b>Сетка #{grid_id}</b>\n"
+        if g:
+            text += f"📛 Название: <b>{g[0]}</b>\n👑 Создатель: <code>{g[1]}</code>\n"
+        text += f"🗂 Чатов: <b>{len(chats)}</b>\n🛡 Модераторов: <b>{len(mods)}</b>\n\n"
+        if mods:
+            text += "<b>Модераторы:</b>\n"
+            for uid, rank, is_admin in mods[:15]:
+                try:
+                    u = await bot.get_chat(uid)
+                    name = user_link(uid, u.first_name, u.username)
+                except: name = f"<code>{uid}</code>"
+                badge = "👑" if is_admin else "🛡"
+                text += f"{badge} {name} — ранг {rank}\n"
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+    grid_id = get_chat_grid(message.chat.id)
+    if not grid_id:
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    actor_id = message.from_user.id
+
+    if action in ["+админ", "+админка", "+adm"]:
+        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 5):
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+        target, _ = await resolve_target(message)
+        if not target:
+            return await message.reply("📌 <code>сетка +админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+        if target.id == OWNER_ID: return
+        try:
+            bm = await bot.get_chat_member(message.chat.id, bot.id)
+            if bm.status not in ["administrator", "creator"]:
+                return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True)
+            if bm.status == "administrator" and not getattr(bm, "can_promote_members", False):
+                return await message.reply(f"{em('cross', '❌')} У меня нет права «Назначать админов».", parse_mode="HTML", disable_web_page_preview=True)
+        except Exception as e:
+            return await message.reply(f"{em('cross', '❌')} Ошибка прав: {e}", parse_mode="HTML", disable_web_page_preview=True)
+        try:
+            await bot.promote_chat_member(
+                chat_id=message.chat.id, user_id=target.id,
+                can_manage_chat=True, can_delete_messages=True, can_manage_video_chats=True,
+                can_restrict_members=True, can_promote_members=False, can_change_info=True,
+                can_invite_users=True, can_pin_messages=True
+            )
+        except Exception as e:
+            return await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+        add_grid_moderator(grid_id, target.id, rank=4, is_admin=1)
+        mark_bot_promoted(target.id, message.chat.id, actor_id)
+        return await message.reply(f"{em('check', '✅')} {mention(target)} — <b>ТГ-админ</b> + админ сетки.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if action in ["-админ", "-админка", "-adm"]:
+        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 5):
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+        target, _ = await resolve_target(message)
+        if not target:
+            return await message.reply("📌 <code>сетка -админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+        if target.id == OWNER_ID: return
+        results = []
+        try:
+            await bot.promote_chat_member(
+                chat_id=message.chat.id, user_id=target.id,
+                can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
+                can_restrict_members=False, can_promote_members=False, can_change_info=False,
+                can_invite_users=False, can_pin_messages=False
+            )
+            results.append("✅ ТГ-права сняты")
+        except Exception as e: results.append(f"⚠️ ТГ: {e}")
+        remove_grid_moderator(grid_id, target.id)
+        unmark_bot_promoted(target.id, message.chat.id)
+        results.append("✅ Убран из админов сетки")
+        return await message.reply(f"{em('check', '✅')} <b>Снято с {mention(target)}:</b>\n\n" + "\n".join(results), parse_mode="HTML", disable_web_page_preview=True)
+
+    if action in ["разжаловать", "снять"]:
+        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 3):
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 3.", parse_mode="HTML", disable_web_page_preview=True)
+        target, _ = await resolve_target(message)
+        if not target:
+            return await message.reply("📌 <code>сетка разжаловать @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+        if target.id == OWNER_ID: return
+        remove_grid_moderator(grid_id, target.id)
+        try:
+            await bot.promote_chat_member(
+                chat_id=message.chat.id, user_id=target.id,
+                can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
+                can_restrict_members=False, can_promote_members=False, can_change_info=False,
+                can_invite_users=False, can_pin_messages=False
+            )
+        except: pass
+        unmark_bot_promoted(target.id, message.chat.id)
+        try: remove_grid_user_rank(grid_id, target.id)
+        except: pass
+        return await message.reply(f"{em('cross', '❌')} {mention(target)} <b>разжалован</b> в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if action in ["повысить"]:
+        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 4):
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4.", parse_mode="HTML", disable_web_page_preview=True)
+        target, _ = await resolve_target(message)
+        if not target:
+            return await message.reply("📌 <code>сетка повысить @user 2</code>", parse_mode="HTML", disable_web_page_preview=True)
+        if target.id == OWNER_ID: return
+        new_rank = 1
+        for p in parts:
+            if p.isdigit(): new_rank = int(p); break
+        new_rank = max(1, min(4, new_rank))
+        try: set_grid_user_rank(grid_id, target.id, new_rank, actor_id)
+        except: pass
+        add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
+        return await message.reply(f"🏆 {mention(target)} повышен до ранга <b>{new_rank}</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+    if action in ["понизить"]:
+        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 4):
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4.", parse_mode="HTML", disable_web_page_preview=True)
+        target, _ = await resolve_target(message)
+        if not target:
+            return await message.reply("📌 <code>сетка понизить @user 1</code>", parse_mode="HTML", disable_web_page_preview=True)
+        if target.id == OWNER_ID: return
+        new_rank = 1
+        for p in parts:
+            if p.isdigit(): new_rank = int(p); break
+        new_rank = max(1, min(4, new_rank))
+        try: set_grid_user_rank(grid_id, target.id, new_rank, actor_id)
+        except: pass
+        add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
+        return await message.reply(f"📉 {mention(target)} понижен до ранга <b>{new_rank}</b>", parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("глобан"))
@@ -5324,20 +5534,16 @@ async def global_ban_cmd(message: types.Message):
             await bot.ban_chat_member(chat_id, target.id); success += 1
         except: pass
     await message.reply(f"{em('ban', '🚫')} {mention(target)} забанен ({success}/{len(chats)}).", parse_mode="HTML", disable_web_page_preview=True)# ================= БРАКИ — ЕДИНЫЙ РОУТЕР =================
-# Работает на: "брак" (ответом), "брак @user", "Брак" (любой регистр), ".брак"
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак(\s|$)', m.text.strip(), re.IGNORECASE))
 async def marriage_router(message: types.Message):
     txt = message.text.strip()
-    # убираем префикс . / ! и слово "брак"
     txt = re.sub(r'^[.\/!]\s*', '', txt)
     rest = re.sub(r'^брак\s*', '', txt, count=1, flags=re.IGNORECASE).strip()
 
-    # --- Ищем target ---
     target = None
     if message.reply_to_message:
         target = message.reply_to_message.from_user
     elif rest:
-        # ищем @username в остатке
         for w in rest.split():
             if w.startswith("@"):
                 try:
@@ -5351,7 +5557,6 @@ async def marriage_router(message: types.Message):
                     break
                 except: pass
 
-    # --- Нет target — инструкция ---
     if not target:
         return await message.reply(
             "💍 <b>Как жениться:</b>\n\n"
@@ -5360,7 +5565,6 @@ async def marriage_router(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True
         )
 
-    # --- Проверки ---
     if target.id == message.from_user.id:
         return await message.reply(f"{em('cross', '❌')} На себя нельзя.", parse_mode="HTML", disable_web_page_preview=True)
     if target.is_bot:
@@ -5371,13 +5575,11 @@ async def marriage_router(message: types.Message):
     if get_marriage(message.chat.id, target.id):
         return await message.reply(f"{em('cross', '❌')} {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
 
-    # --- Восстановление после развода ---
     div = get_divorced_marriage(message.chat.id, message.from_user.id)
     if div:
         restore_marriage(div[0])
         return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
 
-    # --- Предложение ---
     add_proposal(message.chat.id, message.from_user.id, target.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
@@ -5468,205 +5670,6 @@ async def marriages_list_cmd(message: types.Message):
         duration = format_marriage_duration(married_at, extra or 0)
         text += f"{i}. {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)} — <i>{duration}</i>\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-# ================= СЕТКА — ЕДИНЫЙ РОУТЕР =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*сетка\b', m.text.strip(), re.IGNORECASE)
-    and not m.text.lower().strip().startswith("сетка "))  # привязка чата без точки — отдельный хендлер выше
-async def grid_command_router_dot(message: types.Message):
-    """Роутер для команд сетки (когда есть префикс . / ! или это просто 'сетка <действие>')."""
-    await _grid_router_impl(message)
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("сетка "))
-async def grid_command_router_space(message: types.Message):
-    """Роутер для 'сетка <действие>' (привязка чата отдельным хендлером выше)."""
-    # Если это привязка — пропускаем (обрабатывается отдельным хендлером выше)
-    txt = m.text.strip().lower()
-    known_actions = ["инфо", "info", "+админ", "-админ", "разжаловать", "повысить", "понизить",
-                     "+админка", "+adm", "-админка", "-adm", "снять", "+", "-"]
-    parts = txt.split(maxsplit=1)
-    if len(parts) >= 2:
-        action = parts[1].split()[0].lower() if parts[1] else ""
-        if action in known_actions:
-            return await _grid_router_impl(m)
-    return  # иначе — это привязка, обработана другим хендлером
-
-
-async def _grid_router_impl(message: types.Message):
-    if message.chat.type == "private":
-        return await message.reply("⚠️ Команды сетки работают только в группе.", parse_mode="HTML", disable_web_page_preview=True)
-
-    raw = message.text.strip()
-    raw = re.sub(r'^[.\/!]\s*', '', raw)
-    parts = raw.split()
-
-    if len(parts) < 2:
-        return await message.reply(
-            "🕸 <b>Команды сетки:</b>\n\n"
-            "• <code>сетка инфо</code>\n"
-            "• <code>сетка +админ @user</code>\n"
-            "• <code>сетка -админ @user</code>\n"
-            "• <code>сетка разжаловать @user</code>\n"
-            "• <code>сетка повысить @user 2</code>\n"
-            "• <code>сетка понизить @user 1</code>",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-
-    action = parts[1].lower()
-
-    # --- ИНФО ---
-    if action in ["инфо", "info"]:
-        grid_id = get_chat_grid(message.chat.id)
-        if not grid_id:
-            return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            c = conn.cursor()
-            c.execute("SELECT name, creator_id FROM grids WHERE id = ?", (grid_id,))
-            g = c.fetchone()
-            c.execute("SELECT chat_id, hidden FROM grid_chats WHERE grid_id = ?", (grid_id,))
-            chats = c.fetchall()
-            c.execute("SELECT user_id, rank, is_admin FROM grid_moderators WHERE grid_id = ?", (grid_id,))
-            mods = c.fetchall()
-        text = f"🕸 <b>Сетка #{grid_id}</b>\n"
-        if g:
-            text += f"📛 Название: <b>{g[0]}</b>\n👑 Создатель: <code>{g[1]}</code>\n"
-        text += f"🗂 Чатов: <b>{len(chats)}</b>\n🛡 Модераторов: <b>{len(mods)}</b>\n\n"
-        if mods:
-            text += "<b>Модераторы:</b>\n"
-            for uid, rank, is_admin in mods[:15]:
-                try:
-                    u = await bot.get_chat(uid)
-                    name = user_link(uid, u.first_name, u.username)
-                except: name = f"<code>{uid}</code>"
-                badge = "👑" if is_admin else "🛡"
-                text += f"{badge} {name} — ранг {rank}\n"
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-    grid_id = get_chat_grid(message.chat.id)
-    if not grid_id:
-        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
-
-    actor_id = message.from_user.id
-
-    # --- +АДМИН ---
-    if action in ["+админ", "+админка", "+adm"]:
-        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 5):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
-        target, _ = await resolve_target(message)
-        if not target:
-            return await message.reply("📌 <code>сетка +админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
-        if target.id == OWNER_ID: return
-        try:
-            bm = await bot.get_chat_member(message.chat.id, bot.id)
-            if bm.status not in ["administrator", "creator"]:
-                return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True)
-            if bm.status == "administrator" and not getattr(bm, "can_promote_members", False):
-                return await message.reply(f"{em('cross', '❌')} У меня нет права «Назначать админов».", parse_mode="HTML", disable_web_page_preview=True)
-        except Exception as e:
-            return await message.reply(f"{em('cross', '❌')} Ошибка прав: {e}", parse_mode="HTML", disable_web_page_preview=True)
-        try:
-            await bot.promote_chat_member(
-                chat_id=message.chat.id, user_id=target.id,
-                can_manage_chat=True, can_delete_messages=True, can_manage_video_chats=True,
-                can_restrict_members=True, can_promote_members=False, can_change_info=True,
-                can_invite_users=True, can_pin_messages=True
-            )
-        except Exception as e:
-            return await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
-        add_grid_moderator(grid_id, target.id, rank=4, is_admin=1)
-        mark_bot_promoted(target.id, message.chat.id, actor_id)
-        return await message.reply(f"{em('check', '✅')} {mention(target)} — <b>ТГ-админ</b> + админ сетки.", parse_mode="HTML", disable_web_page_preview=True)
-
-    # --- -АДМИН ---
-    if action in ["-админ", "-админка", "-adm"]:
-        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 5):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
-        target, _ = await resolve_target(message)
-        if not target:
-            return await message.reply("📌 <code>сетка -админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
-        if target.id == OWNER_ID: return
-        results = []
-        try:
-            await bot.promote_chat_member(
-                chat_id=message.chat.id, user_id=target.id,
-                can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
-                can_restrict_members=False, can_promote_members=False, can_change_info=False,
-                can_invite_users=False, can_pin_messages=False
-            )
-            results.append("✅ ТГ-права сняты")
-        except Exception as e: results.append(f"⚠️ ТГ: {e}")
-        remove_grid_moderator(grid_id, target.id)
-        unmark_bot_promoted(target.id, message.chat.id)
-        results.append("✅ Убран из админов сетки")
-        return await message.reply(f"{em('check', '✅')} <b>Снято с {mention(target)}:</b>\n\n" + "\n".join(results), parse_mode="HTML", disable_web_page_preview=True)
-
-    # --- РАЗЖАЛОВАТЬ ---
-    if action in ["разжаловать", "снять"]:
-        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 3):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 3.", parse_mode="HTML", disable_web_page_preview=True)
-        target, _ = await resolve_target(message)
-        if not target:
-            return await message.reply("📌 <code>сетка разжаловать @user</code>", parse_mode="HTML", disable_web_page_preview=True)
-        if target.id == OWNER_ID: return
-        remove_grid_moderator(grid_id, target.id)
-        try:
-            await bot.promote_chat_member(
-                chat_id=message.chat.id, user_id=target.id,
-                can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
-                can_restrict_members=False, can_promote_members=False, can_change_info=False,
-                can_invite_users=False, can_pin_messages=False
-            )
-        except: pass
-        unmark_bot_promoted(target.id, message.chat.id)
-        try: remove_grid_user_rank(grid_id, target.id)
-        except: pass
-        return await message.reply(f"{em('cross', '❌')} {mention(target)} <b>разжалован</b> в сетке.", parse_mode="HTML", disable_web_page_preview=True)
-
-    # --- ПОВЫСИТЬ ---
-    if action in ["повысить", "+"]:
-        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 4):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4.", parse_mode="HTML", disable_web_page_preview=True)
-        target, _ = await resolve_target(message)
-        if not target:
-            return await message.reply("📌 <code>сетка повысить @user 2</code>", parse_mode="HTML", disable_web_page_preview=True)
-        if target.id == OWNER_ID: return
-        new_rank = 1
-        for p in parts:
-            if p.isdigit(): new_rank = int(p); break
-        new_rank = max(1, min(4, new_rank))
-        try: set_grid_user_rank(grid_id, target.id, new_rank, actor_id)
-        except: pass
-        add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
-        return await message.reply(f"🏆 {mention(target)} повышен до ранга <b>{new_rank}</b>", parse_mode="HTML", disable_web_page_preview=True)
-
-    # --- ПОНИЗИТЬ ---
-    if action in ["понизить", "-"]:
-        if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 4):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4.", parse_mode="HTML", disable_web_page_preview=True)
-        target, _ = await resolve_target(message)
-        if not target:
-            return await message.reply("📌 <code>сетка понизить @user 1</code>", parse_mode="HTML", disable_web_page_preview=True)
-        if target.id == OWNER_ID: return
-        new_rank = 1
-        for p in parts:
-            if p.isdigit(): new_rank = int(p); break
-        new_rank = max(1, min(4, new_rank))
-        try: set_grid_user_rank(grid_id, target.id, new_rank, actor_id)
-        except: pass
-        add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
-        return await message.reply(f"📉 {mention(target)} понижен до ранга <b>{new_rank}</b>", parse_mode="HTML", disable_web_page_preview=True)
-
-    return await message.reply(
-        f"❓ Неизвестно: <code>{action}</code>\n\n"
-        "• <code>сетка инфо</code>\n"
-        "• <code>сетка +админ @user</code>\n"
-        "• <code>сетка -админ @user</code>\n"
-        "• <code>сетка разжаловать @user</code>\n"
-        "• <code>сетка повысить @user 2</code>\n"
-        "• <code>сетка понизить @user 1</code>",
-        parse_mode="HTML", disable_web_page_preview=True
-    )
 
 
 # ================= РЕПОРТЫ =================
@@ -5798,7 +5801,6 @@ async def import_db_cmd(message: types.Message):
 async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot: return
 
-    # ===== ФИЛЬТР ССЫЛОК =====
     if message.chat.type in ["group", "supergroup"]:
         if is_link_filter_enabled(message.chat.id):
             is_staff = (
@@ -5826,7 +5828,6 @@ async def all_messages(message: types.Message):
                 except: pass
                 return
 
-    # ===== АВТОМОДЕРАЦИЯ =====
     if message.chat.type in ["group", "supergroup"]:
         user_id = message.from_user.id
         chat_id = message.chat.id
@@ -5878,7 +5879,6 @@ async def all_messages(message: types.Message):
                         except: pass
                     return
 
-    # ===== ОБЫЧНАЯ ЛОГИКА =====
     try:
         member = await bot.get_chat_member(message.chat.id, message.from_user.id)
         if member.status == "creator":
@@ -5899,18 +5899,6 @@ async def all_messages(message: types.Message):
             (message.from_user.id, message.chat.id, today)
         )
         conn.commit()
-
-    if message.text and not message.text.startswith(('.', '+', '-', '!', '/')):
-        txt = message.text.strip()
-        with sqlite3.connect(DATABASE_PATH) as conn:
-            c = conn.cursor()
-            c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND name = ?", (message.chat.id, txt))
-            rp = c.fetchone()
-            if rp:
-                emoji, rp_text = rp
-                reply_user = f" → {mention(message.reply_to_message.from_user)}" if message.reply_to_message else ""
-                await message.reply(f"{emoji} {mention(message.from_user)}{reply_user}: {rp_text}", parse_mode="HTML", disable_web_page_preview=True)
-                return
 
     if is_ignored(message.chat.id, message.from_user.id):
         try: await message.delete()
@@ -6053,7 +6041,6 @@ async def captcha_answer_handler(callback: types.CallbackQuery):
     await callback.answer("✅ Пройдена!")
 
 
-# ================= ЗАЯВКИ =================
 @dp.chat_join_request()
 async def on_join_request(request: types.ChatJoinRequest):
     chat_id = request.chat.id; user = request.from_user
@@ -6065,7 +6052,6 @@ async def on_join_request(request: types.ChatJoinRequest):
     except: pass
 
 
-# ================= /MY_BANS =================
 @dp.message(Command("my_bans"))
 async def my_bans_cmd(message: types.Message):
     if message.chat.type != "private": return
@@ -6085,7 +6071,6 @@ async def my_bans_cmd(message: types.Message):
     await message.reply("📋 <b>Ваши баны:</b>\n\n" + "\n".join(bans), parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= БОТ ДОБАВЛЕН =================
 @dp.my_chat_member()
 async def on_bot_added(event: types.ChatMemberUpdated):
     if event.new_chat_member.status not in ["member", "administrator"]: return
@@ -6103,7 +6088,6 @@ async def on_bot_added(event: types.ChatMemberUpdated):
         except: pass
 
 
-# ================= BUSINESS =================
 @dp.business_connection()
 async def on_business_connection(connection: types.BusinessConnection):
     if connection.is_enabled:
