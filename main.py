@@ -4687,8 +4687,22 @@ async def create_note_cmd(message: types.Message):
     nl_idx = message.text.find("\n")
     raw_body_html = _extract_html_after(message, nl_idx + 1)[:3500]
 
+    # ============ ДИАГНОСТИКА ============
+    print("=" * 60)
+    print("🔍 RAW TEXT:", repr(message.text))
+    print("🔍 ENTITIES:", message.entities)
+    for e in (message.entities or []):
+        print(f"   → type={e.type}, offset={e.offset}, length={e.length}, cid={getattr(e,'custom_emoji_id',None)}")
+    print("🔍 AFTER _extract_html_after:", repr(raw_body_html))
+    # ====================================
+
     cleaned_body, links = extract_links_from_text(raw_body_html)
     note_id = add_note(message.chat.id, name, cleaned_body, message.from_user.id)
+
+    # ============ ДИАГНОСТИКА ============
+    print("🔍 SAVED TO DB:", repr(cleaned_body))
+    print("=" * 60)
+    # ====================================
 
     if not note_id:
         return await message.reply(f"{em('cross', '❌')} Заметка уже есть.", parse_mode="HTML", disable_web_page_preview=True)
