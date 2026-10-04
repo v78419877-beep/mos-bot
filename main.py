@@ -4928,12 +4928,51 @@ async def my_stats_cmd(message: types.Message):
 
 
 # ================= VIP =================
-@cmd("вип")
-async def vip_info_cmd(message: types.Message):
+# ================= ВИП ЦЕНА =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип\s+цена\b', m.text.strip(), re.IGNORECASE))
+async def vip_price_info_cmd(message: types.Message):
+    if not await check_command_access(message, "вип"):
+        return
     price = get_vip_price(message.chat.id)
     await message.reply(
+        f"💎 <b>Цена VIP</b>\n\n"
+        f"💰 Стоимость: <b>{price} 🍬</b> за 1 месяц\n"
+        f"📅 Максимум: <b>12 месяцев</b>\n\n"
+        f"📌 Купить: <code>.купить вип [1-12]</code>\n"
+        f"📌 Свой VIP: <code>.мой вип</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип\s+цена\s+\d+', m.text.strip(), re.IGNORECASE))
+async def vip_set_price_cmd(message: types.Message):
+    if not has_permission(message.chat.id, message.from_user.id, 4):
+        return await message.reply(f"{em('cross', '❌')} Нужен ранг 4+.", parse_mode="HTML", disable_web_page_preview=True)
+    args = message.text.split()
+    if len(args) < 3 or not args[2].isdigit():
+        return await message.reply("📌 <code>.вип цена 150</code>", parse_mode="HTML", disable_web_page_preview=True)
+    new_price = int(args[2])
+    if new_price < 1 or new_price > 100000:
+        return await message.reply("❌ Цена от 1 до 100 000 🍬", parse_mode="HTML", disable_web_page_preview=True)
+    set_vip_price(message.chat.id, new_price)
+    await message.reply(f"{em('check', '✅')} Новая цена VIP: <b>{new_price} 🍬</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип(\s+\d+)?\s*$', m.text.strip(), re.IGNORECASE))
+async def vip_info_cmd(message: types.Message):
+    if not await check_command_access(message, "вип"):
+        return
+    args = message.text.split()
+    price = get_vip_price(message.chat.id)
+    if len(args) >= 2 and args[1].isdigit():
+        if not has_permission(message.chat.id, message.from_user.id, 4):
+            return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
+        set_vip_price(message.chat.id, int(args[1]))
+        return await message.reply(f"{em('check', '✅')} Цена VIP: {args[1]} 🍬", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(
         f"💎 <b>VIP-статус</b>\n\n💰 Цена: <b>{price}</b> 🍬 / мес\n\n"
-        f"📌 <code>Купить вип</code>\n📌 <code>Мой вип</code>",
+        f"📌 <code>.вип цена</code> — подробнее о цене\n"
+        f"📌 <code>.купить вип [1-12]</code> — купить\n"
+        f"📌 <code>.мой вип</code> — твой VIP",
         parse_mode="HTML", disable_web_page_preview=True
     )
 
