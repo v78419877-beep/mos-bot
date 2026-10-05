@@ -5528,44 +5528,102 @@ async def grid_command_router(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True
         )
 
-    # ============ -АДМИН ============
+      # ============ -АДМИН ============
     if action in ["-админ", "-админка", "-adm"]:
         if actor_id != OWNER_ID and not is_grid_moderator(grid_id, actor_id, 5):
             return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
         target, _ = await resolve_target(message)
         if not target:
             return await message.reply("📌 <code>сетка -админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
-        if target.id == OWNER_ID: return
+        if target.id == OWNER_ID:
+            return await message.reply(f"{em('cross', '❌')} Нельзя снять владельца бота.", parse_mode="HTML", disable_web_page_preview=True)
 
-        removed_from = 0; failed = 0
+        removed_from = 0
+        failed = 0
+        errors_log = []
+
         for chat_id, hidden, desc in chats:
+            success_this_chat = False
+
+            # === СНЯТЬ ТГ-ПРАВА ===
             try:
                 await bot.promote_chat_member(
-                    chat_id=chat_id, user_id=target.id,
+                    chat_id=chat_id,
+                    user_id=target.id,
                     rights=types.ChatAdministratorRights()
                 )
-                removed_from += 1
+                success_this_chat = True
+            except TypeError:
+                try:
+                    await bot.promote_chat_member(
+                        chat_id=chat_id,
+                        user_id=target.id,
+                        can_manage_chat=False,
+                        can_delete_messages=False,
+                        can_manage_video_chats=False,
+                        can_restrict_members=False,
+                        can_promote_members=False,
+                        can_change_info=False,
+                        can_invite_users=False,
+                        can_pin_messages=False,
+                        can_manage_topics=False,
+                    )
+                    success_this_chat = True
+                except Exception as e:
+                    errors_log.append(f"chat {chat_id}: {e}")
             except Exception as e:
+                # Проверка: если целевой — создатель чата
+                err_str = str(e).lower()
+                if "creator" in err_str or "administrator" in err_str:
+                    errors_log.append(f"chat {chat_id}: <i>создатель чата — нельзя снять</i>")
+                else:
+                    errors_log.append(f"chat {chat_id}: {e}")
+
+            if success_this_chat:
+                removed_from += 1
+            else:
                 failed += 1
-                print(f"⚠️ -админ в {chat_id}: {e}")
-            try: unmark_bot_promoted(target.id, chat_id)
+
+            # === СНЯТЬ РАНГ В БОТЕ ===
+            try:
+                remove_rank(chat_id, target.id)
             except: pass
 
+            # === СНЯТЬ ПОМЕТКУ ПРОМОУТА ===
+            try:
+                unmark_bot_promoted(target.id, chat_id)
+            except: pass
+
+        # === СНЯТЬ РАНГ В СЕТКЕ ===
         remove_grid_moderator(grid_id, target.id)
         try: remove_grid_user_rank(grid_id, target.id)
         except: pass
 
+        # Логи
+        if errors_log:
+            print("⚠️ Ошибки при -админ:")
+            for e in errors_log[:5]:
+                print(f"   {e}")
+
         notify_text = (
             f"❌ <b>Снятие администратора в сетке</b>\n\n"
-            f"👤 {mention(target)} больше <b>не ТГ-админ</b> в чатах сетки.\n"
+            f"👤 {mention(target)} снят со всех постов в чатах сетки.\n"
             f"👮 Сделал: {mention(message.from_user)}"
         )
         sent = await notify_all_chats(notify_text)
-        return await message.reply(
-            f"{em('check', '✅')} Снято с {mention(target)} ТГ-права в <b>{removed_from}/{len(chats)}</b> чатах.\n"
-            f"⚠️ Ошибок: {failed}\n📢 Уведомлений: {sent}/{len(chats)}",
-            parse_mode="HTML", disable_web_page_preview=True
+
+        result_text = (
+            f"{em('check', '✅')} <b>Снято с {mention(target)}:</b>\n\n"
+            f"🛡 ТГ-права: <b>{removed_from}/{len(chats)}</b>\n"
+            f"🎖 Ранг в боте: <b>сброшен</b>\n"
+            f"🕸 Ранг в сетке: <b>сброшен</b>\n"
+            f"📢 Уведомлений: <b>{sent}/{len(chats)}</b>\n"
+            f"⚠️ Ошибок: <b>{failed}</b>"
         )
+        if errors_log:
+            result_text += f"\n\n<b>Причина ошибок:</b>\n<code>{errors_log[0][:200]}</code>"
+
+        return await message.reply(result_text, parse_mode="HTML", disable_web_page_preview=True)
 
     # ============ РАЗЖАЛОВАТЬ ============
     if action in ["разжаловать", "снять"]:
