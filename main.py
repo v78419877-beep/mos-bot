@@ -208,6 +208,8 @@ DEFAULT_ACCESS = {
     "ачивки": 0, "все ачивки": 0, "вип": 0, "купить вип": 0,
     "мрп": 0, "репорт": 0, "админы": 0, "ухожу в отставку": 0,
 
+    "запретить переводы": 0, "разрешить переводы": 0, "мои запреты": 0, "запреты": 0,
+
     "бан": 2, "разбан": 2, "мут": 1, "размут": 1, "кик": 1,
     "варн": 1, "варны": 1, "снятьварн": 2, "сбросварнов": 3,
     "наказания": 1, "баны": 1, "пин": 1, "закрепить": 1,
@@ -311,6 +313,10 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS link_filter (chat_id INTEGER PRIMARY KEY, enabled INTEGER DEFAULT 0)")
         c.execute("CREATE TABLE IF NOT EXISTS hidden_agents (user_id INTEGER PRIMARY KEY, hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS global_settings (key TEXT PRIMARY KEY, value TEXT)")
+        c.execute("""CREATE TABLE IF NOT EXISTS transfer_blocks (
+            blocker_id INTEGER, blocked_id INTEGER,
+            added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(blocker_id, blocked_id))""")
         c.execute("""CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             source_chat_id INTEGER,
@@ -1098,6 +1104,45 @@ def get_top_candies(limit=10):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT user_id, balance FROM candies ORDER BY balance DESC LIMIT ?", (limit,))
+        return c.fetchall()
+
+
+# ================= ЗАПРЕТ ПЕРЕВОДОВ =================
+def add_transfer_block(blocker_id: int, blocked_id: int, added_by: int) -> bool:
+    """blocker_id запрещает blocked_id переводить ему ириски."""
+    if blocker_id == blocked_id: return False
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        try:
+            c.execute(
+                "INSERT OR IGNORE INTO transfer_blocks (blocker_id, blocked_id, added_by) VALUES (?, ?, ?)",
+                (blocker_id, blocked_id, added_by)
+            )
+            conn.commit()
+            return c.rowcount > 0
+        except: return False
+
+
+def remove_transfer_block(blocker_id: int, blocked_id: int) -> bool:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM transfer_blocks WHERE blocker_id = ? AND blocked_id = ?", (blocker_id, blocked_id))
+        conn.commit()
+        return c.rowcount > 0
+
+
+def is_transfer_blocked(blocker_id: int, blocked_id: int) -> bool:
+    """True — если blocked_id не может переводить blocker_id."""
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM transfer_blocks WHERE blocker_id = ? AND blocked_id = ?", (blocker_id, blocked_id))
+        return c.fetchone() is not None
+
+
+def get_transfer_blocks(blocker_id: int):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT blocked_id, added_at FROM transfer_blocks WHERE blocker_id = ? ORDER BY added_at DESC", (blocker_id,))
         return c.fetchall()
 
 
@@ -3600,6 +3645,20 @@ async def add_agent_cmd(message: types.Message):
         return await message.reply(f"{em('cross', '❌')} Ранг 1-4.", parse_mode="HTML", disable_web_page_preview=True)
     set_agent_rank(target.id, rank, actor_id)
     rank_name = AGENT_RANKS.get(rank, "🛡 Агент")
+
+    # ← уведомление в ЛС новому агенту
+    try:
+        await bot.send_message(
+            target.id,
+            f"🛡 <b>Вам выдана должность агента Mos!</b>\n\n"
+            f"👤 Вы: {mention(target)}\n"
+            f"🎖 Ранг: <b>{rank_name}</b>\n"
+            f"👮 Выдал: {mention(message.from_user)}",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    except Exception as e:
+        print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
+
     await message.reply(f"{em('check', '✅')} {mention(target)} теперь <b>{rank_name}</b>!", parse_mode="HTML", disable_web_page_preview=True)
 
 
@@ -3610,6 +3669,14 @@ async def remove_agent_cmd(message: types.Message):
     target, _ = await resolve_target(message)
     if not target: return
     remove_agent(target.id)
+    try:
+        await bot.send_message(
+            target.id,
+            f"{em('cross', '❌')} <b>Вы больше не агент Mos.</b>\n\n"
+            f"👮 Снял: {mention(message.from_user)}",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    except: pass
     await message.reply(f"{em('cross', '❌')} {mention(target)} не агент.", parse_mode="HTML", disable_web_page_preview=True)
 
 
@@ -4104,6 +4171,11 @@ async def transfer_candies_cmd(message: types.Message):
             try: target = await bot.get_chat(int(target_arg))
             except: return
     if not target or target.id == user_id or target.id == bot.id: return
+    if is_transfer_blocked(target.id, user_id):
+        return await message.reply(
+            f"{em('cross', '❌')} {mention(target)} <b>запретил(а)</b> тебе переводить ириски.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
     try: amount = int(amount_arg)
     except: return
     if amount < 1 or amount > 100000: return
@@ -4121,6 +4193,92 @@ async def transfer_candies_cmd(message: types.Message):
     try:
         await bot.send_message(target.id, f"🎁 <b>Вам перевели {amount} 🍬 от {message.from_user.first_name}</b>", parse_mode="HTML")
     except: pass
+
+
+# ================= ЗАПРЕТ ПЕРЕВОДОВ — КОМАНДЫ =================
+@dp.message(lambda m: m.text and re.match(
+    r'^\s*[.\/!]?\s*запретить\s+переводы\b', m.text.strip(), re.IGNORECASE))
+async def block_transfer_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply(
+            f"{em('cross', '❌')} Только в группе.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply(
+            "📌 <b>Ответь на сообщение юзера</b> или напиши:\n"
+            "<code>.запретить переводы @user</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    blocker_id = message.from_user.id
+    if target.id == blocker_id:
+        return await message.reply(f"{em('cross', '❌')} Себе нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+    if target.id == bot.id:
+        return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+
+    ok = add_transfer_block(blocker_id, target.id, blocker_id)
+    if not ok:
+        return await message.reply(
+            f"ℹ️ {mention(target)} уже в списке запрещённых.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    await message.reply(
+        f"{em('check', '✅')} <b>Готово!</b>\n\n"
+        f"🚫 {mention(target)} <b>больше не может</b> переводить ириски {mention(message.from_user)}.",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(
+    r'^\s*[.\/!]?\s*разрешить\s+переводы\b', m.text.strip(), re.IGNORECASE))
+async def unblock_transfer_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply(
+            f"{em('cross', '❌')} Только в группе.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    target, _ = await resolve_target(message)
+    if not target:
+        return await message.reply(
+            "📌 <b>Ответь на сообщение юзера</b> или напиши:\n"
+            "<code>.разрешить переводы @user</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    ok = remove_transfer_block(message.from_user.id, target.id)
+    if not ok:
+        return await message.reply(
+            f"ℹ️ {mention(target)} не был в списке запрещённых.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    await message.reply(
+        f"{em('check', '✅')} {mention(target)} снова может переводить тебе ириски.",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("мои запреты")
+@cmd("запреты")
+async def my_transfer_blocks_cmd(message: types.Message):
+    blocks = get_transfer_blocks(message.from_user.id)
+    if not blocks:
+        return await message.reply(
+            f"📭 У вас нет запретов на переводы.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    text = f"🚫 <b>Запрет на переводы вам</b> ({len(blocks)}):\n\n"
+    for i, (blocked_id, added_at) in enumerate(blocks, 1):
+        try:
+            u = await bot.get_chat(blocked_id)
+            name = user_link(blocked_id, u.first_name, u.username)
+        except:
+            name = f"<code>{blocked_id}</code>"
+        date = added_at[:10] if added_at else "?"
+        text += f"{i}. {name} — <i>{date}</i>\n"
+    text += (
+        f"\n📌 Снять запрет: <code>.разрешить переводы @user</code>"
+    )
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 # ================= КОИНЫ =================
