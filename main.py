@@ -661,7 +661,10 @@ def has_link(text):
     if not text: return False
     if re.search(r'(https?://|tg://|t\.me/)', text, re.IGNORECASE): return True
     if re.search(r'www\.[a-zA-Z0-9-]+\.[a-zA-Z]{2,}', text, re.IGNORECASE): return True
-    return False# ================= АВТОМОДЕРАЦИЯ =================
+    return False
+
+
+# ================= АВТОМОДЕРАЦИЯ =================
 BAD_WORDS = [
     "блять", "блядь", "блят", "бля", "сука", "сучка", "сучонок",
     "хуй", "хуя", "хую", "хуе", "хуё", "хуи", "хуйн", "хуйня", "хуёв",
@@ -1462,7 +1465,10 @@ def mark_report_reviewed(report_id, reviewed_by):
         c = conn.cursor()
         c.execute("UPDATE reports SET status = 'reviewed', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
                   (reviewed_by, report_id))
-        conn.commit()# ================= РЫБАЛКА =================
+        conn.commit()
+
+
+# ================= РЫБАЛКА =================
 FISH_LIST = [
     ("Окунь", "🐟", 1, 3, 100), ("Карась", "🐠", 2, 5, 90), ("Лещ", "🐠", 3, 8, 80),
     ("Плотва", "🐟", 2, 6, 75), ("Краснопёрка", "🐠", 3, 7, 70), ("Густера", "🐟", 4, 9, 65),
@@ -1927,6 +1933,38 @@ def remove_grid_moderator(grid_id, user_id):
         c = conn.cursor()
         c.execute("DELETE FROM grid_moderators WHERE grid_id = ? AND user_id = ?", (grid_id, user_id))
         conn.commit()
+
+
+# ================= ХЕЛПЕРЫ СЕТКИ =================
+def empty_admin_rights() -> types.ChatAdministratorRights:
+    """Все поля обязательны в ChatAdministratorRights — возвращаем объект со всеми False."""
+    return types.ChatAdministratorRights(
+        is_anonymous=False,
+        can_manage_chat=False,
+        can_delete_messages=False,
+        can_manage_video_chats=False,
+        can_restrict_members=False,
+        can_promote_members=False,
+        can_change_info=False,
+        can_invite_users=False,
+        can_pin_messages=False,
+        can_manage_topics=False,
+    )
+
+
+def set_rank_in_grid_chats(grid_id: int, user_id: int, rank: int, added_by: int) -> int:
+    """Ставит/сбрасывает ранг в боте во всех чатах сетки. Возвращает число успешных."""
+    ok = 0
+    for chat_id, hidden, desc in get_grid_chats(grid_id, include_hidden=True):
+        try:
+            if rank <= 0:
+                remove_rank(chat_id, user_id)
+            else:
+                set_rank(chat_id, user_id, rank, added_by)
+            ok += 1
+        except Exception as e:
+            print(f"❌ set_rank_in_grid_chats {chat_id}: {e}")
+    return ok
 
 
 # ================= БРАКИ — DB =================
@@ -2471,7 +2509,10 @@ def extract_links_from_text(text: str):
     cleaned = LINK_PATTERN.sub(replacer, text)
     for i, p in enumerate(protected):
         cleaned = cleaned.replace(f"\x00LINKPROT{i}\x00", p)
-    return cleaned, links# ================= /START =================
+    return cleaned, links
+
+
+# ================= /START =================
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     try:
@@ -3951,7 +3992,10 @@ async def afl_ban_cmd(message): await _set_automod_time(message, "antiflood", "b
 async def ac_mute_cmd(message): await _set_automod_time(message, "anticaps", "mute")
 
 @cmd("антисtickermut")
-async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker", "mute")# ================= АЧИВКИ =================
+async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker", "mute")
+
+
+# ================= АЧИВКИ =================
 @cmd("ачивки")
 @cmd("все ачивки")
 async def list_achievements_cmd(message: types.Message):
@@ -5529,6 +5573,14 @@ async def grid_command_router(message: types.Message):
                 failed += 1
                 print(f"❌ +админ в {chat_id}: {e}")
         add_grid_moderator(grid_id, target.id, rank=4, is_admin=1)
+
+        # ← синхронизируем ранг в боте во всех чатах сетки
+        for chat_id, hidden, desc in chats:
+            try:
+                set_rank(chat_id, target.id, 4, actor_id)
+            except Exception as e:
+                print(f"❌ set_rank {chat_id}: {e}")
+
         notify_text = (
             f"🛡 <b>Назначение администратора в сетке</b>\n\n"
             f"👤 {mention(target)} назначен <b>ТГ-админом</b> во всех чатах сетки.\n"
@@ -5552,19 +5604,12 @@ async def grid_command_router(message: types.Message):
         for chat_id, hidden, desc in chats:
             success_this_chat = False
             try:
-                await bot.promote_chat_member(chat_id=chat_id, user_id=target.id, rights=types.ChatAdministratorRights())
+                await bot.promote_chat_member(
+                    chat_id=chat_id,
+                    user_id=target.id,
+                    rights=empty_admin_rights(),
+                )
                 success_this_chat = True
-            except TypeError:
-                try:
-                    await bot.promote_chat_member(
-                        chat_id=chat_id, user_id=target.id,
-                        can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
-                        can_restrict_members=False, can_promote_members=False, can_change_info=False,
-                        can_invite_users=False, can_pin_messages=False, can_manage_topics=False,
-                    )
-                    success_this_chat = True
-                except Exception as e:
-                    errors_log.append(f"{chat_id}: {e}")
             except Exception as e:
                 errors_log.append(f"{chat_id}: {e}")
             if success_this_chat: removed_from += 1
@@ -5606,18 +5651,14 @@ async def grid_command_router(message: types.Message):
         removed_from = 0
         for chat_id, hidden, desc in chats:
             try:
-                await bot.promote_chat_member(chat_id=chat_id, user_id=target.id, rights=types.ChatAdministratorRights())
+                await bot.promote_chat_member(
+                    chat_id=chat_id,
+                    user_id=target.id,
+                    rights=empty_admin_rights(),
+                )
                 removed_from += 1
-            except:
-                try:
-                    await bot.promote_chat_member(
-                        chat_id=chat_id, user_id=target.id,
-                        can_manage_chat=False, can_delete_messages=False, can_manage_video_chats=False,
-                        can_restrict_members=False, can_promote_members=False, can_change_info=False,
-                        can_invite_users=False, can_pin_messages=False, can_manage_topics=False,
-                    )
-                    removed_from += 1
-                except: pass
+            except Exception as e:
+                print(f"❌ разжаловать в {chat_id}: {e}")
             try: remove_rank(chat_id, target.id)
             except: pass
             try: unmark_bot_promoted(target.id, chat_id)
@@ -5650,6 +5691,10 @@ async def grid_command_router(message: types.Message):
         try: set_grid_user_rank(grid_id, target.id, new_rank, actor_id)
         except: pass
         add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
+
+        # ← синхронизируем ранг в боте во всех чатах сетки
+        set_rank_in_grid_chats(grid_id, target.id, new_rank, actor_id)
+
         notify_text = (
             f"🏆 <b>Повышение в сетке</b>\n\n"
             f"👤 {mention(target)} повышен до ранга <b>{new_rank}</b>.\n"
@@ -5675,6 +5720,10 @@ async def grid_command_router(message: types.Message):
         try: set_grid_user_rank(grid_id, target.id, new_rank, actor_id)
         except: pass
         add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
+
+        # ← синхронизируем ранг в боте во всех чатах сетки
+        set_rank_in_grid_chats(grid_id, target.id, new_rank, actor_id)
+
         notify_text = (
             f"📉 <b>Понижение в сетке</b>\n\n"
             f"👤 {mention(target)} понижен до ранга <b>{new_rank}</b>.\n"
@@ -5704,7 +5753,10 @@ async def grid_command_router(message: types.Message):
         return await message.reply(
             f"{em('check', '✅')} <b>Чат отвязан от сетки</b>\n\n🕸 Было: <b>{grid_name}</b>",
             parse_mode="HTML", disable_web_page_preview=True
-        )# ================= БРАКИ — ЕДИНЫЙ РОУТЕР =================
+        )
+
+
+# ================= БРАКИ — ЕДИНЫЙ РОУТЕР =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак(\s|$)', m.text.strip(), re.IGNORECASE))
 async def marriage_router(message: types.Message):
     txt = message.text.strip()
