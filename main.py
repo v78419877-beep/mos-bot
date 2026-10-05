@@ -3667,6 +3667,86 @@ async def list_admins_cmd(message: types.Message):
         text += f"{RANK_NAMES.get(rank, '👤')} — {name}\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
+# ================= УХОЖУ В ОТСТАВКУ =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*ухожу\s+в\s+отставку\b', m.text.strip(), re.IGNORECASE))
+async def resign_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    # Запрет владельцу бота
+    if user_id == OWNER_ID:
+        return await message.reply(
+            f"{em('cross', '❌')} Владелец бота не может уйти в отставку.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    # Проверка: создатель чата?
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        if member.status == "creator":
+            return await message.reply(
+                f"{em('cross', '❌')} Создатель чата не может уйти в отставку.\n"
+                f"📌 Передайте права через Telegram другому юзеру.",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+    except: pass
+
+    # Текущий ранг в боте
+    current_rank = get_rank(chat_id, user_id)
+    if current_rank == 0:
+        return await message.reply(
+            f"ℹ️ Вы и так не имеете ранга в этом чате.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    # Текущий ранг в сетке (если чат привязан)
+    grid_id = get_chat_grid(chat_id)
+    grid_rank = 0
+    if grid_id:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT rank FROM grid_user_ranks WHERE grid_id = ? AND user_id = ?", (grid_id, user_id))
+            r = c.fetchone()
+            if r: grid_rank = r[0]
+            # Также проверим grid_moderators
+            c.execute("SELECT rank FROM grid_moderators WHERE grid_id = ? AND user_id = ?", (grid_id, user_id))
+            r2 = c.fetchone()
+            if r2 and r2[0] > grid_rank:
+                grid_rank = r2[0]
+
+    # Снимаем ранг в боте (только в этом чате!)
+    remove_rank(chat_id, user_id)
+
+    # Снимаем пометку промоута
+    try: unmark_bot_promoted(user_id, chat_id)
+    except: pass
+
+    # Снимаем ранг в сетке (если чат в сетке)
+    if grid_id and grid_rank > 0:
+        try: remove_grid_user_rank(grid_id, user_id)
+        except: pass
+        try: remove_grid_moderator(grid_id, user_id)
+        except: pass
+
+    rank_name = RANK_NAMES.get(current_rank, f"Ранг {current_rank}")
+
+    # Формируем ответ
+    text = (
+        f"{em('check', '✅')} <b>Вы ушли в отставку</b>\n\n"
+        f"👤 {mention(message.from_user)}\n"
+        f"📉 Было: <b>{rank_name}</b>\n"
+    )
+    if grid_id and grid_rank > 0:
+        text += f"🕸 Ранг в сетке: <b>сброшен</b> (был {grid_rank})\n"
+    text += (
+        f"\n🔒 <i>ТГ-права в Telegram остались — их снимать нужно вручную.</i>"
+    )
+
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
 
 @cmd("восстановить")
 async def restore_creator_cmd(message: types.Message):
