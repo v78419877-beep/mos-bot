@@ -5198,135 +5198,189 @@ async def get_note_cmd(message: types.Message):
     try: await message.reply(note[2], parse_mode="HTML", disable_web_page_preview=True)
     except: await message.reply(note[2], disable_web_page_preview=True)
 
-
 # ================= СЕТКА =================
+
+def create_grid(name, creator_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO grids (name, creator_id) VALUES (?, ?)", (name, creator_id))
+            conn.commit()
+            return c.lastrowid
+        except sqlite3.IntegrityError:
+            return None
+
+
+def get_grid_by_name(name):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        if name.isdigit():
+            c.execute("SELECT id, name FROM grids WHERE id = ?", (int(name),))
+        else:
+            c.execute("SELECT id, name FROM grids WHERE LOWER(name) = LOWER(?)", (name,))
+        return c.fetchone()
+
+
+def add_chat_to_grid(grid_id, chat_id, hidden=0, description=""):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO grid_chats (grid_id, chat_id, hidden, description) VALUES (?, ?, ?, ?)",
+                  (grid_id, chat_id, hidden, description))
+        conn.commit()
+
+
+def get_grid_chats(grid_id, include_hidden=False):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        if include_hidden:
+            c.execute("SELECT chat_id, hidden, description FROM grid_chats WHERE grid_id = ?", (grid_id,))
+        else:
+            c.execute("SELECT chat_id, hidden, description FROM grid_chats WHERE grid_id = ? AND hidden = 0", (grid_id,))
+        return c.fetchall()
+
+
+def get_chat_grid(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT grid_id FROM grid_chats WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        return r[0] if r else None
+
+
+def is_grid_moderator(grid_id, user_id, min_rank=1):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT creator_id FROM grids WHERE id = ?", (grid_id,))
+        creator = c.fetchone()
+        if creator and creator[0] == user_id: return True
+        if user_id == OWNER_ID: return True
+        c.execute("SELECT rank, is_admin FROM grid_moderators WHERE grid_id = ? AND user_id = ?", (grid_id, user_id))
+        r = c.fetchone()
+        if not r: return False
+        if r[1] == 1: return True
+        return r[0] >= min_rank
+
+
+def add_grid_moderator(grid_id, user_id, rank=1, is_admin=0):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO grid_moderators (grid_id, user_id, rank, is_admin) VALUES (?, ?, ?, ?)",
+                  (grid_id, user_id, rank, is_admin))
+        conn.commit()
+
+
+def remove_grid_moderator(grid_id, user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM grid_moderators WHERE grid_id = ? AND user_id = ?", (grid_id, user_id))
+        conn.commit()
+
+
+def set_grid_user_rank(grid_id, user_id, rank, added_by):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""INSERT OR REPLACE INTO grid_user_ranks 
+            (grid_id, user_id, rank, added_by, added_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (grid_id, user_id, rank, added_by))
+        conn.commit()
+
+
+def remove_grid_user_rank(grid_id, user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM grid_user_ranks WHERE grid_id = ? AND user_id = ?", (grid_id, user_id))
+        conn.commit()
+
+
+# ================= СОЗДАТЬ СЕТКУ (в ЛС) =================
 @cmd("создать сетку")
 async def create_grid_cmd(message: types.Message):
-    if message.chat.type != "private": return
+    if message.chat.type != "private":
+        return await message.reply("⚠️ Только в ЛС с ботом.", parse_mode="HTML", disable_web_page_preview=True)
+    if message.from_user.id != OWNER_ID:
+        return await message.reply(f"{em('cross', '❌')} Только владелец бота.", parse_mode="HTML", disable_web_page_preview=True)
     args = message.text.split(maxsplit=2)
-    if len(args) < 3: return
+    if len(args) < 3:
+        return await message.reply("📌 <code>.создать сетку Название</code>", parse_mode="HTML", disable_web_page_preview=True)
     name = args[2].strip().replace(" ", "_")[:24]
     grid_id = create_grid(name, message.from_user.id)
     if not grid_id:
-        return await message.reply("❌ Уже есть.", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"{em('check', '✅')} Сетка <b>{name}</b> (ID: {grid_id})", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Сетка с таким именем уже есть.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(
+        f"{em('check', '✅')} <b>Сетка создана!</b>\n\n🕸 Название: <b>{name}</b>\n🆔 ID: <code>{grid_id}</code>\n\n"
+        f"📌 Теперь в каждом чате напишите: <code>сетка {name}</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("сетка ") and m.chat.type != "private"
-    and not m.text.lower().strip().startswith("сетка повысить")
-    and not m.text.lower().strip().startswith("сетка понизить")
-    and not m.text.lower().strip().startswith("сетка +админ")
-    and not m.text.lower().strip().startswith("сетка -админ")
-    and not m.text.lower().strip().startswith("сетка разжаловать")
-    and not m.text.lower().strip().startswith("сетка инфо")
-    and not m.text.lower().strip().startswith("сетка -чат"))
-async def set_grid_cmd(message: types.Message):
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2: return
-    grid = get_grid_by_name(args[1].strip())
-    if not grid:
-        return await message.reply("❌ Не найдена.", parse_mode="HTML", disable_web_page_preview=True)
-    grid_id, grid_name = grid
-    add_chat_to_grid(grid_id, message.chat.id, hidden=0)
-    await message.reply(f"{em('check', '✅')} Привязан к <b>{grid_name}</b>!", parse_mode="HTML", disable_web_page_preview=True)
-
-
+# ================= .ЧАТЫ =================
 @cmd("чаты")
 async def list_grid_chats(message: types.Message):
     grid_id = get_chat_grid(message.chat.id)
-    if not grid_id: return
+    if not grid_id:
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+
     chats = get_grid_chats(grid_id, include_hidden=False)
-    text = "📋 <b>Чаты сетки:</b>\n\n"
-    for chat_id, hidden, desc in chats:
+    if not chats:
+        return await message.reply("📭 В сетке нет чатов.", parse_mode="HTML", disable_web_page_preview=True)
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT name FROM grids WHERE id = ?", (grid_id,))
+        g = c.fetchone()
+        grid_name = g[0] if g else f"#{grid_id}"
+
+    text = f"📋 <b>Чаты сетки</b> «{grid_name}»:\n\n"
+    for i, (chat_id, hidden, desc) in enumerate(chats, 1):
         try:
             chat = await bot.get_chat(chat_id)
-            title = chat.title or f"Чат"
-            text += f"• {title}\n"
-        except: pass
+            title = chat.title or f"Чат {chat_id}"
+
+            # Получаем ссылку
+            link = None
+            if chat.username:
+                link = f"https://t.me/{chat.username}"
+            else:
+                try:
+                    inv = await bot.create_chat_invite_link(chat_id)
+                    link = inv.invite_link
+                except:
+                    link = None
+
+            if link:
+                text += f"{i}. <a href='{link}'>{title}</a>\n"
+            else:
+                text += f"{i}. <b>{title}</b> <i>(без ссылки)</i>\n"
+        except Exception as e:
+            text += f"{i}. <code>{chat_id}</code> <i>(нет доступа)</i>\n"
+
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= +ЧАТ / -ЧАТ =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+чат\b', m.text.strip(), re.IGNORECASE))
-async def open_chat_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
-    has_rights = (
-        message.from_user.id == OWNER_ID
-        or has_agent_rank(message.from_user.id, 1)
-        or await is_tg_admin(message.chat.id, message.from_user.id)
-        or has_permission(message.chat.id, message.from_user.id, 3)
-    )
-    if not has_rights:
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
-    try:
-        bm = await bot.get_chat_member(message.chat.id, bot.id)
-        if bm.status not in ["administrator", "creator"]:
-            return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True)
-        if bm.status == "administrator" and not getattr(bm, "can_change_info", False):
-            return await message.reply(f"{em('cross', '❌')} Нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True)
-    except Exception as e:
-        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
-    try:
-        await bot.set_chat_permissions(
-            chat_id=message.chat.id,
-            permissions=types.ChatPermissions(
-                can_send_messages=True, can_send_audios=True, can_send_documents=True,
-                can_send_photos=True, can_send_videos=True, can_send_video_notes=True,
-                can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True,
-                can_add_web_page_previews=True, can_invite_users=True,
-            )
-        )
-    except Exception as e:
-        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"{em('check', '✅')} <b>Чат открыт</b> для общения!\n👮 {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-чат\b', m.text.strip(), re.IGNORECASE))
-async def close_chat_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
-    has_rights = (
-        message.from_user.id == OWNER_ID
-        or has_agent_rank(message.from_user.id, 1)
-        or await is_tg_admin(message.chat.id, message.from_user.id)
-        or has_permission(message.chat.id, message.from_user.id, 3)
-    )
-    if not has_rights:
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
-    try:
-        bm = await bot.get_chat_member(message.chat.id, bot.id)
-        if bm.status not in ["administrator", "creator"]:
-            return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True)
-        if bm.status == "administrator" and not getattr(bm, "can_change_info", False):
-            return await message.reply(f"{em('cross', '❌')} Нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True)
-    except Exception as e:
-        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
-    try:
-        await bot.set_chat_permissions(
-            chat_id=message.chat.id,
-            permissions=types.ChatPermissions(
-                can_send_messages=False, can_send_audios=False, can_send_documents=False,
-                can_send_photos=False, can_send_videos=False, can_send_video_notes=False,
-                can_send_voice_notes=False, can_send_polls=False, can_send_other_messages=False,
-                can_add_web_page_previews=False,
-            )
-        )
-    except Exception as e:
-        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"{em('cross', '❌')} <b>Чат закрыт</b> для общения!\n👮 {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True)
-
-
-# ================= СЕТКА — РОУТЕР с уведомлениями во все чаты =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*сетка\s+(инфо|info|\+админ|\+админка|\+adm|-админ|-админка|-adm|разжаловать|снять|повысить|понизить|-чат)\b', m.text.strip(), re.IGNORECASE))
+# ================= СЕТКА — ЕДИНЫЙ РОУТЕР =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*сетка\b', m.text.strip(), re.IGNORECASE))
 async def grid_command_router(message: types.Message):
     if message.chat.type == "private":
         return await message.reply("⚠️ Команды сетки работают только в группе.", parse_mode="HTML", disable_web_page_preview=True)
 
     raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
     parts = raw.split()
+
+    # Только слово "сетка" без действий — справка
     if len(parts) < 2:
-        return await message.reply("📌 <code>сетка инфо</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(
+            "🕸 <b>Команды сетки:</b>\n\n"
+            "• <code>сетка Название</code> — привязать чат\n"
+            "• <code>сетка инфо</code> — информация\n"
+            "• <code>сетка +админ @user</code>\n"
+            "• <code>сетка -админ @user</code>\n"
+            "• <code>сетка разжаловать @user</code>\n"
+            "• <code>сетка повысить @user 2</code>\n"
+            "• <code>сетка понизить @user 1</code>\n"
+            "• <code>сетка -чат</code> — отвязать чат",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
     action = parts[1].lower()
 
     # ============ ИНФО ============
@@ -5357,13 +5411,73 @@ async def grid_command_router(message: types.Message):
                 text += f"{badge} {name} — ранг {rank}\n"
         return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
+    # ============ ПРИВЯЗКА ЧАТА (действие = название сетки) ============
+    known_actions = ["+админ", "+админка", "+adm", "-админ", "-админка", "-adm",
+                     "разжаловать", "снять", "повысить", "понизить", "-чат"]
+
+    if action not in known_actions:
+        # Это привязка — название сетки = всё, что после "сетка "
+        grid_name = " ".join(parts[1:]).strip()
+
+        # Проверка существующей привязки
+        existing_grid = get_chat_grid(message.chat.id)
+        if existing_grid:
+            with sqlite3.connect(DATABASE_PATH) as conn:
+                c = conn.cursor()
+                c.execute("SELECT name FROM grids WHERE id = ?", (existing_grid,))
+                g = c.fetchone()
+                cur_name = g[0] if g else "?"
+            return await message.reply(
+                f"ℹ️ Чат уже привязан к сетке <b>{cur_name}</b> (#{existing_grid}).\n"
+                f"📌 Отвязать: <code>сетка -чат</code>",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+
+        # Проверка прав: создатель чата / владелец бота / владелец сетки (ранг 5)
+        is_creator_of_chat = False
+        try:
+            m = await bot.get_chat_member(message.chat.id, message.from_user.id)
+            is_creator_of_chat = (m.status == "creator")
+        except: pass
+
+        grid_lookup = get_grid_by_name(grid_name)
+        has_rights = (
+            message.from_user.id == OWNER_ID
+            or is_creator_of_chat
+        )
+        if grid_lookup and is_grid_moderator(grid_lookup[0], message.from_user.id, 5):
+            has_rights = True
+
+        if not has_rights:
+            return await message.reply(
+                f"{em('cross', '❌')} Только создатель чата или владелец сетки.",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+
+        if not grid_lookup:
+            return await message.reply(
+                f"{em('cross', '❌')} Сетка <b>{grid_name}</b> не найдена.\n\n"
+                f"📌 Создать: <code>.создать сетку {grid_name}</code> (в ЛС бота)",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+
+        grid_id, grid_db_name = grid_lookup
+        add_chat_to_grid(grid_id, message.chat.id, hidden=0)
+        return await message.reply(
+            f"{em('check', '✅')} <b>Чат привязан к сетке!</b>\n\n"
+            f"🕸 Название: <b>{grid_db_name}</b>\n"
+            f"🆔 ID: <code>{grid_id}</code>\n"
+            f"👮 Сделал: {mention(message.from_user)}",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    # ============ ОСТАЛЬНЫЕ ДЕЙСТВИЯ ТРЕБУЮТ ПРИВЯЗКИ ============
     grid_id = get_chat_grid(message.chat.id)
     if not grid_id:
         return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
     actor_id = message.from_user.id
     chats = get_grid_chats(grid_id, include_hidden=True)
 
-    # Утилита: разослать уведомление во все чаты сетки
     async def notify_all_chats(text_to_send):
         sent = 0
         for cid, hidden, desc in chats:
@@ -5383,8 +5497,7 @@ async def grid_command_router(message: types.Message):
             return await message.reply("📌 <code>сетка +админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
         if target.id == OWNER_ID: return
 
-        added_to = 0
-        failed = 0
+        added_to = 0; failed = 0
         for chat_id, hidden, desc in chats:
             try:
                 await bot.promote_chat_member(
@@ -5403,16 +5516,14 @@ async def grid_command_router(message: types.Message):
                 print(f"❌ +админ в {chat_id}: {e}")
 
         add_grid_moderator(grid_id, target.id, rank=4, is_admin=1)
-
         notify_text = (
             f"🛡 <b>Назначение администратора в сетке</b>\n\n"
             f"👤 {mention(target)} назначен <b>ТГ-админом</b> во всех чатах сетки.\n"
             f"👮 Сделал: {mention(message.from_user)}"
         )
         sent = await notify_all_chats(notify_text)
-
         return await message.reply(
-            f"{em('check', '✅')} {mention(target)} — <b>ТГ-админ</b> в <b>{added_to}/{len(chats)}</b> чатах сетки.\n"
+            f"{em('check', '✅')} {mention(target)} — <b>ТГ-админ</b> в <b>{added_to}/{len(chats)}</b> чатах.\n"
             f"⚠️ Ошибок: {failed}\n📢 Уведомлений: {sent}/{len(chats)}",
             parse_mode="HTML", disable_web_page_preview=True
         )
@@ -5426,8 +5537,7 @@ async def grid_command_router(message: types.Message):
             return await message.reply("📌 <code>сетка -админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
         if target.id == OWNER_ID: return
 
-        removed_from = 0
-        failed = 0
+        removed_from = 0; failed = 0
         for chat_id, hidden, desc in chats:
             try:
                 await bot.promote_chat_member(
@@ -5451,7 +5561,6 @@ async def grid_command_router(message: types.Message):
             f"👮 Сделал: {mention(message.from_user)}"
         )
         sent = await notify_all_chats(notify_text)
-
         return await message.reply(
             f"{em('check', '✅')} Снято с {mention(target)} ТГ-права в <b>{removed_from}/{len(chats)}</b> чатах.\n"
             f"⚠️ Ошибок: {failed}\n📢 Уведомлений: {sent}/{len(chats)}",
@@ -5489,7 +5598,6 @@ async def grid_command_router(message: types.Message):
             f"👮 Сделал: {mention(message.from_user)}"
         )
         sent = await notify_all_chats(notify_text)
-
         return await message.reply(
             f"{em('cross', '❌')} {mention(target)} <b>разжалован</b> в {removed_from}/{len(chats)} чатах.\n📢 Уведомлений: {sent}/{len(chats)}",
             parse_mode="HTML", disable_web_page_preview=True
@@ -5517,7 +5625,6 @@ async def grid_command_router(message: types.Message):
             f"👮 Сделал: {mention(message.from_user)}"
         )
         sent = await notify_all_chats(notify_text)
-
         return await message.reply(
             f"🏆 {mention(target)} повышен до ранга <b>{new_rank}</b>\n📢 Уведомлений: {sent}/{len(chats)}",
             parse_mode="HTML", disable_web_page_preview=True
@@ -5545,7 +5652,6 @@ async def grid_command_router(message: types.Message):
             f"👮 Сделал: {mention(message.from_user)}"
         )
         sent = await notify_all_chats(notify_text)
-
         return await message.reply(
             f"📉 {mention(target)} понижен до ранга <b>{new_rank}</b>\n📢 Уведомлений: {sent}/{len(chats)}",
             parse_mode="HTML", disable_web_page_preview=True
@@ -5574,7 +5680,10 @@ async def grid_command_router(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True
         )
 
+    return await message.reply(f"❓ Неизвестное действие: <code>{action}</code>", parse_mode="HTML", disable_web_page_preview=True)
 
+
+# ================= ГЛОБАН =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("глобан"))
 async def global_ban_cmd(message: types.Message):
     grid_id = get_chat_grid(message.chat.id)
@@ -5588,7 +5697,8 @@ async def global_ban_cmd(message: types.Message):
         try:
             await bot.ban_chat_member(chat_id, target.id); success += 1
         except: pass
-    await message.reply(f"{em('ban', '🚫')} {mention(target)} забанен ({success}/{len(chats)}).", parse_mode="HTML", disable_web_page_preview=True)# ================= БРАКИ — ЕДИНЫЙ РОУТЕР =================
+    await message.reply(f"{em('ban', '🚫')} {mention(target)} забанен ({success}/{len(chats)}).", parse_mode="HTML", disable_web_page_preview=True)
+# ================= БРАКИ — ЕДИНЫЙ РОУТЕР =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак(\s|$)', m.text.strip(), re.IGNORECASE))
 async def marriage_router(message: types.Message):
     txt = message.text.strip()
