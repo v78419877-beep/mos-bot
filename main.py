@@ -349,7 +349,7 @@ def init_db():
             chat_id INTEGER PRIMARY KEY, events_enabled INTEGER DEFAULT 1)""")
         c.execute("""CREATE TABLE IF NOT EXISTS fishing_tournaments (
             chat_id INTEGER PRIMARY KEY, started_by INTEGER, started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TIMESTAMP, prize INTEGER DEFAULT 5000)""")
+            expires_at TIMESTAMP, prize INTEGER DEFAULT 100)""")
         c.execute("""CREATE TABLE IF NOT EXISTS fishing_tournament_members (
             chat_id INTEGER, user_id INTEGER, caught INTEGER DEFAULT 0,
             UNIQUE(chat_id, user_id))""")
@@ -372,6 +372,67 @@ def init_db():
             chat_id INTEGER, command TEXT, min_rank INTEGER DEFAULT 0,
             UNIQUE(chat_id, command))""")
         conn.commit()
+
+
+# ================= ХЕЛПЕРЫ ПРАВ АДМИНА =================
+def _admin_rights_kwargs(**overrides):
+    """Собирает kwargs, отбрасывая те, что не поддерживаются в текущей версии aiogram."""
+    base = {
+        "is_anonymous": False,
+        "can_manage_chat": False,
+        "can_delete_messages": False,
+        "can_manage_video_chats": False,
+        "can_restrict_members": False,
+        "can_promote_members": False,
+        "can_change_info": False,
+        "can_invite_users": False,
+        "can_pin_messages": False,
+        "can_manage_topics": False,
+        "can_post_messages": False,
+        "can_edit_messages": False,
+        "can_post_stories": False,
+        "can_edit_stories": False,
+        "can_delete_stories": False,
+    }
+    base.update(overrides)
+    # Фильтруем по фактическим полям модели
+    try:
+        valid = set(types.ChatAdministratorRights.model_fields.keys())
+    except Exception:
+        valid = set(base.keys())
+    return {k: v for k, v in base.items() if k in valid}
+
+
+def full_admin_rights() -> types.ChatAdministratorRights:
+    """Все права True (кроме promote)."""
+    return types.ChatAdministratorRights(**_admin_rights_kwargs(
+        can_manage_chat=True,
+        can_delete_messages=True,
+        can_manage_video_chats=True,
+        can_restrict_members=True,
+        can_change_info=True,
+        can_invite_users=True,
+        can_pin_messages=True,
+        can_manage_topics=True,
+    ))
+
+
+def empty_admin_rights() -> types.ChatAdministratorRights:
+    """Все права False — снимаем права."""
+    return types.ChatAdministratorRights(**_admin_rights_kwargs())
+
+
+# ================= ХЕЛПЕРЫ ВРЕМЕНИ =================
+def _fmt_dt(dt: datetime) -> str:
+    """'YYYY-MM-DD HH:MM:SS' — без T, без микросекунд."""
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_dt(s: str) -> datetime:
+    if not s: return datetime.now()
+    s = s.replace("T", " ")[:19]
+    try: return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    except: return datetime.now()
 
 
 # ================= РАНГИ =================
@@ -1109,7 +1170,6 @@ def get_top_candies(limit=10):
 
 # ================= ЗАПРЕТ ПЕРЕВОДОВ =================
 def add_transfer_block(blocker_id: int, blocked_id: int, added_by: int) -> bool:
-    """blocker_id запрещает blocked_id переводить ему ириски."""
     if blocker_id == blocked_id: return False
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1132,7 +1192,6 @@ def remove_transfer_block(blocker_id: int, blocked_id: int) -> bool:
 
 
 def is_transfer_blocked(blocker_id: int, blocked_id: int) -> bool:
-    """True — если blocked_id не может переводить blocker_id."""
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT 1 FROM transfer_blocks WHERE blocker_id = ? AND blocked_id = ?", (blocker_id, blocked_id))
@@ -1428,7 +1487,6 @@ def remove_captcha(user_id, chat_id):
 
 
 def is_captcha_enabled(chat_id):
-    """По умолчанию капча ВЫКЛЮЧЕНА."""
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT enabled FROM captcha_settings WHERE chat_id = ?", (chat_id,))
@@ -1566,6 +1624,8 @@ FISHING_ACHIEVEMENTS = {
 BAIT_DURATION_HOURS = 1
 FISH_COOLDOWN_SECONDS = 7200
 LEVEL_XP_BASE = 50
+
+TOURNAMENT_DURATION_MIN = 60
 
 
 def get_fishing(user_id):
@@ -1802,22 +1862,43 @@ def get_fish_price(fish_name):
     return 5
 
 
+# ================= ТУРНИРЫ =================
 def get_active_tournament(chat_id):
+    now = _fmt_dt(datetime.now())
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        now = datetime.now().isoformat()
-        c.execute("SELECT started_by, started_at, expires_at, prize FROM fishing_tournaments WHERE chat_id = ? AND expires_at > ?", (chat_id, now))
+        c.execute(
+            "SELECT started_by, started_at, expires_at, prize FROM fishing_tournaments "
+            "WHERE chat_id = ? AND expires_at > ?",
+            (chat_id, now)
+        )
         return c.fetchone()
 
 
-def create_tournament(chat_id, user_id, prize=5000, duration_min=60):
-    expires = (datetime.now() + timedelta(minutes=duration_min)).isoformat()
+def get_expired_tournament(chat_id):
+    now = _fmt_dt(datetime.now())
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT started_by, started_at, expires_at, prize FROM fishing_tournaments "
+            "WHERE chat_id = ? AND expires_at <= ?",
+            (chat_id, now)
+        )
+        return c.fetchone()
+
+
+def create_tournament(chat_id, user_id, prize=100, duration_min=60):
+    expires = _fmt_dt(datetime.now() + timedelta(minutes=duration_min))
+    started = _fmt_dt(datetime.now())
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("DELETE FROM fishing_tournaments WHERE chat_id = ?", (chat_id,))
         c.execute("DELETE FROM fishing_tournament_members WHERE chat_id = ?", (chat_id,))
-        c.execute("INSERT INTO fishing_tournaments (chat_id, started_by, expires_at, prize) VALUES (?, ?, ?, ?)",
-                  (chat_id, user_id, expires, prize))
+        c.execute(
+            "INSERT INTO fishing_tournaments (chat_id, started_by, started_at, expires_at, prize) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (chat_id, user_id, started, expires, prize)
+        )
         conn.commit()
 
 
@@ -1831,8 +1912,11 @@ def join_tournament(chat_id, user_id):
 def update_tournament_score(chat_id, user_id, count=1):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("UPDATE fishing_tournament_members SET caught = caught + ? WHERE chat_id = ? AND user_id = ?",
-                  (count, chat_id, user_id))
+        c.execute(
+            "UPDATE fishing_tournament_members SET caught = caught + ? "
+            "WHERE chat_id = ? AND user_id = ?",
+            (count, chat_id, user_id)
+        )
         conn.commit()
 
 
@@ -1845,18 +1929,26 @@ def get_tournament_members(chat_id, limit=10):
 
 
 def end_tournament(chat_id):
-    tour = get_active_tournament(chat_id)
-    if not tour: return None
-    _, _, _, prize = tour
-    members = get_tournament_members(chat_id, limit=3)
+    """Завершает турнир (в т.ч. истёкший). Призы 20–100 по числу участников."""
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
+        c.execute("SELECT started_by, started_at, expires_at, prize FROM fishing_tournaments WHERE chat_id = ?", (chat_id,))
+        tour = c.fetchone()
+        if not tour:
+            return None
+        c.execute("SELECT user_id, caught FROM fishing_tournament_members WHERE chat_id = ? ORDER BY caught DESC LIMIT 3", (chat_id,))
+        members = c.fetchall()
+        c.execute("SELECT COUNT(*) FROM fishing_tournament_members WHERE chat_id = ?", (chat_id,))
+        participants = c.fetchone()[0] or 0
         c.execute("DELETE FROM fishing_tournaments WHERE chat_id = ?", (chat_id,))
         c.execute("DELETE FROM fishing_tournament_members WHERE chat_id = ?", (chat_id,))
         conn.commit()
-    if not members: return None
+    if not members:
+        return None
+    # Приз: base 20, +10 за каждого участника, кап 100
+    base = min(100, max(20, 20 + (participants - 1) * 10))
+    prizes = [base, max(1, base // 2), max(1, base // 4)]
     winners = []
-    prizes = [prize, prize // 2, prize // 4]
     for i, (uid, caught) in enumerate(members):
         add_candies(uid, prizes[i], 0)
         winners.append((uid, caught, prizes[i]))
@@ -1980,25 +2072,7 @@ def remove_grid_moderator(grid_id, user_id):
         conn.commit()
 
 
-# ================= ХЕЛПЕРЫ СЕТКИ =================
-def empty_admin_rights() -> types.ChatAdministratorRights:
-    """Все поля обязательны в ChatAdministratorRights — возвращаем объект со всеми False."""
-    return types.ChatAdministratorRights(
-        is_anonymous=False,
-        can_manage_chat=False,
-        can_delete_messages=False,
-        can_manage_video_chats=False,
-        can_restrict_members=False,
-        can_promote_members=False,
-        can_change_info=False,
-        can_invite_users=False,
-        can_pin_messages=False,
-        can_manage_topics=False,
-    )
-
-
 def set_rank_in_grid_chats(grid_id: int, user_id: int, rank: int, added_by: int) -> int:
-    """Ставит/сбрасывает ранг в боте во всех чатах сетки. Возвращает число успешных."""
     ok = 0
     for chat_id, hidden, desc in get_grid_chats(grid_id, include_hidden=True):
         try:
@@ -3646,7 +3720,6 @@ async def add_agent_cmd(message: types.Message):
     set_agent_rank(target.id, rank, actor_id)
     rank_name = AGENT_RANKS.get(rank, "🛡 Агент")
 
-    # ← уведомление в ЛС новому агенту
     try:
         await bot.send_message(
             target.id,
@@ -3877,13 +3950,9 @@ async def grant_admin_cmd(message: types.Message):
     if not target or target.id == OWNER_ID: return
     try:
         await bot.promote_chat_member(
-            chat_id=message.chat.id, user_id=target.id,
-            rights=types.ChatAdministratorRights(
-                is_anonymous=False, can_manage_chat=True, can_delete_messages=True,
-                can_manage_video_chats=True, can_restrict_members=True, can_promote_members=False,
-                can_change_info=True, can_invite_users=True, can_pin_messages=True,
-                can_manage_topics=True,
-            )
+            chat_id=message.chat.id,
+            user_id=target.id,
+            rights=full_admin_rights(),
         )
         mark_bot_promoted(target.id, message.chat.id, message.from_user.id)
         await message.reply(f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b>!", parse_mode="HTML", disable_web_page_preview=True)
@@ -4742,16 +4811,25 @@ async def fishing_event_cmd(message: types.Message):
 @cmd("турнир")
 async def fishing_tournament_cmd(message: types.Message):
     args = message.text.split(); chat_id = message.chat.id
+
     if len(args) >= 2 and args[1].lower() in ["участвовать", "join"]:
         tour = get_active_tournament(chat_id)
         if not tour:
-            return await message.reply("❌ Нет турнира.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("❌ Нет активного турнира.", parse_mode="HTML", disable_web_page_preview=True)
         join_tournament(chat_id, message.from_user.id)
         return await message.reply(f"{em('check', '✅')} Ты в турнире!", parse_mode="HTML", disable_web_page_preview=True)
+
     if len(args) >= 2 and args[1].lower() in ["стоп", "end"]:
-        if message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1) and not await is_tg_admin(chat_id, message.from_user.id): return
+        is_admin = (
+            message.from_user.id == OWNER_ID
+            or has_agent_rank(message.from_user.id, 1)
+            or await is_tg_admin(chat_id, message.from_user.id)
+        )
+        if not is_admin:
+            return await message.reply(f"{em('cross', '❌')} Только админ.", parse_mode="HTML", disable_web_page_preview=True)
         winners = end_tournament(chat_id)
-        if not winners: return
+        if not winners:
+            return await message.reply("❌ Турнир не найден или нет участников.", parse_mode="HTML", disable_web_page_preview=True)
         text = "🏆 <b>ТУРНИР ЗАВЕРШЁН!</b>\n\n"
         medals = ["🥇", "🥈", "🥉"]
         for i, (uid, caught, prize) in enumerate(winners):
@@ -4761,17 +4839,25 @@ async def fishing_tournament_cmd(message: types.Message):
             except: name = f"ID {uid}"
             text += f"{medals[i]} {name} — <b>{caught}</b> 🐟 (+{prize} 🍬)\n"
         return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-    if not await is_tg_admin(chat_id, message.from_user.id) and message.from_user.id != OWNER_ID and not has_agent_rank(message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Только админ.", parse_mode="HTML", disable_web_page_preview=True)
+
+    is_admin = (
+        message.from_user.id == OWNER_ID
+        or has_agent_rank(message.from_user.id, 1)
+        or await is_tg_admin(chat_id, message.from_user.id)
+    )
+    if not is_admin:
+        return await message.reply(f"{em('cross', '❌')} Только админ может запустить турнир.", parse_mode="HTML", disable_web_page_preview=True)
+
     tour = get_active_tournament(chat_id)
     if tour:
         started_by, started_at, expires_at, prize = tour
         try:
-            exp_dt = datetime.strptime(expires_at[:19], "%Y-%m-%d %H:%M:%S")
+            exp_dt = _parse_dt(expires_at)
             left = int((exp_dt - datetime.now()).total_seconds() / 60)
+            if left < 0: left = 0
         except: left = 0
         members = get_tournament_members(chat_id, limit=10)
-        text = f"🏆 <b>Турнир</b>\n⏰ Осталось: <b>{left} мин.</b>\n💰 Приз: <b>{prize}</b> 🍬\n\n"
+        text = f"🏆 <b>Турнир идёт</b>\n⏰ Осталось: <b>{left} мин.</b>\n💰 Приз: до <b>100</b> 🍬\n\n"
         if members:
             medals = ["🥇", "🥈", "🥉"]
             for i, (uid, caught) in enumerate(members):
@@ -4783,9 +4869,16 @@ async def fishing_tournament_cmd(message: types.Message):
                 text += f"{m} {name} — <b>{caught}</b> 🐟\n"
         text += f"\n📌 <code>.турнир участвовать</code>"
         return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-    create_tournament(chat_id, message.from_user.id, prize=5000, duration_min=60)
+
+    create_tournament(chat_id, message.from_user.id, prize=100, duration_min=TOURNAMENT_DURATION_MIN)
     join_tournament(chat_id, message.from_user.id)
-    await message.reply("🏆 <b>ТУРНИР ЗАПУЩЕН!</b>\n⏰ 1 час\n💰 5000/2500/1250 🍬\n📌 <code>.турнир участвовать</code>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(
+        f"🏆 <b>ТУРНИР ЗАПУЩЕН!</b>\n"
+        f"⏰ {TOURNAMENT_DURATION_MIN} мин.\n"
+        f"💰 Призы: <b>20–100</b> 🍬 (зависит от числа участников)\n"
+        f"📌 <code>.турнир участвовать</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+событие", "+ событие"])
@@ -5717,13 +5810,9 @@ async def grid_command_router(message: types.Message):
         for chat_id, hidden, desc in chats:
             try:
                 await bot.promote_chat_member(
-                    chat_id=chat_id, user_id=target.id,
-                    rights=types.ChatAdministratorRights(
-                        is_anonymous=False, can_manage_chat=True, can_delete_messages=True,
-                        can_manage_video_chats=True, can_restrict_members=True, can_promote_members=False,
-                        can_change_info=True, can_invite_users=True, can_pin_messages=True,
-                        can_manage_topics=True,
-                    )
+                    chat_id=chat_id,
+                    user_id=target.id,
+                    rights=full_admin_rights(),
                 )
                 added_to += 1
                 mark_bot_promoted(target.id, chat_id, actor_id)
@@ -5732,7 +5821,6 @@ async def grid_command_router(message: types.Message):
                 print(f"❌ +админ в {chat_id}: {e}")
         add_grid_moderator(grid_id, target.id, rank=4, is_admin=1)
 
-        # ← синхронизируем ранг в боте во всех чатах сетки
         for chat_id, hidden, desc in chats:
             try:
                 set_rank(chat_id, target.id, 4, actor_id)
@@ -5849,10 +5937,7 @@ async def grid_command_router(message: types.Message):
         try: set_grid_user_rank(grid_id, target.id, new_rank, actor_id)
         except: pass
         add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
-
-        # ← синхронизируем ранг в боте во всех чатах сетки
         set_rank_in_grid_chats(grid_id, target.id, new_rank, actor_id)
-
         notify_text = (
             f"🏆 <b>Повышение в сетке</b>\n\n"
             f"👤 {mention(target)} повышен до ранга <b>{new_rank}</b>.\n"
@@ -5878,10 +5963,7 @@ async def grid_command_router(message: types.Message):
         try: set_grid_user_rank(grid_id, target.id, new_rank, actor_id)
         except: pass
         add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
-
-        # ← синхронизируем ранг в боте во всех чатах сетки
         set_rank_in_grid_chats(grid_id, target.id, new_rank, actor_id)
-
         notify_text = (
             f"📉 <b>Понижение в сетке</b>\n\n"
             f"👤 {mention(target)} понижен до ранга <b>{new_rank}</b>.\n"
@@ -6558,9 +6640,10 @@ async def auto_tournament_end_loop():
     while True:
         try:
             await asyncio.sleep(60)
+            now_str = _fmt_dt(datetime.now())
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
-                c.execute("SELECT chat_id FROM fishing_tournaments WHERE expires_at <= ?", (datetime.now().isoformat(),))
+                c.execute("SELECT chat_id FROM fishing_tournaments WHERE expires_at <= ?", (now_str,))
                 expired = [r[0] for r in c.fetchall()]
             for chat_id in expired:
                 winners = end_tournament(chat_id)
@@ -6575,7 +6658,8 @@ async def auto_tournament_end_loop():
                         text += f"{medals[i]} {name} — <b>{caught}</b> 🐟 (+{prize} 🍬)\n"
                     try: await bot.send_message(chat_id, text, parse_mode="HTML")
                     except: pass
-        except: pass
+        except Exception as e:
+            print(f"❌ tournament loop: {e}")
         await asyncio.sleep(30)
 
 
