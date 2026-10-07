@@ -9,7 +9,7 @@ import logging
 from urllib.parse import quote
 from urllib.request import urlopen
 from datetime import datetime, timedelta, timezone
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, BaseMiddleware
 from aiogram.filters import Command, CommandStart
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import matplotlib
@@ -36,6 +36,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
+# ================= ХЕЛПЕРЫ ИМЁН =================
 def _match_command(message: types.Message, name_lower: str) -> bool:
     if not message.text: return False
     txt = message.text.strip()
@@ -205,7 +206,7 @@ DEFAULT_ACCESS = {
     "купить": 0, "инвентарь": 0, "инв": 0, "мои рыбные ачивки": 0,
     "рыбные ачивки": 0, "событие": 0, "события": 0, "турнир": 0,
     "садок": 0, "моя рыба": 0, "рыбасадок": 0, "продать": 0,
-    "ачивки": 0, "все ачивки": 0, "мои ачивки": 0, "вип": 0, "купить вип": 0,
+    "ачивки": 0, "все ачивки": 0, "мои ачивки": 0, "твои ачивки": 0, "вип": 0, "купить вип": 0,
     "мрп": 0, "репорт": 0, "админы": 0, "ухожу в отставку": 0,
 
     "запретить переводы": 0, "разрешить переводы": 0, "мои запреты": 0, "запреты": 0,
@@ -270,6 +271,8 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS bot_ignore (
             user_id INTEGER PRIMARY KEY, added_by INTEGER,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+        c.execute("""CREATE TABLE IF NOT EXISTS hidden_achievements (
+            user_id INTEGER PRIMARY KEY, hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         c.execute("CREATE TABLE IF NOT EXISTS antispam (user_id INTEGER PRIMARY KEY, reason TEXT, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS ignore_list (user_id INTEGER, chat_id INTEGER, reason TEXT, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS chat_codes (chat_id INTEGER PRIMARY KEY, code TEXT UNIQUE)")
@@ -439,7 +442,6 @@ def _parse_dt(s: str) -> datetime:
 
 
 def _fmt_added_dt(s: str) -> str:
-    """'2025-10-07 14:32:00' -> '07.10.2025 14:32'."""
     if not s: return "?"
     try:
         dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
@@ -676,6 +678,27 @@ def remove_bot_ignore(user_id: int) -> bool:
         return c.rowcount > 0
 
 
+def are_achievements_hidden(user_id: int) -> bool:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM hidden_achievements WHERE user_id = ?", (user_id,))
+        return c.fetchone() is not None
+
+
+def hide_achievements(user_id: int):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO hidden_achievements (user_id) VALUES (?)", (user_id,))
+        conn.commit()
+
+
+def show_achievements(user_id: int):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM hidden_achievements WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+
 def is_in_antispam(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -701,7 +724,6 @@ def remove_user_from_antispam(user_id: int) -> bool:
 
 
 def is_ignored(chat_id, user_id):
-    # глобальный игнор: если юзер в bot_ignore — игнор везде
     if is_bot_ignored(user_id): return True
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2376,6 +2398,17 @@ def get_user_achievements(user_id, chat_id):
         return c.fetchall()
 
 
+def get_user_achievements_all_chats(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT a.id, a.name, a.emoji, a.description, ua.given_at, ua.chat_id
+            FROM user_achievements ua
+            JOIN achievements a ON a.id = ua.achievement_id
+            WHERE ua.user_id = ?
+            ORDER BY ua.given_at DESC""", (user_id,))
+        return c.fetchall()
+
+
 def give_achievement(user_id, chat_id, achievement_id, given_by):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2630,12 +2663,13 @@ def get_vip(user_id):
         if not r: return None
         expires_at, emoji = r
         try:
-            exp_dt = datetime.strptime(expires_at[:19], "%Y-%m-%d %H:%M:%S")
+            exp_dt = _parse_dt(expires_at)
             if exp_dt < datetime.now():
                 c.execute("DELETE FROM vip_users WHERE user_id = ?", (user_id,))
                 conn.commit()
                 return None
-        except: pass
+        except Exception as e:
+            print(f"⚠️ get_vip parse {expires_at}: {e}")
         return (expires_at, emoji)
 
 
@@ -2643,9 +2677,11 @@ def add_vip_months(user_id, months):
     current = get_vip(user_id)
     if current:
         try:
-            exp_dt = datetime.strptime(current[0][:19], "%Y-%m-%d %H:%M:%S")
+            exp_dt = _parse_dt(current[0])
             if exp_dt < datetime.now(): exp_dt = datetime.now()
-        except: exp_dt = datetime.now()
+        except Exception as e:
+            print(f"⚠️ add_vip_months parse {current[0]}: {e}")
+            exp_dt = datetime.now()
         emoji = current[1]
     else:
         exp_dt = datetime.now()
@@ -2654,7 +2690,7 @@ def add_vip_months(user_id, months):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO vip_users (user_id, expires_at, emoji) VALUES (?, ?, ?)",
-                  (user_id, new_exp.isoformat(), emoji))
+                  (user_id, _fmt_dt(new_exp), emoji))
         conn.commit()
     return new_exp
 
@@ -2673,11 +2709,13 @@ def get_vip_days_left(user_id):
         r = c.fetchone()
         if not r: return 0
         try:
-            exp_dt = datetime.strptime(r[0][:19], "%Y-%m-%d %H:%M:%S")
+            exp_dt = _parse_dt(r[0])
             delta = exp_dt - datetime.now()
             if delta.total_seconds() < 0: return 0
-            return delta.days
-        except: return 0
+            return int(delta.total_seconds() // 86400)
+        except Exception as e:
+            print(f"⚠️ get_vip_days_left parse {r[0]}: {e}")
+            return 0
 
 
 def get_vip_emoji(user_id):
@@ -2746,6 +2784,29 @@ def extract_links_from_text(text: str):
     for i, p in enumerate(protected):
         cleaned = cleaned.replace(f"\x00LINKPROT{i}\x00", p)
     return cleaned, links
+
+
+# ================= MIDDLEWARE: ПОЛНЫЙ ИГНОР =================
+class BotIgnoreMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        try:
+            msg = event
+            user = getattr(msg, "from_user", None)
+            if user and not user.is_bot:
+                if is_bot_ignored(user.id) and user.id != OWNER_ID and not is_coowner(user.id):
+                    # в группах удаляем, в ЛС просто игнорим
+                    try:
+                        if getattr(msg, "chat", None) and msg.chat.type in ["group", "supergroup", "channel"]:
+                            await bot.delete_message(msg.chat.id, msg.message_id)
+                    except Exception as e:
+                        print(f"⚠️ BotIgnoreMiddleware delete: {e}")
+                    return
+        except Exception as e:
+            print(f"⚠️ BotIgnoreMiddleware: {e}")
+        return await handler(event, data)
+
+
+dp.message.middleware(BotIgnoreMiddleware())
 
 
 # ================= /START =================
@@ -3892,10 +3953,8 @@ async def as_command_handler(message: types.Message):
 
     actor_id = message.from_user.id
 
-    # ===== 1) ВСЕГДА добавляем в антиспам =====
     add_user_to_antispam(target.id, reason, actor_id)
 
-    # ===== 2) ВСЕГДА баним в текущем чате =====
     current_ban_ok = False
     try:
         await bot.ban_chat_member(message.chat.id, target.id)
@@ -3904,7 +3963,6 @@ async def as_command_handler(message: types.Message):
     except Exception as e:
         print(f"⚠️ +ас бан в {message.chat.id}: {e}")
 
-    # ===== 3) КИК и ИГНОР по режиму =====
     kicked_chats = []; failed_chats = []; ign_chats = []
 
     if mode in ("as_kick", "as_kick_ignore"):
@@ -3936,7 +3994,6 @@ async def as_command_handler(message: types.Message):
             conn.commit()
         add_bot_ignore(target.id, actor_id)
 
-    # ===== 4) ответ =====
     lines = [f"☢️ {mention(target)} добавлен(а) в <b>антиспам</b>."]
     if current_ban_ok: lines.append("🚫 Забанен в этом чате.")
     lines.append(f"📝 {reason}")
@@ -4006,22 +4063,20 @@ async def as_remove_handler(message: types.Message):
                 f"ℹ️ {mention(target)} не был(а) в антиспаме.",
                 parse_mode="HTML", disable_web_page_preview=True
             )
-        # ЛС-уведомление об исключении
         try:
             await bot.send_message(
                 target.id,
-                f"🗓 <b>Вы были исключены из базы «Ирис-антиспам»</b>\n\n"
+                f"🗓 <b>Вы были исключены из базы «Mos-антиспам»</b>\n\n"
                 f"Учтите, что каждый последующий вынос повышается в цене. "
                 f"За подробностями обращайтесь к агентам поддержки.\n\n"
-                f"Чтобы в будущем избежать попадания в базу Ирис-антиспам, "
+                f"Чтобы в будущем избежать попадания в базу Mos-антиспам, "
                 f"рекомендуем ознакомиться с нашим <a href='{TERMS_URL}'>пользовательским соглашением</a>.",
                 parse_mode="HTML", disable_web_page_preview=True
             )
         except Exception as e:
             print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
         await message.reply(
-            f"{em('check', '✅')} {mention(target)} убран(а) из <b>антиспама</b>.\n"
-            f"✉️ Уведомление отправлено в ЛС.",
+            f"{em('check', '✅')} {mention(target)} убран(а) из <b>антиспама</b>.\n✉️ Уведомление отправлено в ЛС.",
             parse_mode="HTML", disable_web_page_preview=True
         )
 
@@ -4034,22 +4089,20 @@ async def as_remove_handler(message: types.Message):
         remove_user_from_antispam(target.id)
         try: await bot.unban_chat_member(message.chat.id, target.id)
         except: pass
-        # ЛС-уведомление
         try:
             await bot.send_message(
                 target.id,
-                f"🗓 <b>Вы были исключены из базы «Ирис-антиспам»</b>\n\n"
+                f"🗓 <b>Вы были исключены из базы «Mos-антиспам»</b>\n\n"
                 f"Учтите, что каждый последующий вынос повышается в цене. "
                 f"За подробностями обращайтесь к агентам поддержки.\n\n"
-                f"Чтобы в будущем избежать попадания в базу Ирис-антиспам, "
+                f"Чтобы в будущем избежать попадания в базу Mos-антиспам, "
                 f"рекомендуем ознакомиться с нашим <a href='{TERMS_URL}'>пользовательским соглашением</a>.",
                 parse_mode="HTML", disable_web_page_preview=True
             )
         except Exception as e:
             print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
         await message.reply(
-            f"{em('check', '✅')} {mention(target)} убран(а) из <b>антиспама</b> и <b>игнора</b>.\n"
-            f"✉️ Уведомление отправлено в ЛС.",
+            f"{em('check', '✅')} {mention(target)} убран(а) из <b>антиспама</b> и <b>игнора</b>.\n✉️ Уведомление отправлено в ЛС.",
             parse_mode="HTML", disable_web_page_preview=True
         )
 
@@ -4588,27 +4641,115 @@ async def list_achievements_cmd(message: types.Message):
 
 @cmd("мои ачивки")
 async def my_achievements_cmd(message: types.Message):
-    ach = get_user_achievements(message.from_user.id, message.chat.id)
+    ach = get_user_achievements_all_chats(message.from_user.id)
     if not ach:
         return await message.reply(
-            "📭 <b>У тебя пока нет ачивок.</b>\n\nИх выдают администраторы за активность, помощь и заслуги.",
+            "📭 <b>У тебя пока нет ачивок.</b>\n\nИх выдают <b>агенты Mos</b> за активность, помощь и заслуги.",
             parse_mode="HTML", disable_web_page_preview=True
         )
     text = f"🎖 <b>Твои ачивки</b> ({len(ach)}):\n\n"
-    for aid, name, emoji, desc, given_at in ach:
+    for aid, name, emoji, desc, given_at, chat_id in ach:
+        try:
+            chat = await bot.get_chat(chat_id)
+            chat_title = chat.title or f"Чат {chat_id}"
+        except:
+            chat_title = f"Чат {chat_id}"
         text += f"{emoji} <b>{name}</b>"
         if desc: text += f" — <i>{desc}</i>"
-        text += f"\n   📅 {_fmt_added_dt(given_at)}\n"
+        text += f"\n   🏠 {chat_title}\n   📅 {_fmt_added_dt(given_at)}\n"
+    text += f"\n🔒 Скрыть от других: <code>-ачивки</code>"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("твои ачивки")
+async def your_achievements_cmd(message: types.Message):
+    target = None
+    if message.reply_to_message:
+        target = message.reply_to_message.from_user
+    else:
+        args = message.text.split()
+        if len(args) >= 2:
+            try:
+                if args[1].startswith('@'): target = await bot.get_chat(args[1])
+                elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
+            except:
+                return await message.reply(f"{em('cross', '❌')} Не найден.", parse_mode="HTML", disable_web_page_preview=True)
+    if not target:
+        return await message.reply(
+            "📌 <b>Формат:</b>\n"
+            "• Ответь на сообщение юзера: <code>.твои ачивки</code>\n"
+            "• Или: <code>.твои ачивки @user</code>\n"
+            "• Или: <code>.твои ачивки 123456789</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    viewer_id = message.from_user.id
+    is_self = (viewer_id == target.id)
+    is_staff = (viewer_id == OWNER_ID or is_coowner(viewer_id) or has_agent_rank(viewer_id, 1))
+
+    if are_achievements_hidden(target.id) and not is_self and not is_staff:
+        return await message.reply(
+            f"🔒 {mention(target)} <b>скрыл(а) свои ачивки</b>.\n\n"
+            f"<i>Он(а) может открыть их командой <code>+ачивки</code>.</i>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    ach = get_user_achievements_all_chats(target.id)
+    if not ach:
+        return await message.reply(
+            f"📭 У {mention(target)} пока нет ачивок.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    text = f"🎖 <b>Ачивки {mention(target)}</b> ({len(ach)}):\n\n"
+    for aid, name, emoji, desc, given_at, chat_id in ach:
+        try:
+            chat = await bot.get_chat(chat_id)
+            chat_title = chat.title or f"Чат {chat_id}"
+        except:
+            chat_title = f"Чат {chat_id}"
+        text += f"{emoji} <b>{name}</b>"
+        if desc: text += f" — <i>{desc}</i>"
+        text += f"\n   🏠 {chat_title}\n   📅 {_fmt_added_dt(given_at)}\n"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() == "-ачивки")
+async def hide_achievements_cmd(message: types.Message):
+    user_id = message.from_user.id
+    if are_achievements_hidden(user_id):
+        return await message.reply("ℹ️ Твои ачивки уже скрыты.", parse_mode="HTML", disable_web_page_preview=True)
+    hide_achievements(user_id)
+    await message.reply(
+        f"{em('check', '✅')} <b>Твои ачивки теперь скрыты.</b>\n\n"
+        f"👁 Их видят только <b>агенты</b> и владелец.\n"
+        f"↩️ Вернуть: <code>+ачивки</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() == "+ачивки")
+async def show_achievements_cmd(message: types.Message):
+    user_id = message.from_user.id
+    if not are_achievements_hidden(user_id):
+        return await message.reply("ℹ️ Твои ачивки и так видны всем.", parse_mode="HTML", disable_web_page_preview=True)
+    show_achievements(user_id)
+    await message.reply(
+        f"{em('check', '✅')} <b>Твои ачивки снова видны всем.</b>\n\n"
+        f"🙈 Скрыть: <code>-ачивки</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*выдать\s+ачивку\b', m.text.strip(), re.IGNORECASE))
 async def give_achievement_cmd(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
-    if not has_permission(chat_id, user_id, 3) and not await is_tg_admin(chat_id, user_id) \
-            and user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
-        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+) или агент.", parse_mode="HTML", disable_web_page_preview=True)
+    if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
+        return await message.reply(
+            f"{em('cross', '❌')} Только <b>агенты Mos</b> могут выдавать ачивки.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
     target = None
     if message.reply_to_message:
         target = message.reply_to_message.from_user
@@ -4623,7 +4764,7 @@ async def give_achievement_cmd(message: types.Message):
                 except: pass
     if not target:
         return await message.reply(
-            "📌 <b>Формат:</b>\n<code>.выдать ачивку @user Название</code>",
+            "📌 <b>Формат:</b>\n<code>.выдать ачивку @user Название</code>\nили ответом на сообщение:\n<code>.выдать ачивку Название</code>",
             parse_mode="HTML", disable_web_page_preview=True
         )
     raw = re.sub(r'^[.\/!]?\s*выдать\s+ачивку\s*', '', message.text.strip(), flags=re.IGNORECASE).strip()
@@ -4652,15 +4793,15 @@ async def give_achievement_cmd(message: types.Message):
             )
         except: pass
     else:
-        await message.reply(f"{em('cross', '❌')} У {mention(target)} уже есть эта ачивка.", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"{em('cross', '❌')} У {mention(target)} уже есть эта ачивка в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*снять\s+ачивку\b', m.text.strip(), re.IGNORECASE))
 async def remove_achievement_cmd(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
-    if not has_permission(chat_id, user_id, 4) and user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
-        return await message.reply(f"{em('cross', '❌')} Нужен Ст. Админ (4+) или агент.", parse_mode="HTML", disable_web_page_preview=True)
+    if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
+        return await message.reply(f"{em('cross', '❌')} Только <b>агенты Mos</b>.", parse_mode="HTML", disable_web_page_preview=True)
     target = None
     if message.reply_to_message:
         target = message.reply_to_message.from_user
@@ -4673,15 +4814,14 @@ async def remove_achievement_cmd(message: types.Message):
     if not ach:
         return await message.reply(f"{em('cross', '❌')} Ачивка не найдена.", parse_mode="HTML", disable_web_page_preview=True)
     remove_achievement(target.id, chat_id, ach[0])
-    await message.reply(f"🗑 Снята ачивка <b>{ach[1]}</b> с {mention(target)}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"🗑 Снята ачивка <b>{ach[1]}</b> с {mention(target)} (в этом чате).", parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*создать\s+ачивку\b', m.text.strip(), re.IGNORECASE))
 async def create_achievement_cmd(message: types.Message):
-    chat_id = message.chat.id
     user_id = message.from_user.id
-    if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1) and not has_permission(chat_id, user_id, 4):
-        return await message.reply(f"{em('cross', '❌')} Нужен Ст. Админ (4+) или агент.", parse_mode="HTML", disable_web_page_preview=True)
+    if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
+        return await message.reply(f"{em('cross', '❌')} Только <b>агенты Mos</b>.", parse_mode="HTML", disable_web_page_preview=True)
     raw = re.sub(r'^[.\/!]?\s*создать\s+ачивку\s*', '', message.text.strip(), flags=re.IGNORECASE).strip()
     parts = [p.strip() for p in raw.split("|")]
     if len(parts) < 1 or not parts[0]:
@@ -6049,6 +6189,7 @@ async def vip_buy_callback(callback: types.CallbackQuery):
     new_exp = add_vip_months(user_id, 1)
     new_balance = get_balance(user_id)
     new_price = get_vip_price(chat_id)
+    days_left = get_vip_days_left(user_id)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=f"💎 Продлить VIP ({new_price} 🍬)", callback_data="vip_buy_1m")
     ]])
@@ -6056,7 +6197,8 @@ async def vip_buy_callback(callback: types.CallbackQuery):
         await callback.message.edit_text(
             f"💎 <b>VIP активирован!</b>\n\n"
             f"👤 {mention(callback.from_user)}\n"
-            f"📅 До: <b>{new_exp.strftime('%d.%m.%Y')}</b>\n"
+            f"📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n"
+            f"⏳ Осталось: <b>{days_left} дн.</b>\n"
             f"💰 Списано: <b>{price}</b> 🍬\n"
             f"💼 Осталось: <b>{new_balance}</b> 🍬\n"
             f"📈 Активная цена: <b>{new_price}</b> 🍬 / мес",
@@ -6065,7 +6207,7 @@ async def vip_buy_callback(callback: types.CallbackQuery):
         )
     except Exception:
         await callback.message.answer(
-            f"💎 <b>VIP активирован!</b>\n\n📅 До: <b>{new_exp.strftime('%d.%m.%Y')}</b>\n💰 Списано: <b>{price}</b> 🍬",
+            f"💎 <b>VIP активирован!</b>\n\n📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n💰 Списано: <b>{price}</b> 🍬",
             parse_mode="HTML", disable_web_page_preview=True
         )
     await callback.answer("💎 VIP активирован!")
@@ -6092,7 +6234,7 @@ async def buy_vip_cmd(message: types.Message):
         conn.commit()
     new_exp = add_vip_months(target.id, months)
     await message.reply(
-        f"💎 <b>VIP активирован!</b>\n\n👤 Кому: {mention(target)}\n📅 До: <b>{new_exp.strftime('%d.%m.%Y')}</b>\n💰 -{total} 🍬",
+        f"💎 <b>VIP активирован!</b>\n\n👤 Кому: {mention(target)}\n📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n💰 -{total} 🍬",
         parse_mode="HTML", disable_web_page_preview=True
     )
 
@@ -6837,8 +6979,8 @@ async def import_db_cmd(message: types.Message):
 async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot: return
 
-    # глобальный игнор в боте — везде (ЛС и все чаты)
-    if is_bot_ignored(message.from_user.id):
+    # вторичная проверка — если middleware по какой-то причине пропустил
+    if is_bot_ignored(message.from_user.id) and message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
         try: await message.delete()
         except: pass
         return
