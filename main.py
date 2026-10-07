@@ -232,6 +232,13 @@ DEFAULT_ACCESS = {
     "инфобот": -2, "бэкап": -2, "импорт": -2,
 
     "дк": 3, "дк список": 3, "дк сброс": 3,
+
+    # Новые команды для браков
+    "топ браков": 0,
+    "поженить пару": 3,
+    "развести пару": 3,
+    "сброс браков": 4,
+    "развести вышедших": 3,
 }
 
 
@@ -387,6 +394,23 @@ def init_db():
             UNIQUE(chat_id, command))""")
         c.execute("""CREATE TABLE IF NOT EXISTS daily_rewards (
             user_id INTEGER, date TEXT, UNIQUE(user_id, date))""")
+
+        # --- НОВЫЕ ТАБЛИЦЫ ДЛЯ БРАКОВ ---
+        c.execute("""CREATE TABLE IF NOT EXISTS marriage_settings (
+            chat_id INTEGER PRIMARY KEY,
+            prolong_price INTEGER DEFAULT 50,
+            divorce_mode TEXT DEFAULT 'выключить'
+        )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS marriage_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER,
+            from_id INTEGER,
+            to_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(chat_id, from_id, to_id)
+        )""")
+        # --- КОНЕЦ НОВЫХ ТАБЛИЦ ---
+
         conn.commit()
 
 
@@ -2243,6 +2267,15 @@ def get_marriage(chat_id, user_id):
         return c.fetchone()
 
 
+def get_marriage_by_users(chat_id, user1_id, user2_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT id, user1_id, user2_id, user1_name, user2_name, married_at, status, divorced_at, in_top, extra_days
+            FROM marriages WHERE chat_id = ? AND ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?)) AND status = 'active'""",
+            (chat_id, user1_id, user2_id, user2_id, user1_id))
+        return c.fetchone()
+
+
 def get_divorced_marriage(chat_id, user_id):
     three_days_ago = (datetime.now() - timedelta(days=3)).isoformat()
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -2287,6 +2320,74 @@ def get_all_marriages(chat_id):
         c.execute("SELECT user1_id, user1_name, user2_id, user2_name, married_at, extra_days FROM marriages WHERE chat_id = ? AND status = 'active' ORDER BY married_at ASC",
                   (chat_id,))
         return c.fetchall()
+
+
+def reset_all_marriages(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM marriages WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+        return c.rowcount
+
+
+def get_top_marriages(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT user1_id, user1_name, user2_id, user2_name, married_at, extra_days FROM marriages WHERE chat_id = ? AND status = 'active' AND in_top = 1 ORDER BY married_at ASC",
+                  (chat_id,))
+        return c.fetchall()
+
+
+def set_marriage_top_status(chat_id, user_id, in_top):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE marriages SET in_top = ? WHERE chat_id = ? AND (user1_id = ? OR user2_id = ?) AND status = 'active'",
+                  (1 if in_top else 0, chat_id, user_id, user_id))
+        conn.commit()
+        return c.rowcount > 0
+
+
+def get_marriage_settings(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT prolong_price, divorce_mode FROM marriage_settings WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        if not r:
+            c.execute("INSERT INTO marriage_settings (chat_id) VALUES (?)", (chat_id,))
+            conn.commit()
+            return (50, 'выключить')
+        return r
+
+
+def set_marriage_price(chat_id, price):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO marriage_settings (chat_id, prolong_price) VALUES (?, ?)", (chat_id, price))
+        conn.commit()
+
+
+def set_divorce_mode(chat_id, mode):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE marriage_settings SET divorce_mode = ? WHERE chat_id = ?", (mode, chat_id))
+        conn.commit()
+
+
+def add_marriage_days(chat_id, user_id, days):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE marriages SET extra_days = extra_days + ? WHERE chat_id = ? AND (user1_id = ? OR user2_id = ?) AND status = 'active'",
+                  (days, chat_id, user_id, user_id))
+        conn.commit()
+
+
+def get_marriage_extra_days(chat_id, user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT extra_days FROM marriages WHERE chat_id = ? AND (user1_id = ? OR user2_id = ?) AND status = 'active'",
+                  (chat_id, user_id, user_id))
+        r = c.fetchone()
+        return r[0] if r else 0
 
 
 def add_proposal(chat_id, from_id, to_id):
@@ -6729,6 +6830,12 @@ async def marriage_router(message: types.Message):
     txt = message.text.strip()
     txt = re.sub(r'^[.\/!]\s*', '', txt)
     rest = re.sub(r'^брак\s*', '', txt, count=1, flags=re.IGNORECASE).strip()
+    if rest.lower().startswith("цена продления"):
+        return await set_marriage_price_cmd(message)
+    if rest.lower().startswith("продлить"):
+        return await prolong_marriage_cmd(message)
+    if rest.lower().startswith("режим развода"):
+        return await set_divorce_mode_cmd(message)
     target = None
     if message.reply_to_message:
         target = message.reply_to_message.from_user
@@ -6808,7 +6915,7 @@ async def marriage_response(callback: types.CallbackQuery):
         await callback.answer("❌ Отказано.")
 
 
-@cmd("развод")
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*развод\b', m.text.strip(), re.IGNORECASE))
 async def divorce_cmd(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
     if not mar:
@@ -6840,6 +6947,33 @@ async def my_marriage_cmd(message: types.Message):
     )
 
 
+@cmd("твой брак")
+async def user_marriage_cmd(message: types.Message):
+    target = None
+    if message.reply_to_message:
+        target = message.reply_to_message.from_user
+    else:
+        args = message.text.split()
+        if len(args) >= 2:
+            try:
+                if args[1].startswith('@'): target = await bot.get_chat(args[1])
+                elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
+            except: pass
+    if not target:
+        return await message.reply("📌 <b>Формат:</b>\n• <code>твой брак @user</code>\n• Ответом на сообщение", parse_mode="HTML", disable_web_page_preview=True)
+    mar = get_marriage(message.chat.id, target.id)
+    if not mar:
+        return await message.reply(f"💔 {mention(target)} не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
+    partner_id = u2_id if u1_id == target.id else u1_id
+    partner_name = u2_name if u1_id == target.id else u1_name
+    duration = format_marriage_duration(married_at, extra or 0)
+    await message.reply(
+        f"💍 <b>Брак {mention(target)}</b>\n\n👫 {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)}\n📅 {married_at[:10]}\n⏳ Вместе: <b>{duration}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
 @cmd("браки")
 async def marriages_list_cmd(message: types.Message):
     pairs = get_all_marriages(message.chat.id)
@@ -6850,6 +6984,196 @@ async def marriages_list_cmd(message: types.Message):
         duration = format_marriage_duration(married_at, extra or 0)
         text += f"{i}. {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)} — <i>{duration}</i>\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак\s+цена\s+продления\s+\d+', m.text.strip(), re.IGNORECASE))
+async def set_marriage_price_cmd(message: types.Message):
+    if not await check_command_access(message, "брак"): return
+    args = message.text.split()
+    price = int(args[-1])
+    if price < 1 or price > 10000:
+        return await message.reply("❌ Цена от 1 до 10000 🍬", parse_mode="HTML", disable_web_page_preview=True)
+    set_marriage_price(message.chat.id, price)
+    await message.reply(f"{em('check', '✅')} Цена продления брака: <b>{price} 🍬</b> за 1 день.", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак\s+продлить\s+\d+', m.text.strip(), re.IGNORECASE))
+async def prolong_marriage_cmd(message: types.Message):
+    if not await check_command_access(message, "брак"): return
+    mar = get_marriage(message.chat.id, message.from_user.id)
+    if not mar:
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    args = message.text.split()
+    days = int(args[-1])
+    if days < 1 or days > 365:
+        return await message.reply("❌ Дней от 1 до 365", parse_mode="HTML", disable_web_page_preview=True)
+    settings = get_marriage_settings(message.chat.id)
+    price_per_day = settings[0]
+    total_cost = price_per_day * days
+    if get_balance(message.from_user.id) < total_cost:
+        return await message.reply(f"❌ Нужно <b>{total_cost}</b> 🍬 (по {price_per_day} за день).", parse_mode="HTML", disable_web_page_preview=True)
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (total_cost, message.from_user.id))
+        conn.commit()
+    add_marriage_days(message.chat.id, message.from_user.id, days)
+    await message.reply(f"{em('check', '✅')} Брак продлён на <b>{days} дн.</b>\n💰 Списано: <b>{total_cost}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак\s+режим\s+развода', m.text.strip(), re.IGNORECASE))
+async def set_divorce_mode_cmd(message: types.Message):
+    if not await check_command_access(message, "брак"): return
+    args = message.text.split(maxsplit=3)
+    mode = args[3].lower() if len(args) > 3 else "показать"
+    settings = get_marriage_settings(message.chat.id)
+    current_mode = settings[1]
+    if mode in ["выключить", "off"]:
+        set_divorce_mode(message.chat.id, "выключить")
+        return await message.reply(f"{em('check', '✅')} Автоматическое расторжение браков <b>отключено</b>.", parse_mode="HTML", disable_web_page_preview=True)
+    if mode == "один":
+        set_divorce_mode(message.chat.id, "один")
+        return await message.reply(f"{em('check', '✅')} Режим: брак расторгается, если <b>один</b> из супругов выйдет.", parse_mode="HTML", disable_web_page_preview=True)
+    if mode == "оба":
+        set_divorce_mode(message.chat.id, "оба")
+        return await message.reply(f"{em('check', '✅')} Режим: брак расторгается, если <b>оба</b> супруга выйдут.", parse_mode="HTML", disable_web_page_preview=True)
+    mode_names = {"выключить": "❌ Выключено", "один": "👤 Один", "оба": "👥 Оба"}
+    await message.reply(
+        f"💔 <b>Режим развода</b>\n\nТекущий: <b>{mode_names.get(current_mode, current_mode)}</b>\n\n"
+        f"<code>брак режим развода выключить</code>\n"
+        f"<code>брак режим развода один</code>\n"
+        f"<code>брак режим развода оба</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*поженить\s+пару\b', m.text.strip(), re.IGNORECASE))
+async def force_marry_cmd(message: types.Message):
+    if not await check_command_access(message, "поженить пару"): return
+    args = message.text.split()
+    target1 = None; target2 = None
+    for a in args[2:]:
+        if a.startswith("@"):
+            try:
+                user = await bot.get_chat(a)
+                if not target1: target1 = user
+                elif not target2: target2 = user
+            except: pass
+        elif a.isdigit():
+            try:
+                user = await bot.get_chat(int(a))
+                if not target1: target1 = user
+                elif not target2: target2 = user
+            except: pass
+    if not target1 or not target2:
+        return await message.reply("📌 <code>.поженить пару @user1 @user2</code>", parse_mode="HTML", disable_web_page_preview=True)
+    if target1.id == target2.id:
+        return await message.reply("❌ Нельзя поженить одного и того же.", parse_mode="HTML", disable_web_page_preview=True)
+    if get_marriage(message.chat.id, target1.id) or get_marriage(message.chat.id, target2.id):
+        return await message.reply("❌ Кто-то уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    create_marriage(message.chat.id, target1.id, target1.first_name, target2.id, target2.first_name)
+    await message.reply(
+        f"💍💐 <b>Свадьба!</b>\n\n{mention(target1)} и {mention(target2)} теперь в браке!\n👮 Сделал: {mention(message.from_user)}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*развести\s+пару\b', m.text.strip(), re.IGNORECASE))
+async def force_divorce_cmd(message: types.Message):
+    if not await check_command_access(message, "развести пару"): return
+    args = message.text.split()
+    target1 = None; target2 = None
+    for a in args[2:]:
+        if a.startswith("@"):
+            try:
+                user = await bot.get_chat(a)
+                if not target1: target1 = user
+                elif not target2: target2 = user
+            except: pass
+        elif a.isdigit():
+            try:
+                user = await bot.get_chat(int(a))
+                if not target1: target1 = user
+                elif not target2: target2 = user
+            except: pass
+    if not target1 or not target2:
+        return await message.reply("📌 <code>.развести пару @user1 @user2</code>", parse_mode="HTML", disable_web_page_preview=True)
+    mar = get_marriage_by_users(message.chat.id, target1.id, target2.id)
+    if not mar:
+        return await message.reply("❌ Эти пользователи не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    divorce_marriage(message.chat.id, target1.id)
+    await message.reply(
+        f"💔 {mention(target1)} и {mention(target2)} разведены.\n👮 Сделал: {mention(message.from_user)}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["!сброс браков", "сброс браков"])
+async def reset_marriages_cmd(message: types.Message):
+    if not await check_command_access(message, "сброс браков"): return
+    count = reset_all_marriages(message.chat.id)
+    await message.reply(f"{em('check', '✅')} Сброшено браков: <b>{count}</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["!развести вышедших", "развести вышедших"])
+async def divorce_left_cmd(message: types.Message):
+    if not await check_command_access(message, "развести вышедших"): return
+    settings = get_marriage_settings(message.chat.id)
+    mode = settings[1]
+    if mode == "выключить":
+        return await message.reply("❌ Режим развода выключен.", parse_mode="HTML", disable_web_page_preview=True)
+    pairs = get_all_marriages(message.chat.id)
+    divorced_count = 0
+    for u1_id, u1_name, u2_id, u2_name, married_at, extra in pairs:
+        try:
+            m1 = await bot.get_chat_member(message.chat.id, u1_id)
+            m2 = await bot.get_chat_member(message.chat.id, u2_id)
+            u1_left = m1.status in ["left", "kicked"]
+            u2_left = m2.status in ["left", "kicked"]
+            should_divorce = False
+            if mode == "один" and (u1_left or u2_left): should_divorce = True
+            elif mode == "оба" and u1_left and u2_left: should_divorce = True
+            if should_divorce:
+                divorce_marriage(message.chat.id, u1_id)
+                divorced_count += 1
+        except: pass
+    await message.reply(f"{em('check', '✅')} Разведено пар: <b>{divorced_count}</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*топ\s+браков\b', m.text.strip(), re.IGNORECASE))
+async def marriage_top_cmd(message: types.Message):
+    if not await check_command_access(message, "топ браков"): return
+    pairs = get_top_marriages(message.chat.id)
+    if not pairs:
+        return await message.reply("📭 Топ браков пуст. Добавьте свой брак в топ: <code>+брак рейтинг</code>", parse_mode="HTML", disable_web_page_preview=True)
+    text = "🏆 <b>Топ браков:</b>\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (u1_id, u1_name, u2_id, u2_name, married_at, extra) in enumerate(pairs, 1):
+        duration = format_marriage_duration(married_at, extra or 0)
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        text += f"{medal} {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)} — <i>{duration}</i>\n"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["+брак рейтинг"])
+async def add_marriage_to_top_cmd(message: types.Message):
+    mar = get_marriage(message.chat.id, message.from_user.id)
+    if not mar:
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    if mar[8] == 1:
+        return await message.reply("ℹ️ Твой брак уже в топе.", parse_mode="HTML", disable_web_page_preview=True)
+    set_marriage_top_status(message.chat.id, message.from_user.id, True)
+    await message.reply(f"{em('check', '✅')} Твой брак добавлен в топ!", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["-брак рейтинг"])
+async def remove_marriage_from_top_cmd(message: types.Message):
+    mar = get_marriage(message.chat.id, message.from_user.id)
+    if not mar:
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+    if mar[8] == 0:
+        return await message.reply("ℹ️ Твоего брака нет в топе.", parse_mode="HTML", disable_web_page_preview=True)
+    set_marriage_top_status(message.chat.id, message.from_user.id, False)
+    await message.reply(f"{em('check', '✅')} Твой брак удалён из топа!", parse_mode="HTML", disable_web_page_preview=True)
 
 
 # ================= РЕПОРТЫ =================
@@ -7377,6 +7701,44 @@ async def auto_tournament_end_loop():
         await asyncio.sleep(30)
 
 
+async def auto_marriage_divorce_loop():
+    while True:
+        try:
+            await asyncio.sleep(3600)  # раз в час
+            with sqlite3.connect(DATABASE_PATH) as conn:
+                c = conn.cursor()
+                c.execute("SELECT DISTINCT chat_id FROM marriages WHERE status = 'active'")
+                chats = [r[0] for r in c.fetchall()]
+            for chat_id in chats:
+                settings = get_marriage_settings(chat_id)
+                mode = settings[1]
+                if mode == "выключить":
+                    continue
+                pairs = get_all_marriages(chat_id)
+                for u1_id, u1_name, u2_id, u2_name, married_at, extra in pairs:
+                    try:
+                        m1 = await bot.get_chat_member(chat_id, u1_id)
+                        m2 = await bot.get_chat_member(chat_id, u2_id)
+                        u1_left = m1.status in ["left", "kicked"]
+                        u2_left = m2.status in ["left", "kicked"]
+                        should_divorce = False
+                        if mode == "один" and (u1_left or u2_left): should_divorce = True
+                        elif mode == "оба" and u1_left and u2_left: should_divorce = True
+                        if should_divorce:
+                            divorce_marriage(chat_id, u1_id)
+                            try:
+                                await bot.send_message(chat_id,
+                                    f"💔 <b>Автоматический развод</b>\n\n"
+                                    f"{mention_by_id(u1_id, u1_name)} и {mention_by_id(u2_id, u2_name)} разведены, "
+                                    f"так как {'один из супругов' if mode == 'один' else 'оба супруга'} покинул(и) чат.",
+                                    parse_mode="HTML")
+                            except: pass
+                    except: pass
+        except Exception as e:
+            print(f"❌ marriage divorce loop: {e}")
+        await asyncio.sleep(3600)
+
+
 # ================= ЗАПУСК =================
 async def main():
     init_db()
@@ -7385,6 +7747,7 @@ async def main():
     asyncio.create_task(auto_backup_loop())
     asyncio.create_task(auto_fishing_events_loop())
     asyncio.create_task(auto_tournament_end_loop())
+    asyncio.create_task(auto_marriage_divorce_loop())
     await dp.start_polling(bot)
 
 
