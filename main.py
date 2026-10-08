@@ -233,12 +233,14 @@ DEFAULT_ACCESS = {
 
     "дк": 3, "дк список": 3, "дк сброс": 3,
 
-    # Новые команды для браков
     "топ браков": 0,
     "поженить пару": 3,
     "развести пару": 3,
     "сброс браков": 4,
     "развести вышедших": 3,
+
+    # === MOS ===
+    "мос": 0,
 }
 
 
@@ -394,8 +396,6 @@ def init_db():
             UNIQUE(chat_id, command))""")
         c.execute("""CREATE TABLE IF NOT EXISTS daily_rewards (
             user_id INTEGER, date TEXT, UNIQUE(user_id, date))""")
-
-        # --- НОВЫЕ ТАБЛИЦЫ ДЛЯ БРАКОВ ---
         c.execute("""CREATE TABLE IF NOT EXISTS marriage_settings (
             chat_id INTEGER PRIMARY KEY,
             prolong_price INTEGER DEFAULT 50,
@@ -409,8 +409,6 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(chat_id, from_id, to_id)
         )""")
-        # --- КОНЕЦ НОВЫХ ТАБЛИЦ ---
-
         conn.commit()
 
 
@@ -2895,7 +2893,6 @@ class BotIgnoreMiddleware(BaseMiddleware):
             user = getattr(msg, "from_user", None)
             if user and not user.is_bot:
                 if is_bot_ignored(user.id) and user.id != OWNER_ID and not is_coowner(user.id):
-                    # в группах удаляем, в ЛС просто игнорим
                     try:
                         if getattr(msg, "chat", None) and msg.chat.type in ["group", "supergroup", "channel"]:
                             await bot.delete_message(msg.chat.id, msg.message_id)
@@ -2908,6 +2905,58 @@ class BotIgnoreMiddleware(BaseMiddleware):
 
 
 dp.message.middleware(BotIgnoreMiddleware())
+
+
+# ================= MOS — ПИНГ =================
+async def _measure_ping():
+    """Измеряет пинг бота."""
+    start = datetime.now()
+    try:
+        await bot.get_me()
+        tg_ping = int((datetime.now() - start).total_seconds() * 1000)
+    except:
+        tg_ping = -1
+
+    start = datetime.now()
+    try:
+        test = await bot.send_message(OWNER_ID, "🏓", disable_notification=True)
+        api_ping = int((datetime.now() - start).total_seconds() * 1000)
+        try: await test.delete()
+        except: pass
+    except:
+        api_ping = -1
+
+    return tg_ping, api_ping
+
+
+def _ping_status(ping_ms: int) -> str:
+    if ping_ms < 0:   return "❌"
+    if ping_ms < 100: return "🟢"
+    if ping_ms < 200: return "🟢"
+    if ping_ms < 400: return "🟡"
+    if ping_ms < 800: return "🟠"
+    return "🔴"
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*мос\s*$', m.text.strip(), re.IGNORECASE))
+async def mos_cmd(message: types.Message):
+    t0 = datetime.now()
+    sent = await message.reply("🏓 <b>Мос на месте!</b>\n⏳ <i>измеряю пинг...</i>", parse_mode="HTML")
+    response_ping = int((datetime.now() - t0).total_seconds() * 1000)
+
+    tg_ping, api_ping = await _measure_ping()
+
+    text = (
+        f"🏓 <b>Мос на месте!</b>\n\n"
+        f"⚡ <b>Пинг:</b> <code>{api_ping} мс</code> {_ping_status(api_ping)}\n"
+        f"🌐 <b>Telegram API:</b> <code>{tg_ping} мс</code> {_ping_status(tg_ping)}\n"
+        f"⏱ <b>Ответ бота:</b> <code>{response_ping} мс</code>"
+    )
+
+    try:
+        await sent.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
+    except:
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 # ================= /START =================
@@ -7303,7 +7352,6 @@ async def import_db_cmd(message: types.Message):
 async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot: return
 
-    # вторичная проверка — если middleware по какой-то причине пропустил
     if is_bot_ignored(message.from_user.id) and message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
         try: await message.delete()
         except: pass
@@ -7704,7 +7752,7 @@ async def auto_tournament_end_loop():
 async def auto_marriage_divorce_loop():
     while True:
         try:
-            await asyncio.sleep(3600)  # раз в час
+            await asyncio.sleep(3600)
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
                 c.execute("SELECT DISTINCT chat_id FROM marriages WHERE status = 'active'")
