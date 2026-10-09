@@ -239,7 +239,6 @@ DEFAULT_ACCESS = {
     "сброс браков": 4,
     "развести вышедших": 3,
 
-    # === MOS ===
     "мос": 0,
 }
 
@@ -305,6 +304,12 @@ def init_db():
             chat_id INTEGER PRIMARY KEY, notify_enabled INTEGER DEFAULT 1)""")
         c.execute("CREATE TABLE IF NOT EXISTS business_connections (user_id INTEGER PRIMARY KEY, connection_id TEXT, connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS chat_bans (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER, user_id INTEGER, reason TEXT, banned_by INTEGER, banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, until_date TIMESTAMP)")
+        # === НОВАЯ ТАБЛИЦА ДЛЯ МУТОВ ===
+        c.execute("""CREATE TABLE IF NOT EXISTS chat_mutes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER, user_id INTEGER, reason TEXT,
+            muted_by INTEGER, muted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            until_date TIMESTAMP)""")
         c.execute("CREATE TABLE IF NOT EXISTS grids (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, creator_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS grid_chats (grid_id INTEGER, chat_id INTEGER, hidden INTEGER DEFAULT 0, description TEXT, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(grid_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS grid_moderators (grid_id INTEGER, user_id INTEGER, rank INTEGER DEFAULT 1, is_admin INTEGER DEFAULT 0, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(grid_id, user_id))")
@@ -474,6 +479,38 @@ def _fmt_added_dt(s: str) -> str:
             return dt.strftime("%d.%m.%Y")
         except:
             return s[:19]
+
+
+# ================= ЕДИНЫЙ СТИЛЬ ОТВЕТОВ МОДЕРАЦИИ =================
+def mod_action_text(
+    action_emoji: str,
+    action_title: str,
+    target_mention: str,
+    moderator_mention: str,
+    duration: str = None,
+    reason: str = None,
+    extra: str = None,
+) -> str:
+    """Собирает единый ответ для действий модерации."""
+    lines = [f"{action_emoji} <b>{action_title}</b>", ""]
+    lines.append(f"👤 Пользователь: {target_mention}")
+    if duration:
+        lines.append(f"⏱ Срок: <b>{duration}</b>")
+    if reason:
+        lines.append(f"📝 Причина: <i>{reason}</i>")
+    lines.append(f"👮 Модератор: {moderator_mention}")
+    if extra:
+        lines.append("")
+        lines.append(extra)
+    return "\n".join(lines)
+
+
+def mod_error_text(title: str, details: str = None) -> str:
+    """Единый формат ошибки."""
+    text = f"❌ <b>{title}</b>"
+    if details:
+        text += f"\n\n{details}"
+    return text
 
 
 # ================= СОВЛАДЕЛЬЦЫ =================
@@ -1090,7 +1127,7 @@ def remove_grid_user_rank(grid_id, user_id):
         conn.commit()
 
 
-# ================= БАНЫ =================
+# ================= БАНЫ / МУТЫ =================
 def get_all_user_bans(user_id):
     now = datetime.now().isoformat()
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -1516,12 +1553,20 @@ def unmark_bot_promoted(user_id, chat_id):
         conn.commit()
 
 
-# ================= CHAT BANS =================
+# ================= CHAT BANS / MUTES =================
 def add_chat_ban(chat_id, user_id, reason, banned_by, until_date=None):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("INSERT INTO chat_bans (chat_id, user_id, reason, banned_by, until_date) VALUES (?, ?, ?, ?, ?)",
                   (chat_id, user_id, reason, banned_by, until_date))
+        conn.commit()
+
+
+def add_chat_mute(chat_id, user_id, reason, muted_by, until_date):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT INTO chat_mutes (chat_id, user_id, reason, muted_by, until_date) VALUES (?, ?, ?, ?, ?)",
+                  (chat_id, user_id, reason, muted_by, until_date))
         conn.commit()
 
 
@@ -1544,8 +1589,23 @@ def get_expired_bans():
     now = datetime.now().isoformat()
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("SELECT chat_id, user_id FROM chat_bans WHERE until_date IS NOT NULL AND until_date <= ?", (now,))
+        c.execute("SELECT chat_id, user_id, reason, banned_by FROM chat_bans WHERE until_date IS NOT NULL AND until_date <= ?", (now,))
         return c.fetchall()
+
+
+def get_expired_mutes():
+    now = datetime.now().isoformat()
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT chat_id, user_id, reason FROM chat_mutes WHERE until_date IS NOT NULL AND until_date <= ?", (now,))
+        return c.fetchall()
+
+
+def clear_chat_mute(chat_id, user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM chat_mutes WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+        conn.commit()
 
 
 # ================= ПРИВЕТСТВИЕ =================
@@ -2909,7 +2969,6 @@ dp.message.middleware(BotIgnoreMiddleware())
 
 # ================= MOS — ПИНГ =================
 async def _measure_ping():
-    """Измеряет пинг бота."""
     start = datetime.now()
     try:
         await bot.get_me()
@@ -3702,18 +3761,24 @@ async def ban_cmd(message: types.Message):
             until = datetime.now() + timedelta(seconds=duration_seconds)
             await bot.ban_chat_member(message.chat.id, target.id, until_date=until)
             add_chat_ban(message.chat.id, target.id, reason, message.from_user.id, until.isoformat())
-            ban_type = f"на <b>{duration_text}</b>"
         else:
             await bot.ban_chat_member(message.chat.id, target.id)
             add_chat_ban(message.chat.id, target.id, reason, message.from_user.id, None)
-            ban_type = "<b>навсегда</b>"
+
         auto_added = auto_add_to_antispam_if_needed(target.id)
-        response = (f"{em('ban', '🚫')} {mention(target)} бан {ban_type}\n"
-                    f"👮 {mention(message.from_user)}\n📝 {reason}")
-        if auto_added: response += f"\n\n☢️ Автоматически в антиспам!"
+        extra = "☢️ Автоматически добавлен в антиспам!" if auto_added else None
+        response = mod_action_text(
+            action_emoji="🚫",
+            action_title="Бан",
+            target_mention=mention(target),
+            moderator_mention=mention(message.from_user),
+            duration=duration_text,
+            reason=reason,
+            extra=extra,
+        )
         await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(mod_error_text("Ошибка бана", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("разбан")
@@ -3731,7 +3796,13 @@ async def unban_cmd(message: types.Message):
             can_add_web_page_previews=True, can_send_polls=True, can_invite_users=True))
     except: pass
     clear_chat_ban(message.chat.id, target.id)
-    await message.reply(f"{em('check', '✅')} {mention(target)} разбанен.", parse_mode="HTML", disable_web_page_preview=True)
+    response = mod_action_text(
+        action_emoji="✅",
+        action_title="Разбан",
+        target_mention=mention(target),
+        moderator_mention=mention(message.from_user),
+    )
+    await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("мут")
@@ -3759,12 +3830,23 @@ async def mute_cmd(message: types.Message):
     parts = message.text.split('\n', 1)
     if len(parts) > 1: reason = parts[1].strip()
     try:
+        until = datetime.now() + timedelta(seconds=duration_seconds)
         await bot.restrict_chat_member(message.chat.id, target.id,
             permissions=types.ChatPermissions(can_send_messages=False),
-            until_date=datetime.now() + timedelta(seconds=duration_seconds))
-        await message.reply(f"{em('mute', '🔇')} {mention(target)} замучен на <b>{duration_text}</b>\n👮 {mention(message.from_user)}\n📝 {reason}", parse_mode="HTML", disable_web_page_preview=True)
+            until_date=until)
+        add_chat_mute(message.chat.id, target.id, reason, message.from_user.id, until.isoformat())
+
+        response = mod_action_text(
+            action_emoji="🔇",
+            action_title="Мут",
+            target_mention=mention(target),
+            moderator_mention=mention(message.from_user),
+            duration=duration_text,
+            reason=reason,
+        )
+        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(mod_error_text("Ошибка мута", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("размут")
@@ -3777,9 +3859,16 @@ async def unmute_cmd(message: types.Message):
     try:
         await bot.restrict_chat_member(message.chat.id, target.id, permissions=types.ChatPermissions(
             can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True))
-        await message.reply(f"🔈 {mention(target)} размучен", parse_mode="HTML", disable_web_page_preview=True)
+        clear_chat_mute(message.chat.id, target.id)
+        response = mod_action_text(
+            action_emoji="🔈",
+            action_title="Размут",
+            target_mention=mention(target),
+            moderator_mention=mention(message.from_user),
+        )
+        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(mod_error_text("Ошибка размута", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("кик")
@@ -3795,9 +3884,15 @@ async def kick_cmd(message: types.Message):
     try:
         await bot.ban_chat_member(message.chat.id, target.id)
         await bot.unban_chat_member(message.chat.id, target.id)
-        await message.reply(f"👢 {mention(target)} кикнут", parse_mode="HTML", disable_web_page_preview=True)
+        response = mod_action_text(
+            action_emoji="👢",
+            action_title="Кик",
+            target_mention=mention(target),
+            moderator_mention=mention(message.from_user),
+        )
+        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(mod_error_text("Ошибка кика", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("-смс"))
@@ -3883,9 +3978,25 @@ async def warn_cmd(message: types.Message):
                 permissions=types.ChatPermissions(can_send_messages=False),
                 until_date=datetime.now() + timedelta(seconds=3600))
             clear_warns(target.id, message.chat.id)
-            return await message.reply(f"{em('pencil', '✏️')} {mention(target)} 3-й варн!\n{em('mute', '🔇')} Мут 1 час.", parse_mode="HTML", disable_web_page_preview=True)
+            response = mod_action_text(
+                action_emoji="✏️",
+                action_title="Предупреждение 3/3 → Мут 1 час",
+                target_mention=mention(target),
+                moderator_mention=mention(message.from_user),
+                reason=reason,
+            )
+            return await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
         except: pass
-    await message.reply(f"{em('pencil', '✏️')} {mention(target)} предупреждение!\n{em('stats', '📊')} {warns_count}/3", parse_mode="HTML", disable_web_page_preview=True)
+
+    response = mod_action_text(
+        action_emoji="✏️",
+        action_title=f"Предупреждение ({warns_count}/3)",
+        target_mention=mention(target),
+        moderator_mention=mention(message.from_user),
+        reason=reason,
+        extra="⚠️ При 3/3 — автомут на 1 час.",
+    )
+    await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("варны")
@@ -4144,18 +4255,24 @@ async def as_command_handler(message: types.Message):
             conn.commit()
         add_bot_ignore(target.id, actor_id)
 
-    lines = [f"☢️ {mention(target)} добавлен(а) в <b>антиспам</b>."]
-    if current_ban_ok: lines.append("🚫 Забанен в этом чате.")
-    lines.append(f"📝 {reason}")
+    lines = [
+        f"☢️ <b>Антиспам</b>",
+        "",
+        f"👤 Пользователь: {mention(target)}",
+        f"📝 Причина: <i>{reason}</i>",
+        f"👮 Агент: {mention(message.from_user)}",
+    ]
+    if current_ban_ok:
+        lines.append(f"🚫 Забанен в этом чате")
     if mode == "as_kick":
-        lines.append(f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов (ошибок: {len(failed_chats)}).")
+        lines.append(f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов (ошибок: {len(failed_chats)})")
     if mode == "as_kick_ignore":
-        lines.append(f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов (ошибок: {len(failed_chats)}).")
-        lines.append(f"🔇 Добавлен в игнор в <b>{len(ign_chats)}</b> чатах.")
-        lines.append("🚷 Заблокирован в боте (не может писать в ЛС).")
+        lines.append(f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов (ошибок: {len(failed_chats)})")
+        lines.append(f"🔇 Добавлен в игнор в <b>{len(ign_chats)}</b> чатах")
+        lines.append(f"🚷 Заблокирован в боте")
     if mode == "as_ignore_only":
-        lines.append(f"🔇 Добавлен в игнор в <b>{len(ign_chats)}</b> чатах.")
-        lines.append("🚷 Заблокирован в боте (не может писать в ЛС).")
+        lines.append(f"🔇 Добавлен в игнор в <b>{len(ign_chats)}</b> чатах")
+        lines.append(f"🚷 Заблокирован в боте")
     await message.reply("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
 
 
@@ -4213,20 +4330,10 @@ async def as_remove_handler(message: types.Message):
                 f"ℹ️ {mention(target)} не был(а) в антиспаме.",
                 parse_mode="HTML", disable_web_page_preview=True
             )
-        try:
-            await bot.send_message(
-                target.id,
-                f"🗓 <b>Вы были исключены из базы «Mos-антиспам»</b>\n\n"
-                f"Учтите, что каждый последующий вынос повышается в цене. "
-                f"За подробностями обращайтесь к агентам поддержки.\n\n"
-                f"Чтобы в будущем избежать попадания в базу Mos-антиспам, "
-                f"рекомендуем ознакомиться с нашим <a href='{TERMS_URL}'>пользовательским соглашением</a>.",
-                parse_mode="HTML", disable_web_page_preview=True
-            )
-        except Exception as e:
-            print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
         await message.reply(
-            f"{em('check', '✅')} {mention(target)} убран(а) из <b>антиспама</b>.\n✉️ Уведомление отправлено в ЛС.",
+            f"✅ <b>Снят с антиспама</b>\n\n"
+            f"👤 Пользователь: {mention(target)}\n"
+            f"👮 Агент: {mention(message.from_user)}",
             parse_mode="HTML", disable_web_page_preview=True
         )
 
@@ -4239,20 +4346,10 @@ async def as_remove_handler(message: types.Message):
         remove_user_from_antispam(target.id)
         try: await bot.unban_chat_member(message.chat.id, target.id)
         except: pass
-        try:
-            await bot.send_message(
-                target.id,
-                f"🗓 <b>Вы были исключены из базы «Mos-антиспам»</b>\n\n"
-                f"Учтите, что каждый последующий вынос повышается в цене. "
-                f"За подробностями обращайтесь к агентам поддержки.\n\n"
-                f"Чтобы в будущем избежать попадания в базу Mos-антиспам, "
-                f"рекомендуем ознакомиться с нашим <a href='{TERMS_URL}'>пользовательским соглашением</a>.",
-                parse_mode="HTML", disable_web_page_preview=True
-            )
-        except Exception as e:
-            print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
         await message.reply(
-            f"{em('check', '✅')} {mention(target)} убран(а) из <b>антиспама</b> и <b>игнора</b>.\n✉️ Уведомление отправлено в ЛС.",
+            f"✅ <b>Снят с антиспама и игнора</b>\n\n"
+            f"👤 Пользователь: {mention(target)}\n"
+            f"👮 Агент: {mention(message.from_user)}",
             parse_mode="HTML", disable_web_page_preview=True
         )
 
@@ -7661,13 +7758,88 @@ async def on_business_connection(connection: types.BusinessConnection):
 async def auto_unban_loop():
     while True:
         try:
+            # === Авто-разбан ===
             expired = get_expired_bans()
-            for chat_id, user_id in expired:
+            for chat_id, user_id, reason, banned_by in expired:
                 try:
                     await bot.unban_chat_member(chat_id, user_id)
                     clear_chat_ban(chat_id, user_id)
-                except: pass
-        except: pass
+
+                    try:
+                        await bot.restrict_chat_member(
+                            chat_id, user_id,
+                            permissions=types.ChatPermissions(
+                                can_send_messages=True,
+                                can_send_media_messages=True,
+                                can_send_other_messages=True,
+                                can_add_web_page_previews=True,
+                                can_send_polls=True,
+                                can_invite_users=True,
+                            )
+                        )
+                    except: pass
+
+                    try:
+                        user = await bot.get_chat(user_id)
+                        user_mention = user_link(user_id, user.first_name, user.username)
+                    except:
+                        user_mention = f"<code>{user_id}</code>"
+
+                    try:
+                        chat = await bot.get_chat(chat_id)
+                        if chat.type not in ["group", "supergroup"]:
+                            continue
+                    except:
+                        continue
+
+                    try:
+                        await bot.send_message(
+                            chat_id,
+                            f"✅ <b>Автоматический разбан</b>\n\n"
+                            f"👤 Пользователь: {user_mention}\n"
+                            f"⏱ <b>Срок истёк</b>\n"
+                            f"📝 Причина: <i>{reason or 'не указана'}</i>",
+                            parse_mode="HTML", disable_web_page_preview=True
+                        )
+                    except Exception as e:
+                        print(f"⚠️ Не смог уведомить чат {chat_id}: {e}")
+                except Exception as e:
+                    print(f"⚠️ auto_unban {chat_id}/{user_id}: {e}")
+
+            # === Авто-размут ===
+            expired_mutes = get_expired_mutes()
+            for chat_id, user_id, reason in expired_mutes:
+                try:
+                    clear_chat_mute(chat_id, user_id)
+
+                    try:
+                        user = await bot.get_chat(user_id)
+                        user_mention = user_link(user_id, user.first_name, user.username)
+                    except:
+                        user_mention = f"<code>{user_id}</code>"
+
+                    try:
+                        chat = await bot.get_chat(chat_id)
+                        if chat.type not in ["group", "supergroup"]:
+                            continue
+                    except:
+                        continue
+
+                    try:
+                        await bot.send_message(
+                            chat_id,
+                            f"✅ <b>Автоматический размут</b>\n\n"
+                            f"👤 Пользователь: {user_mention}\n"
+                            f"⏱ <b>Срок мута истёк</b>\n"
+                            f"📝 Причина: <i>{reason or 'не указана'}</i>",
+                            parse_mode="HTML", disable_web_page_preview=True
+                        )
+                    except Exception as e:
+                        print(f"⚠️ Не смог уведомить чат {chat_id}: {e}")
+                except Exception as e:
+                    print(f"⚠️ auto_unmute {chat_id}/{user_id}: {e}")
+        except Exception as e:
+            print(f"⚠️ auto_unban_loop: {e}")
         await asyncio.sleep(300)
 
 
