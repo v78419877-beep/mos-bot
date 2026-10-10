@@ -7365,7 +7365,7 @@ async def grid_command_router(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True
         )
 
-      if action in ["-админ", "-админка", "-adm"]:
+    if action in ["-админ", "-админка", "-adm"]:
         if actor_id != OWNER_ID and not is_coowner(actor_id) and not is_grid_moderator(grid_id, actor_id, 5):
             return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
         target, _ = await resolve_target(message)
