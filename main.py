@@ -3376,10 +3376,49 @@ def _owner_status_line(user_id: int) -> str:
     return ""
 
 
+def _fmt_activity_num(n: int) -> str:
+    """188 -> '188', 3600 -> '3,6k', 9300 -> '9,3k', 18300 -> '18,3k'"""
+    n = int(n or 0)
+    if n < 1000:
+        return str(n)
+    if n < 10000:
+        v = n / 1000
+        s = f"{v:.1f}".rstrip("0").rstrip(".")
+        return s.replace(".", ",") + "k"
+    if n < 100000:
+        return f"{n // 1000}k"
+    if n < 1000000:
+        v = n / 1000
+        s = f"{v:.0f}"
+        return s + "k"
+    v = n / 1000000
+    s = f"{v:.1f}".rstrip("0").rstrip(".")
+    return s.replace(".", ",") + "M"
+
+
+def _owner_status_line(user_id: int) -> str:
+    """Строка-статус для владельца/совладельца/агента."""
+    if user_id == OWNER_ID:
+        return "⚜️ <b>Владелец бота</b>"
+    if is_coowner(user_id):
+        return "⚜️ <b>Совладелец бота</b>"
+    if is_agent(user_id):
+        return "🛡 <b>Агент поддержки Mos</b>"
+    return ""
+
+
 async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str:
     """
-    Собирает текст анкеты в стиле как на скриншоте.
-    Убрана строка «Звёздность». Добавлена строка со статусом (владелец/совладелец/агент).
+    Анкета в стиле как на фото:
+    Это Имя (был недавно)
+    @username
+    [статус владелец/совладелец/агент]
+    🕰 Во вселенной Mos: с DD.MM.YYYY (длительность)
+    🙂‍↔️ Пол: ...
+    🗓 Дата рождения: ...
+    🏙 Город: ...
+    📊 Активность (день|нед|мес|всего): ...
+    🏠 Гражданин чата «...» ...
     """
     user_id = target.id
     profile = get_user_profile(user_id)
@@ -3408,60 +3447,60 @@ async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str
             f"<i>Он(а) может открыть её командой <code>+анкета</code>.</i>"
         )
 
-    # Имя
+    # Имя (ник или first_name)
     nick = get_user_nick(user_id, chat_id)
     display_name = nick if nick else html_escape_text(target.first_name or "Пользователь")
 
+    # Ссылка в нике: если в нике есть <a href="..."> уже — оставляем как есть.
+    # Если ник без ссылки, но у юзера есть @username — оборачиваем ник в кликабельную ссылку на профиль.
+    has_link_in_name = isinstance(display_name, str) and "<a " in display_name
+    if not has_link_in_name:
+        if getattr(target, "username", None):
+            display_name = f'<a href="https://t.me/{target.username}">{display_name}</a>'
+        else:
+            display_name = f'<a href="tg://user?id={user_id}">{display_name}</a>'
+
     lines = []
 
-    # --- Строка 1: «Это X (был недавно)» ---
+    # --- Строка 1: «Это Имя (был недавно)» ---
     last_seen_raw = get_last_seen_in_chat(user_id, chat_id)
     last_seen_str = format_last_seen(last_seen_raw) if last_seen_raw else None
     suffix = f" (был {last_seen_str})" if last_seen_str and last_seen_str != "нет данных" else ""
     lines.append(f"👤 <b>Это {display_name}{suffix}</b>")
 
-    # --- Строка 2: ID и username ---
+    # --- Строка 2: @username или ID ---
     if getattr(target, "username", None):
         lines.append(f"🆔 @{target.username}")
     else:
         lines.append(f"🆔 <a href=\"tg://user?id={user_id}\">{user_id}</a>")
 
-    lines.append("")
-
     # --- Статус (владелец/совладелец/агент) ---
     status_line = _owner_status_line(user_id)
     if status_line:
-        lines.append(status_line)
         lines.append("")
+        lines.append(status_line)
 
-    # --- Гражданство ---
-    if show_citizenship:
-        cit = get_citizenship_info(user_id)
-        if cit:
-            cit_chat_id, cit_date = cit
-            try:
-                d = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
-                date_str = d.strftime("%d.%m.%Y")
-            except Exception:
-                date_str = cit_date[:10]
-            duration = format_citizenship_duration(cit_date)
-            if cit_chat_id == chat_id:
-                lines.append(f"🕰 Во вселенной {target.first_name}: с {date_str} ({duration})")
-            else:
-                try:
-                    cc = await bot.get_chat(cit_chat_id)
-                    cc_title = cc.title or "другой чат"
-                except Exception:
-                    cc_title = "другой чат"
-                lines.append(f"🕰 Гражданин чата «{cc_title}»: с {date_str} ({duration})")
+    lines.append("")
 
-    # --- Пол ---
+    # --- 🕰 «Во вселенной Mos: с DD.MM.YYYY (длительность)» ---
+    cit = get_citizenship_info(user_id)
+    if show_citizenship and cit:
+        cit_chat_id, cit_date = cit
+        try:
+            d = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
+            date_str = d.strftime("%d.%m.%Y")
+        except Exception:
+            date_str = cit_date[:10]
+        duration = format_citizenship_duration(cit_date)
+        lines.append(f"🕰 Во вселенной <b>Mos</b>: с {date_str} ({duration})")
+
+    # --- 🙂‍↔️ Пол ---
     if gender:
-        lines.append(f"🙂‍↔️ Пол: <b>{html_escape_text(str(gender))}</b>")
+        lines.append(f"🙂‍↔️ Пол: <b>{html_escape_text(str(gender).lower())}</b>")
     else:
         lines.append("🙂‍↔️ Пол: <i>не указан</i>")
 
-    # --- Дата рождения ---
+    # --- 🗓 Дата рождения ---
     if birth_date:
         bd_display = str(birth_date)
         try:
@@ -3479,69 +3518,80 @@ async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str
     else:
         lines.append("🗓 Дата рождения: <i>не указана</i>")
 
-    # --- Город ---
+    # --- 🏙 Город ---
     if city:
         lines.append(f"🏙 Город: <b>{html_escape_text(str(city))}</b>")
     else:
         lines.append("🏙 Город: <i>не указан</i>")
 
-    # --- Активность ---
+    # --- 📊 Активность (день|нед|мес|всего) ---
     day, week, month, total = get_activity_extended(user_id, chat_id)
     lines.append(
         f"📊 Активность (день|нед|мес|всего): "
-        f"<b>{day}</b> | <b>{week}</b> | <b>{month}</b> | <b>{total}</b>"
+        f"<b>{_fmt_activity_num(day)}</b> | "
+        f"<b>{_fmt_activity_num(week)}</b> | "
+        f"<b>{_fmt_activity_num(month)}</b> | "
+        f"<b>{_fmt_activity_num(total)}</b>"
     )
 
-    # --- Звание (если установлено) ---
+    # --- ✨ Звание (если установлено) ---
     rank_text = get_user_rank_text(user_id, chat_id)
     if rank_text:
         lines.append(f"✨ Звание: <b>{rank_text}</b>")
 
-    # --- Гражданство (строка как в новом стиле) ---
-    if show_citizenship:
-        cit2 = get_citizenship_info(user_id)
-        if cit2:
-            cit_chat_id2, cit_date2 = cit2
-            try:
-                d2 = datetime.strptime(cit_date2[:19], "%Y-%m-%d %H:%M:%S")
-                date_str2 = d2.strftime("%d.%m.%Y")
-            except Exception:
-                date_str2 = cit_date2[:10]
-            duration2 = format_citizenship_duration(cit_date2)
-            if cit_chat_id2 == chat_id:
-                lines.append(f"🏠 Гражданин чата: <b>{duration2}</b> (с {date_str2})")
-            else:
-                try:
-                    cc2 = await bot.get_chat(cit_chat_id2)
-                    cc_title2 = cc2.title or "чат"
-                except Exception:
-                    cc_title2 = "чат"
-                lines.append(f"🏠 Гражданин чата «{cc_title2}»: <b>{duration2}</b> (с {date_str2})")
+    # --- 🏠 Гражданин чата «...» ---
+    if show_citizenship and cit:
+        cit_chat_id, cit_date = cit
+        try:
+            d2 = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
+            date_str2 = d2.strftime("%d.%m.%Y")
+        except Exception:
+            date_str2 = cit_date[:10]
+        duration2 = format_citizenship_duration(cit_date)
+        try:
+            cc2 = await bot.get_chat(cit_chat_id)
+            cc_title2 = cc2.title or "чат"
+        except Exception:
+            cc_title2 = "чат"
 
-    # --- Девиз ---
+        # Скрываем название для чужих, если это не тот чат, где смотрят, и не staff
+        if cit_chat_id != chat_id and not is_staff and not is_self:
+            # Проверим есть ли юзер в этом чате
+            try:
+                m = await bot.get_chat_member(chat_id, user_id)
+                in_this_chat = m.status in ("member", "administrator", "creator", "restricted")
+            except Exception:
+                in_this_chat = False
+            if not in_this_chat:
+                lines.append(
+                    f"🏠 Гражданин чата «***» (не в каталоге): "
+                    f"<b>{duration2}</b> (с {date_str2})"
+                )
+            else:
+                lines.append(
+                    f"🏠 Гражданин чата «{cc_title2}»: "
+                    f"<b>{duration2}</b> (с {date_str2})"
+                )
+        else:
+            lines.append(
+                f"🏠 Гражданин чата «{cc_title2}»: "
+                f"<b>{duration2}</b> (с {date_str2})"
+            )
+
+    # --- 💭 Девиз ---
     if motto:
         lines.append(f"💭 Девиз: {motto}")
 
-    # --- О себе ---
+    # --- 📝 О себе ---
     about = get_user_about(user_id)
     if about:
         lines.append(f"\n📝 <b>О себе:</b>\n{about}")
 
-    # --- Био ---
+    # --- 📖 Био ---
     if bio:
         lines.append(f"\n📖 <b>Дополнительно:</b>\n{html_escape_text(str(bio))}")
 
-    # --- Подсказка для себя ---
-    if is_self:
-        lines.append("")
-        lines.append(
-            "<i>Заполнить: <code>мой пол М</code>, <code>мой др 01.01.2000</code>, "
-            "<code>!мой город Москва</code>, <code>+о себе</code>, <code>+девиз</code>, "
-            "<code>+ник</code>, <code>+звание</code></i>"
-        )
-
     return "\n".join(lines)
-
 
 @cmd("анкета")
 async def anketa_cmd(message: types.Message):
@@ -3580,6 +3630,25 @@ async def anketa_cmd(message: types.Message):
         target = message.from_user
 
     text = await _build_anketa_text(target, message.chat.id, viewer_id=message.from_user.id)
+
+    # График сверху
+    chart_buf = None
+    try:
+        chart_buf = generate_user_chat_activity_chart(target.id, message.chat.id, days=30)
+    except Exception as e:
+        print(f"⚠️ График анкеты: {e}")
+
+    if chart_buf:
+        try:
+            await message.reply_photo(
+                photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
+                caption=text,
+                parse_mode="HTML"
+            )
+            return
+        except Exception:
+            pass
+
     try:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
     except Exception:
@@ -3590,11 +3659,28 @@ async def anketa_cmd(message: types.Message):
 @cmd("моя профиль")
 async def my_anketa_cmd(message: types.Message):
     text = await _build_anketa_text(message.from_user, message.chat.id, viewer_id=message.from_user.id)
+
+    chart_buf = None
+    try:
+        chart_buf = generate_user_chat_activity_chart(message.from_user.id, message.chat.id, days=30)
+    except Exception as e:
+        print(f"⚠️ График анкеты: {e}")
+
+    if chart_buf:
+        try:
+            await message.reply_photo(
+                photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
+                caption=text,
+                parse_mode="HTML"
+            )
+            return
+        except Exception:
+            pass
+
     try:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
     except Exception:
         await message.reply(text, disable_web_page_preview=True)
-
 
 @cmd("твоя анкета")
 async def your_anketa_cmd(message: types.Message):
@@ -3637,6 +3723,24 @@ async def your_anketa_cmd(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True
         )
     text = await _build_anketa_text(target, message.chat.id, viewer_id=message.from_user.id)
+
+    chart_buf = None
+    try:
+        chart_buf = generate_user_chat_activity_chart(target.id, message.chat.id, days=30)
+    except Exception as e:
+        print(f"⚠️ График анкеты: {e}")
+
+    if chart_buf:
+        try:
+            await message.reply_photo(
+                photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
+                caption=text,
+                parse_mode="HTML"
+            )
+            return
+        except Exception:
+            pass
+
     try:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
     except Exception:
