@@ -7365,14 +7365,16 @@ async def grid_command_router(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True
         )
 
-    if action in ["-админ", "-админка", "-adm"]:
+      if action in ["-админ", "-админка", "-adm"]:
         if actor_id != OWNER_ID and not is_coowner(actor_id) and not is_grid_moderator(grid_id, actor_id, 5):
             return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
         target, _ = await resolve_target(message)
         if not target:
             return await message.reply("📌 <code>сетка -админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
         if target.id == OWNER_ID: return
-        removed_from = 0; failed = 0; errors_log = []
+        removed_from = 0
+        failed = 0
+        errors_log = []
         for chat_id, hidden, desc in chats:
             success_this_chat = False
             try:
@@ -7380,13 +7382,19 @@ async def grid_command_router(message: types.Message):
                 success_this_chat = True
             except Exception as e:
                 errors_log.append(f"{chat_id}: {e}")
-            if success_this_chat: removed_from += 1
-            else: failed += 1
-            try: remove_rank(chat_id, target.id)
-            except: pass           
-            try: unmark_bot_promoted(target.id, chat_id)
+            if success_this_chat:
+                removed_from += 1
+            else:
+                failed += 1
+            try:
+                remove_rank(chat_id, target.id)
+            except: pass
+            try:
+                unmark_bot_promoted(target.id, chat_id)
+            except: pass
         remove_grid_moderator(grid_id, target.id)
-        try: remove_grid_user_rank(grid_id, target.id)
+        try:
+            remove_grid_user_rank(grid_id, target.id)
         except: pass
         notify_text = (
             f"❌ <b>Снятие администратора в сетке</b>\n\n"
