@@ -5947,7 +5947,7 @@ def _fishing_help_text() -> str:
 
 
 @dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*(рыбалка\s*(помощь|хелп|help)|рыбпомощь|рыбалка)$',
+    r'^\s*[.\/!]?\s*рыбалка\s+(помощь|хелп|help)\s*$',
     m.text.strip(), re.IGNORECASE
 ))
 async def fishing_help_cmd(message: types.Message):
