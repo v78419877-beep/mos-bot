@@ -3860,6 +3860,16 @@ async def get_chat_id_cmd(message: types.Message):
 # ================= ТОП =================
 @cmd("топ")
 async def top_cmd(message: types.Message):
+    """
+    .топ           — за 24 часа
+    .топ неделя    — за 7 дней
+    .топ месяц     — за 30 дней
+    .топ вся       — за всё время
+    """
+    # Только для групп
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("📊 Топ работает только в группах.", parse_mode="HTML")
+
     args = message.text.split()
 
     period = "24h"
@@ -3867,28 +3877,26 @@ async def top_cmd(message: types.Message):
     period_icon = "🕐"
 
     if len(args) >= 2:
-        p = args[1].lower()
-        if p in ["24ч", "24h", "день", "сутки", "today", "day"]:
+        p = args[1].lower().strip()
+
+        if p in ["24ч", "24h", "день", "сутки", "д", "today", "day"]:
             period, period_name, period_icon = "24h", "за последние 24 часа", "🕐"
-        elif p in ["7д", "7d", "неделя", "week", "н"]:
-            period, period_name, period_icon = "7d", "за 7 дней", "📆"
-        elif p in ["30д", "30d", "месяц", "month", "м"]:
-            period, period_name, period_icon = "30d", "за 30 дней", "🗓"
-        elif p in ["все", "всё", "all", "*"]:
+        elif p in ["неделя", "неделю", "нед", "н", "7д", "7d", "week"]:
+            period, period_name, period_icon = "7d", "за неделю", "📆"
+        elif p in ["месяц", "мес", "м", "30д", "30d", "month"]:
+            period, period_name, period_icon = "30d", "за месяц", "🗓"
+        elif p in ["вся", "всё", "все", "всё время", "all", "*"]:
             period, period_name, period_icon = "all", "за всё время", "🏆"
         else:
             return await message.reply(
                 "📊 <b>Как пользоваться топом</b>\n\n"
-                "• <code>.топ</code> или <code>.топ 24ч</code> — за 24 часа\n"
-                "• <code>.топ 7д</code> — за 7 дней\n"
-                "• <code>.топ 30д</code> — за 30 дней\n"
-                "• <code>.топ всё</code> — за всё время\n\n"
+                "• <code>.топ</code> — за 24 часа\n"
+                "• <code>.топ неделя</code> — за 7 дней\n"
+                "• <code>.топ месяц</code> — за 30 дней\n"
+                "• <code>.топ вся</code> — за всё время\n\n"
                 "🕐 Статистика <b>24/7</b>: окно скользящее, не сбрасывается в полночь.",
                 parse_mode="HTML", disable_web_page_preview=True
             )
-
-    if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("📊 Топ работает только в группах.", parse_mode="HTML")
 
     top_users = get_top_users(message.chat.id, period, limit=10)
 
