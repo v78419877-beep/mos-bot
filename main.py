@@ -71,13 +71,10 @@ def mod_cmd(name: str):
     def decorator(func):
         @dp.message(lambda m: _match_command(m, name_lower))
         async def handler(message: types.Message):
-            print(f"🎯 MOD CMD '{name_lower}' от {message.from_user.id}: {message.text!r}")
             try:
                 if not await check_command_access(message, name_lower):
-                    print(f"   ⛔ Доступ запрещён")
                     return
             except Exception as e:
-                print(f"   ❌ check_command_access: {e}")
                 try:
                     await message.reply(f"❌ Ошибка доступа: <code>{e}</code>", parse_mode="HTML")
                 except: pass
@@ -145,20 +142,6 @@ def mention_by_id(user_id, first_name, username=None):
 def user_link(user_id, first_name="Пользователь", username=None):
     if username: return f'<a href="https://t.me/{username}">{first_name}</a>'
     return f'<b>{first_name}</b>'
-
-
-def profile_link_html(user) -> str:
-    """HTML-ссылка на профиль юзера. @username → t.me; иначе tg://user?id="""
-    if not user:
-        return ""
-    first_name = html_escape_text(getattr(user, "first_name", "") or "Пользователь")
-    username = getattr(user, "username", None)
-    user_id = getattr(user, "id", None)
-    if username:
-        return f'<a href="https://t.me/{username}">{first_name}</a>'
-    if user_id:
-        return f'<a href="tg://user?id={user_id}">{first_name}</a>'
-    return f"<b>{first_name}</b>"
 
 
 def html_escape_text(text: str) -> str:
@@ -259,6 +242,7 @@ DEFAULT_ACCESS = {
     "садок": 0, "моя рыба": 0, "рыбасадок": 0, "продать": 0,
     "ачивки": 0, "все ачивки": 0, "мои ачивки": 0, "твои ачивки": 0, "вип": 0, "купить вип": 0,
     "мрп": 0, "репорт": 0, "админы": 0, "ухожу в отставку": 0,
+    "регион": 3, "рыбное место": 3,
 
     "запретить переводы": 0, "разрешить переводы": 0, "мои запреты": 0, "запреты": 0,
 
@@ -271,6 +255,7 @@ DEFAULT_ACCESS = {
 
     "правила": 3, "приветствие": 3, "фильтрссылок": 3,
     "капча": 3, "автомод": 3, "автомодерация": 3,
+    "капчавремя": 3, "капча время": 3,
     "обновить чат": 3, "обновитьчат": 3, "кто не писал": 2, "неактивные": 2,
 
     "повысить": 3, "понизить": 3, "разжаловать": 3, "снять": 3, "восстановить": 3,
@@ -337,14 +322,12 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS antispam (user_id INTEGER PRIMARY KEY, reason TEXT, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS ignore_list (user_id INTEGER, chat_id INTEGER, reason TEXT, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS chat_codes (chat_id INTEGER PRIMARY KEY, code TEXT UNIQUE)")
-        # --- messages_stats с last_message_at ---
         c.execute("""CREATE TABLE IF NOT EXISTS messages_stats (
             user_id INTEGER, chat_id INTEGER, date DATE,
             count INTEGER DEFAULT 1,
             last_message_at TIMESTAMP,
             UNIQUE(user_id, chat_id, date)
         )""")
-        # Миграция
         try:
             c.execute("PRAGMA table_info(messages_stats)")
             cols = [row[1] for row in c.fetchall()]
@@ -354,7 +337,6 @@ def init_db():
                 conn.commit()
         except Exception as e:
             print(f"⚠️ Миграция messages_stats: {e}")
-        # Индексы для скорости
         try:
             c.execute("CREATE INDEX IF NOT EXISTS idx_messages_stats_chat_date ON messages_stats(chat_id, date)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_messages_stats_user_chat ON messages_stats(user_id, chat_id)")
@@ -375,7 +357,16 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, chat_id))""")
         c.execute("""CREATE TABLE IF NOT EXISTS captcha_settings (
-            chat_id INTEGER PRIMARY KEY, enabled INTEGER DEFAULT 0)""")
+            chat_id INTEGER PRIMARY KEY, enabled INTEGER DEFAULT 0, timeout INTEGER DEFAULT 120)""")
+        try:
+            c.execute("PRAGMA table_info(captcha_settings)")
+            cols = [row[1] for row in c.fetchall()]
+            if "timeout" not in cols:
+                c.execute("ALTER TABLE captcha_settings ADD COLUMN timeout INTEGER DEFAULT 120")
+                c.execute("UPDATE captcha_settings SET timeout = 120 WHERE timeout IS NULL")
+                conn.commit()
+        except Exception as e:
+            print(f"⚠️ Миграция captcha_settings: {e}")
         c.execute("""CREATE TABLE IF NOT EXISTS command_notify_settings (
             chat_id INTEGER PRIMARY KEY, notify_enabled INTEGER DEFAULT 1)""")
         c.execute("CREATE TABLE IF NOT EXISTS business_connections (user_id INTEGER PRIMARY KEY, connection_id TEXT, connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -557,7 +548,6 @@ def _fmt_added_dt(s: str) -> str:
 
 
 def format_last_seen(last_seen_str):
-    """Форматирует 'последняя активность'."""
     if not last_seen_str:
         return "нет данных"
     try:
@@ -581,7 +571,6 @@ def format_last_seen(last_seen_str):
 
 
 def format_citizenship_short(became_at_str):
-    """Короткий формат: '14 секунд', '2 минут', '3 часов', '5 дней'."""
     if not became_at_str:
         return "недавно"
     try:
@@ -1023,7 +1012,7 @@ async def resolve_target(message):
             try:
                 return await bot.get_chat(f"@{username}"), raw
             except Exception as e:
-                print(f"⚠️ resolve_target @{username}: {e}")
+                pass
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
                 c.execute("SELECT user_id, first_name, username FROM users WHERE LOWER(username) = LOWER(?)", (username,))
@@ -1038,7 +1027,7 @@ async def resolve_target(message):
             try:
                 return await bot.get_chat(user_id), raw
             except Exception as e:
-                print(f"⚠️ resolve_target get_chat ID {raw}: {e}")
+                pass
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
                 c.execute("SELECT first_name, username FROM users WHERE user_id = ?", (user_id,))
@@ -1050,7 +1039,7 @@ async def resolve_target(message):
             try:
                 return await bot.get_chat(f"@{raw}"), raw
             except Exception as e:
-                print(f"⚠️ resolve_target username {raw}: {e}")
+                pass
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
                 c.execute("SELECT user_id, first_name FROM users WHERE LOWER(username) = LOWER(?)", (raw,))
@@ -1450,15 +1439,7 @@ def clear_warns(user_id, chat_id):
 
 # ================= ТОП / АКТИВНОСТЬ 24/7 =================
 def get_top_users(chat_id, period="today", limit=10):
-    """
-    period:
-      'today' | '24h' — за последние 24 часа (rolling)
-      'week'  | '7d'  — за 7 дней
-      'month' | '30d' — за 30 дней
-      'all'           — за всё время
-    """
     now = datetime.now()
-
     if period in ("today", "24h", "day", "день"):
         cutoff_date = (now - timedelta(hours=24)).date().isoformat()
         query = """SELECT user_id, SUM(count) as cnt FROM messages_stats
@@ -1477,7 +1458,7 @@ def get_top_users(chat_id, period="today", limit=10):
                    WHERE chat_id = ? AND date >= ?
                    GROUP BY user_id ORDER BY cnt DESC LIMIT ?"""
         params = (chat_id, cutoff_date, limit)
-    else:  # all
+    else:
         query = """SELECT user_id, SUM(count) as total FROM messages_stats
                    WHERE chat_id = ?
                    GROUP BY user_id ORDER BY total DESC LIMIT ?"""
@@ -1519,7 +1500,6 @@ def get_last_seen_in_chat(user_id, chat_id):
 
 
 def get_activity_extended(user_id, chat_id):
-    """day(24ч), week(7д), month(30д), total для конкретного чата."""
     now = datetime.now()
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1545,7 +1525,6 @@ def get_activity_extended(user_id, chat_id):
 
 
 def get_user_position_in_chat(user_id, chat_id, period="30d"):
-    """Позиция юзера в топе чата за период (1-based)."""
     try:
         top = get_top_users(chat_id, period, limit=500)
         for i, (uid, _) in enumerate(top, 1):
@@ -1939,6 +1918,26 @@ def set_captcha_enabled(chat_id, enabled):
         conn.commit()
 
 
+def get_captcha_timeout(chat_id) -> int:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT timeout FROM captcha_settings WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        if r is None or r[0] is None:
+            c.execute("INSERT OR IGNORE INTO captcha_settings (chat_id, enabled, timeout) VALUES (?, 0, 120)", (chat_id,))
+            conn.commit()
+            return 120
+        return int(r[0])
+
+
+def set_captcha_timeout(chat_id, seconds: int):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO captcha_settings (chat_id, enabled, timeout) VALUES (?, 0, 120)", (chat_id,))
+        c.execute("UPDATE captcha_settings SET timeout = ? WHERE chat_id = ?", (seconds, chat_id))
+        conn.commit()
+
+
 # ================= BUSINESS =================
 def save_business_connection(user_id, connection_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -2005,82 +2004,184 @@ def mark_report_reviewed(report_id, reviewed_by):
         conn.commit()
 
 
-# ================= РЫБАЛКА =================
+# ================= РЫБАЛКА — ДАННЫЕ =================
+
+# =========================================================
+# РЫБА (обычная) — по регионам
+# Формат: (имя, эмодзи, min_reward, max_reward, вес_шанса, регион, время_суток)
+# регион: "river" | "lake" | "sea" | "ocean" | "any"
+# время:  "day" | "night" | "any"
+# =========================================================
 FISH_LIST = [
-    ("Окунь", "🐟", 1, 3, 100), ("Карась", "🐠", 2, 5, 90), ("Лещ", "🐠", 3, 8, 80),
-    ("Плотва", "🐟", 2, 6, 75), ("Краснопёрка", "🐠", 3, 7, 70), ("Густера", "🐟", 4, 9, 65),
-    ("Ёрш", "🐡", 3, 8, 60), ("Пескарь", "🐟", 2, 5, 55), ("Линь", "🐠", 5, 12, 50),
-    ("Язь", "🐟", 6, 14, 45), ("Щука", "🐡", 8, 18, 40), ("Судак", "🐡", 10, 22, 38),
-    ("Сом", "🦈", 15, 30, 30), ("Форель", "🐟", 12, 25, 28), ("Карп", "🐠", 10, 24, 25),
-    ("Толстолобик", "🐡", 14, 28, 22), ("Белый амур", "🐟", 16, 32, 20), ("Налим", "🐡", 12, 26, 18),
-    ("Хариус", "🐠", 10, 22, 15), ("Осётр", "🐟", 25, 50, 10), ("Стерлядь", "🐠", 20, 45, 8),
-    ("Таймень", "🐡", 30, 60, 6), ("Муксун", "🐟", 28, 55, 5), ("Нельма", "🐠", 32, 65, 4),
-    ("Кумжа", "🐟", 25, 50, 3.5), ("Королевский лосось", "🐠", 50, 100, 2),
-    ("Белуга", "🐟", 60, 120, 1.5), ("Кета", "🐡", 45, 90, 1.2), ("Кижуч", "🐟", 55, 110, 1),
-    ("Золотая рыбка", "✨", 100, 200, 0.5), ("Лунная рыба", "🌙", 150, 300, 0.2),
-    ("Рыба-дракон", "🐉", 200, 400, 0.1), ("Призрачный карп", "👻", 250, 500, 0.05),
-    ("Пиранья", "🐟", 12, 24, 32), ("Угорь", "🐍", 18, 34, 24),
-    ("Мечтатель", "🐠", 15, 28, 20), ("Голец", "🐟", 22, 40, 18),
-    ("Сиг", "🐠", 20, 36, 16), ("Ряпушка", "🐟", 14, 26, 22),
-    ("Бычок", "🐡", 8, 16, 40), ("Камбала", "🐠", 16, 30, 18),
-    ("Сельдь", "🐟", 12, 22, 30), ("Скумбрия", "🐠", 18, 32, 20),
-    ("Тунец", "🐟", 40, 80, 5), ("Барракуда", "🐡", 35, 70, 4.5),
-    ("Морской чёрт", "🐡", 60, 120, 2), ("Рыба-меч", "🗡", 55, 110, 2.5),
-    ("Мурена-детёныш", "🐍", 25, 50, 6), ("Осьминог", "🐙", 45, 90, 3),
-    ("Кальмар", "🦑", 30, 60, 8), ("Морской конёк", "🐠", 20, 40, 12),
-    ("Рыба-попугай", "🦜", 35, 70, 4), ("Ильная рыба", "🐟", 50, 100, 1.8),
+    # ============ РЕКА (river) ============
+    ("Окунь",        "🐟", 1,   3,   100,  "river", "any"),
+    ("Ёрш",          "🐡", 2,   4,   80,   "river", "any"),
+    ("Пескарь",      "🐟", 1,   3,   75,   "river", "any"),
+    ("Плотва",       "🐟", 2,   5,   70,   "river", "day"),
+    ("Краснопёрка",  "🐠", 3,   6,   65,   "river", "day"),
+    ("Густера",      "🐟", 3,   7,   60,   "river", "any"),
+    ("Язь",          "🐟", 5,   10,  45,   "river", "day"),
+    ("Лещ",          "🐠", 4,   9,   50,   "river", "day"),
+    ("Линь",         "🐠", 6,   12,  40,   "river", "any"),
+    ("Голавль",      "🐟", 6,   11,  42,   "river", "day"),
+    ("Жерех",        "🐡", 8,   14,  32,   "river", "day"),
+    ("Щука",         "🐡", 8,   18,  30,   "river", "any"),
+    ("Судак",        "🐡", 10,  22,  24,   "river", "night"),
+    ("Налим",        "🐡", 12,  24,  18,   "river", "night"),
+    ("Сом",          "🦈", 15,  30,  12,   "river", "night"),
+    ("Форель",       "🐟", 12,  24,  20,   "river", "day"),
+    ("Хариус",       "🐠", 10,  20,  16,   "river", "day"),
+    ("Таймень",      "🐡", 30,  60,  4,    "river", "any"),
+    ("Ручьевая форель","🐟",14, 28, 14,   "river", "day"),
+
+    # ============ ОЗЕРО (lake) ============
+    ("Карась",       "🐠", 2,   5,   95,   "lake", "any"),
+    ("Краснопёрка",  "🐠", 3,   7,   60,   "lake", "any"),
+    ("Линь",         "🐠", 6,   12,  45,   "lake", "any"),
+    ("Карп",         "🐠", 10,  24,  22,   "lake", "day"),
+    ("Сазан",        "🐟", 12,  26,  18,   "lake", "day"),
+    ("Толстолобик",  "🐡", 14,  28,  15,   "lake", "day"),
+    ("Белый амур",   "🐟", 16,  32,  12,   "lake", "day"),
+    ("Линь-гигант",  "🐠", 25,  50,  3,    "lake", "any"),
+    ("Угорь",        "🐍", 18,  34,  10,   "lake", "night"),
+    ("Щука",         "🐡", 8,   18,  35,   "lake", "any"),
+    ("Окунь",        "🐟", 1,   3,   100,  "lake", "any"),
+    ("Золотой карась","✨", 40,  80,  2,    "lake", "any"),
+
+    # ============ МОРЕ (sea) ============
+    ("Сельдь",       "🐟", 10,  20,  28,   "sea", "any"),
+    ("Скумбрия",     "🐠", 15,  28,  22,   "sea", "day"),
+    ("Ставрида",     "🐟", 12,  22,  24,   "sea", "any"),
+    ("Камбала",      "🐠", 16,  30,  18,   "sea", "night"),
+    ("Бычок",        "🐡", 8,   16,  30,   "sea", "any"),
+    ("Пикша",        "🐟", 18,  34,  16,   "sea", "any"),
+    ("Треска",       "🐟", 20,  38,  14,   "sea", "any"),
+    ("Морской окунь","🐠", 22,  40,  12,   "sea", "day"),
+    ("Сайда",        "🐟", 18,  32,  15,   "sea", "day"),
+    ("Зубатка",      "🐡", 25,  45,  8,    "sea", "night"),
+    ("Морской чёрт", "🐡", 45,  90,  2,    "sea", "night"),
+    ("Барракуда",    "🐡", 35,  70,  3,    "sea", "any"),
+    ("Мурена-детёныш","🐍", 25,  50,  4,    "sea", "night"),
+    ("Морской конёк","🐠", 20,  40,  8,    "sea", "day"),
+    ("Рыба-попугай", "🦜", 30,  60,  3,    "sea", "day"),
+    ("Кальмар",      "🦑", 30,  60,  6,    "sea", "night"),
+    ("Осьминог",     "🐙", 45,  90,  2,    "sea", "night"),
+
+    # ============ ОКЕАН (ocean) ============
+    ("Тунец",        "🐟", 40,  80,  5,    "ocean", "any"),
+    ("Меч-рыба",     "🗡", 55,  110, 3,    "ocean", "day"),
+    ("Рыба-меч",     "🗡", 60,  120, 2,    "ocean", "any"),
+    ("Марлин",       "🐟", 70,  140, 1.5,  "ocean", "day"),
+    ("Парусник",     "🐟", 80,  160, 1.2,  "ocean", "day"),
+    ("Мурена",       "🐍", 50,  100, 3,    "ocean", "night"),
+    ("Ильная рыба",  "🐟", 45,  90,  1.8,  "ocean", "night"),
+    ("Морской чёрт", "🐡", 60,  120, 2,    "ocean", "night"),
+    ("Гигантский тресковый","🐟",50,100,2,"ocean", "any"),
+    ("Королевский лосось","🐠",55,110,1,  "ocean", "day"),
+    ("Кета",         "🐡", 45,  90,  1.2,  "ocean", "any"),
+    ("Кижуч",        "🐟", 55,  110, 1,    "ocean", "day"),
+    ("Нерка",        "🐟", 60,  120, 0.8,  "ocean", "any"),
+
+    # ============ РЕДКАЯ (any) ============
+    ("Призрачный карп","👻",100,200,0.3,  "any", "night"),
+    ("Лунная рыба",  "🌙", 150, 300, 0.2,  "any", "night"),
+    ("Рыба-дракончик","🐉",200, 400, 0.1,  "any", "any"),
+    ("Золотая рыбка","✨", 250, 500, 0.05, "any", "any"),
+    ("Радужный лосось","🌈",180,360,0.1,  "any", "any"),
+    ("Стеклянная рыба","🔮",220,440,0.08, "any", "any"),
 ]
 
+# =========================================================
+# ЛЕГЕНДАРНАЯ РЫБА
+# Формат: (имя, эмодзи, min_reward, max_reward, вес)
+# =========================================================
 LEGENDARY_FISH = [
-    ("Меч-рыба", "🗡", 300, 600, 30), ("Мурена", "🐍", 250, 500, 25),
-    ("Гигантский сом", "🐟", 400, 800, 20), ("Акула", "🦈", 500, 1000, 15),
-    ("Рыба-луна", "🌕", 600, 1200, 12), ("Голубая марлин", "🐟", 800, 1500, 10),
-    ("Кит", "🐋", 1000, 2000, 5), ("Кракен", "🦑", 1500, 3000, 3),
-    ("Морской дракон", "🐲", 2000, 4000, 1.5), ("Левиафан", "🐉", 5000, 10000, 0.5),
-    ("Рыба-бог", "⚡", 10000, 20000, 0.1), ("Посейдон", "🔱", 20000, 50000, 0.05),
-    ("Космический кит", "🌌", 5000, 10000, 0.8),
-    ("Рыба-феникс", "🔥", 7000, 15000, 0.4),
-    ("Император-краб", "🦀", 12000, 25000, 0.15),
-    ("Древний осьминог", "🐙", 15000, 30000, 0.1),
-    ("Хранитель глубин", "🌊", 30000, 60000, 0.03),
+    ("Мурена-гигант",   "🐍", 250,   500,   25),
+    ("Акула",           "🦈", 400,   800,   20),
+    ("Рыба-луна",       "🌕", 500,   1000,  15),
+    ("Голубой марлин",  "🐟", 700,   1400,  12),
+    ("Гигантский сом",  "🐟", 600,   1200,  10),
+    ("Кит-детёныш",     "🐋", 900,   1800,  8),
+    ("Кракен",          "🦑", 1500,  3000,  5),
+    ("Морской дракон",  "🐲", 2000,  4000,  3),
+    ("Император-краб",  "🦀", 2500,  5000,  2.5),
+    ("Древний осьминог","🐙", 3000,  6000,  2),
+    ("Хранитель глубин","🌊", 4000,  8000,  1.5),
+    ("Левиафан",        "🐉", 6000,  12000, 1),
+    ("Рыба-феникс",     "🔥", 8000,  16000, 0.5),
+    ("Космический кит", "🌌", 10000, 20000, 0.3),
+    ("Рыба-бог",        "⚡", 15000, 30000, 0.15),
+    ("Император морей", "🔱", 20000, 40000, 0.1),
+    ("Посейдон",        "🌊", 30000, 60000, 0.05),
 ]
 
+# =========================================================
+# ВЕЩИ
+# Формат: (имя, эмодзи, вес_шанса, награда_🍬, тип)
+# тип: "candies" | "gear_bait" | "gear_lucky" | "gear_hook" | "gear_boat" | "pearl"
+# =========================================================
 THINGS_LIST = [
-    ("Ржавый ключ", "🗝", 60, 1, "candies"),
-    ("Пустая бутылка", "🍾", 80, 2, "candies"),
-    ("Старый ботинок", "👟", 70, 3, "candies"),
-    ("Консервная банка", "🥫", 75, 2, "candies"),
-    ("Кусок водоросли", "🌿", 65, 1, "candies"),
-    ("Морская ракушка", "🐚", 55, 4, "candies"),
-    ("Потерянная монета", "🪙", 50, 15, "candies"),
-    ("Мелкая монетка", "💰", 40, 25, "candies"),
-    ("Ржавый якорь", "⚓", 25, 20, "candies"),
-    ("Древняя карта", "🗺", 20, 40, "candies"),
-    ("Старое письмо", "📜", 15, 30, "candies"),
-    ("Ржавый крючок", "🪝", 30, 5, "candies"),
-    ("Ржавый нож", "🔪", 22, 10, "candies"),
-    ("Сломанный компас", "🧭", 18, 35, "candies"),
-    ("Морской жемчуг", "🦪", 10, 60, "candies"),
-    ("Драгоценный камень", "💠", 6, 120, "candies"),
-    ("Старый череп", "💀", 12, 25, "candies"),
-    ("Полузатонувший сундук", "🗃", 5, 200, "candies"),
-    ("Сундук с сокровищами", "🎁", 2.5, 500, "candies"),
-    ("Затонувший клад", "🏴‍☠️", 0.8, 1500, "candies"),
-    ("Золотой слиток", "🥇", 1.5, 800, "candies"),
-    ("Реликвия древних", "🏺", 0.5, 2000, "candies"),
-    ("Карта сокровищ", "🗺", 0.3, 3000, "candies"),
-    ("Пакет", "🛍", 55, 1, "candies"),
-    ("Морской мусор", "🗑", 45, 0, "candies"),
-    ("Ржавая цепь", "⛓", 30, 8, "candies"),
-    ("Пустая ракушка", "🐚", 40, 2, "candies"),
-    ("Морская звезда", "⭐", 25, 12, "candies"),
-    ("Медуза", "🎐", 35, 6, "candies"),
-    ("Светящийся жемчуг", "🔮", 8, 100, "candies"),
-    ("Рыбий жир", "🧴", 20, 30, "candies"),
-    ("Старинный пергамент", "📜", 6, 150, "candies"),
-    ("Морское стекло", "🔷", 15, 50, "candies"),
-    ("Прикормка (+1 ч)", "🍯", 3, 0, "gear_bait"),
-    ("Счастливая монета (+1 × улов)", "🍀", 1.5, 0, "gear_lucky"),
+    # --- обычный мусор ---
+    ("Ржавый ключ",         "🗝", 60,  1,   "candies"),
+    ("Пустая бутылка",      "🍾", 80,  2,   "candies"),
+    ("Старый ботинок",      "👟", 70,  3,   "candies"),
+    ("Консервная банка",    "🥫", 75,  2,   "candies"),
+    ("Кусок водоросли",     "🌿", 65,  1,   "candies"),
+    ("Морской мусор",       "🗑", 45,  0,   "candies"),
+    ("Пакет",               "🛍", 55,  1,   "candies"),
+    ("Ржавая цепь",         "⛓", 30,  8,   "candies"),
+    ("Пустая ракушка",      "🐚", 40,  2,   "candies"),
+    ("Ржавый крючок",       "🪝", 30,  5,   "candies"),
+
+    # --- ракушки и морские ---
+    ("Морская ракушка",     "🐚", 55,  4,   "candies"),
+    ("Морская звезда",      "⭐", 25,  12,  "candies"),
+    ("Медуза",              "🎐", 35,  6,   "candies"),
+    ("Морское стекло",      "🔷", 15,  50,  "candies"),
+    ("Коралловый обломок",  "🪸", 20,  35,  "candies"),
+    ("Чешуйка русалки",     "🧜‍♀️", 5, 200, "candies"),
+
+    # --- монеты ---
+    ("Потерянная монета",   "🪙", 50,  15,  "candies"),
+    ("Мелкая монетка",      "💰", 40,  25,  "candies"),
+    ("Старинная монета",    "🪙", 15,  80,  "candies"),
+    ("Золотой слиток",      "🥇", 8,   800, "candies"),
+
+    # --- письма и карты ---
+    ("Старое письмо",       "📜", 15,  30,  "candies"),
+    ("Древняя карта",       "🗺", 20,  40,  "candies"),
+    ("Старинный пергамент", "📜", 6,   150, "candies"),
+    ("Карта сокровищ",      "🗺", 0.3, 3000,"candies"),
+
+    # --- жемчуг ---
+    ("Морской жемчуг",      "🦪", 10,  60,  "candies"),
+    ("Светящийся жемчуг",   "🔮", 8,   100, "candies"),
+    ("Розовый жемчуг",      "🩷", 5,   250, "pearl"),
+    ("Чёрный жемчуг",       "🖤", 2,   500, "pearl"),
+    ("Драгоценный камень",  "💠", 6,   120, "candies"),
+    ("Сапфир",              "🔷", 3,   350, "candies"),
+    ("Изумруд",             "💚", 3,   350, "candies"),
+    ("Алмаз",               "💎", 1,   700, "candies"),
+
+    # --- сокровища ---
+    ("Старый череп",        "💀", 12,  25,  "candies"),
+    ("Ржавый нож",          "🔪", 22,  10,  "candies"),
+    ("Сломанный компас",    "🧭", 18,  35,  "candies"),
+    ("Полузатонувший сундук","🗃", 5,  200, "candies"),
+    ("Сундук с сокровищами","🎁", 2.5, 500, "candies"),
+    ("Затонувший клад",     "🏴‍☠️", 0.8, 1500,"candies"),
+    ("Реликвия древних",    "🏺", 0.5, 2000,"candies"),
+    ("Ржавый якорь",        "⚓", 25,  20,  "candies"),
+
+    # --- еда ---
+    ("Рыбий жир",           "🧴", 20,  30,  "candies"),
+    ("Бутылка рома",        "🥃", 8,   100, "candies"),
+
+    # --- снаряжение ---
+    ("Прикормка (+1 ч)",         "🍯", 3,   0, "gear_bait"),
+    ("Счастливая монета (+1 улов)","🍀", 1.5, 0, "gear_lucky"),
+    ("Крепкий крючок",           "🪝", 2,   0, "gear_hook"),
+    ("Обломок лодки",            "🛶", 0.5, 0, "gear_boat"),
 ]
 
 FISHING_GEAR = {
@@ -2092,20 +2193,34 @@ FISHING_GEAR = {
 }
 
 FISHING_EVENTS = {
-    "rain": {"name": "🌧 Дождь", "bonus": 1.2, "duration": 30},
-    "night": {"name": "🌙 Ночь", "bonus": 1.3, "duration": 45, "rare_boost": 2.0},
-    "school": {"name": "🐟 Стая", "bonus": 1.2, "duration": 20},
-    "storm": {"name": "⛈ Гроза", "bonus": 0.8, "duration": 15},
-    "calm": {"name": "☀️ Штиль", "bonus": 1.0, "duration": 30},
+    "rain":      {"name": "🌧 Дождь",         "bonus": 1.2, "duration": 30},
+    "night":     {"name": "🌙 Ночь",          "bonus": 1.3, "duration": 45, "rare_boost": 2.0},
+    "school":    {"name": "🐟 Стая",          "bonus": 1.2, "duration": 20},
+    "storm":     {"name": "⛈ Гроза",          "bonus": 0.8, "duration": 15},
+    "calm":      {"name": "☀️ Штиль",         "bonus": 1.0, "duration": 30},
+    "full_moon": {"name": "🌕 Полнолуние",    "bonus": 1.4, "duration": 40, "rare_boost": 3.0},
+    "fog":       {"name": "🌫 Туман",         "bonus": 0.9, "duration": 20},
+    "sunrise":   {"name": "🌅 Рассвет",       "bonus": 1.25,"duration": 25},
+    "sunset":    {"name": "🌇 Закат",         "bonus": 1.35,"duration": 30},
+    "boil":      {"name": "🫧 Кипение",       "bonus": 1.5, "duration": 15},
+    "migration": {"name": "🐟 Миграция",      "bonus": 1.8, "duration": 20, "rare_boost": 1.5},
+    "eclipse":   {"name": "🌑 Затмение",      "bonus": 1.7, "duration": 15, "rare_boost": 2.5},
 }
 
 FISHING_ACHIEVEMENTS = {
-    "first_fish": {"name": "🥇 Первый улов", "check": lambda u: u["total_caught"] >= 1},
-    "hundred_fish": {"name": "🎣 100 рыб", "check": lambda u: u["total_caught"] >= 100},
-    "five_hundred": {"name": "🐟 500 рыб", "check": lambda u: u["total_caught"] >= 500},
-    "level_10": {"name": "📈 Рыбак-любитель", "check": lambda u: u["level"] >= 10},
-    "level_50": {"name": "🏆 Рыбак-профи", "check": lambda u: u["level"] >= 50},
-    "legendary": {"name": "💎 Легендарная рыба", "check": lambda u: u["legendary_caught"] >= 1},
+    "first_fish":      {"name": "🥇 Первый улов",         "check": lambda u: u["total_caught"] >= 1},
+    "ten_fish":        {"name": "🎣 10 рыб",              "check": lambda u: u["total_caught"] >= 10},
+    "hundred_fish":    {"name": "🎣 100 рыб",             "check": lambda u: u["total_caught"] >= 100},
+    "five_hundred":    {"name": "🐟 500 рыб",             "check": lambda u: u["total_caught"] >= 500},
+    "thousand_fish":   {"name": "🏆 1000 рыб",            "check": lambda u: u["total_caught"] >= 1000},
+    "level_5":         {"name": "📈 Рыбак-новичок",       "check": lambda u: u["level"] >= 5},
+    "level_10":        {"name": "📈 Рыбак-любитель",      "check": lambda u: u["level"] >= 10},
+    "level_25":        {"name": "📈 Рыбак-знаток",        "check": lambda u: u["level"] >= 25},
+    "level_50":        {"name": "🏆 Рыбак-профи",         "check": lambda u: u["level"] >= 50},
+    "level_100":       {"name": "👑 Рыбак-легенда",       "check": lambda u: u["level"] >= 100},
+    "legendary":       {"name": "💎 Легендарная рыба",    "check": lambda u: u["legendary_caught"] >= 1},
+    "legendary_10":    {"name": "💎 10 легендарок",       "check": lambda u: u["legendary_caught"] >= 10},
+    "legendary_50":    {"name": "💎 50 легендарок",       "check": lambda u: u["legendary_caught"] >= 50},
 }
 
 BAIT_DURATION_HOURS = 1
@@ -2333,18 +2448,18 @@ def remove_fish_from_storage(user_id, fish_name, quantity=1):
 def get_fish_price(fish_name):
     for fish in FISH_LIST:
         if fish[0] == fish_name:
-            min_r, max_r = fish[2], fish[3]; weight = fish[4]
+            min_r, max_r, weight = fish[2], fish[3], fish[4]
             avg = (min_r + max_r) // 2
-            price = max(1, avg // 10)
-            if weight >= 50: return price
-            elif weight >= 15: return price + 2
-            elif weight >= 3: return price + 5
-            elif weight >= 0.5: return price + 10
-            else: return price + 20
+            base = max(1, avg // 10)
+            if weight >= 50: return base
+            elif weight >= 15: return base + 3
+            elif weight >= 3: return base + 8
+            elif weight >= 0.5: return base + 20
+            else: return base + 50
     for fish in LEGENDARY_FISH:
         if fish[0] == fish_name:
             avg = (fish[2] + fish[3]) // 2
-            return max(50, avg // 10)
+            return max(50, avg // 8)
     for thing in THINGS_LIST:
         if thing[0] == fish_name:
             return thing[3] if thing[3] > 0 else 0
@@ -2415,6 +2530,29 @@ def end_tournament(chat_id):
         add_candies(uid, prizes[i], 0)
         winners.append((uid, caught, prizes[i]))
     return winners
+
+
+# ================= РЕГИОН РЫБАЛКИ =================
+def get_chat_region(chat_id) -> str:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT value FROM global_settings WHERE key = ?", (f"region:{chat_id}",))
+        r = c.fetchone()
+        if r:
+            return r[0]
+        reg = random.choice(["river", "lake", "sea", "ocean"])
+        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)",
+                  (f"region:{chat_id}", reg))
+        conn.commit()
+        return reg
+
+
+def set_chat_region(chat_id, region: str):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)",
+                  (f"region:{chat_id}", region))
+        conn.commit()
 
 
 # ================= СТАНДАРТНЫЕ РП =================
@@ -3059,7 +3197,7 @@ def get_vip(user_id):
                 conn.commit()
                 return None
         except Exception as e:
-            print(f"⚠️ get_vip parse {expires_at}: {e}")
+            pass
         return (expires_at, emoji)
 
 
@@ -3070,7 +3208,6 @@ def add_vip_months(user_id, months):
             exp_dt = _parse_dt(current[0])
             if exp_dt < datetime.now(): exp_dt = datetime.now()
         except Exception as e:
-            print(f"⚠️ add_vip_months parse {current[0]}: {e}")
             exp_dt = datetime.now()
         emoji = current[1]
     else:
@@ -3104,7 +3241,6 @@ def get_vip_days_left(user_id):
             if delta.total_seconds() < 0: return 0
             return int(delta.total_seconds() // 86400)
         except Exception as e:
-            print(f"⚠️ get_vip_days_left parse {r[0]}: {e}")
             return 0
 
 
@@ -3188,7 +3324,7 @@ class BotIgnoreMiddleware(BaseMiddleware):
                         if getattr(msg, "chat", None) and msg.chat.type in ["group", "supergroup", "channel"]:
                             await bot.delete_message(msg.chat.id, msg.message_id)
                     except Exception as e:
-                        print(f"⚠️ BotIgnoreMiddleware delete: {e}")
+                        pass
                     return
         except Exception as e:
             print(f"⚠️ BotIgnoreMiddleware: {e}")
@@ -3537,7 +3673,7 @@ async def remove_city_cmd(message: types.Message):
     await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= ПРОФИЛЬ (улучшенный) =================
+# ================= ПРОФИЛЬ =================
 @cmd("профиль")
 async def profile_cmd(message: types.Message):
     target = None
@@ -3569,7 +3705,6 @@ async def profile_cmd(message: types.Message):
     rank = get_rank(chat_id, user_id)
     rank_name = RANK_NAMES.get(rank, "👤 Участник")
 
-    # Статус в чате
     member_status_icon = "🟢"
     member_status_text = "Состоит в чате"
     try:
@@ -3587,7 +3722,6 @@ async def profile_cmd(message: types.Message):
     except Exception:
         pass
 
-    # Антиспам
     in_antispam = is_in_antispam(user_id)
     in_ignore = is_ignored(chat_id, user_id)
     as_line = None
@@ -3596,11 +3730,9 @@ async def profile_cmd(message: types.Message):
         reason = info[0] if info else "не указана"
         as_line = f"☢️ В антиспаме: <i>{reason}</i>"
 
-    # Варны
     warns_count = count_warns(user_id, chat_id)
     warn_line = f"❗ Предупреждения: <b>{warns_count}/3</b>" if warns_count > 0 else "❗ Предупреждения: нет"
 
-    # Гражданство
     cit = get_citizenship_info(user_id)
     if cit:
         cit_chat_id, cit_date = cit
@@ -3622,7 +3754,6 @@ async def profile_cmd(message: types.Message):
     else:
         cit_line = "🏠 Гражданство беседы: нет"
 
-    # Активность
     last_seen = get_last_seen_in_chat(user_id, chat_id)
     last_seen_str = format_last_seen(last_seen)
     last_line = f"⏰ Последний актив: {last_seen_str}"
@@ -3630,7 +3761,6 @@ async def profile_cmd(message: types.Message):
     day, week, month, total = get_activity_extended(user_id, chat_id)
     activity_line = f"📊 Актив (д|н|м|весь): {day} | {week} | {month} | {total}"
 
-    # НИК → ссылка на профиль
     nick = get_user_nick(user_id, chat_id)
     if nick:
         display_name = nick
@@ -3727,7 +3857,7 @@ async def get_chat_id_cmd(message: types.Message):
     )
 
 
-# ================= ТОП (улучшенный, 24/7) =================
+# ================= ТОП =================
 @cmd("топ")
 async def top_cmd(message: types.Message):
     args = message.text.split()
@@ -4509,7 +4639,6 @@ async def as_command_handler(message: types.Message):
                     kicked_chats.append(cid)
                 except Exception as e:
                     failed_chats.append(cid)
-                    print(f"⚠️ +ас кик {cid}: {e}")
 
         if mode in ("as_kick_ignore", "as_ignore_only"):
             with sqlite3.connect(DATABASE_PATH) as conn:
@@ -5747,7 +5876,7 @@ async def successful_payment_handler(message: types.Message):
     )
 
 
-# ================= РЫБАЛКА =================
+# ================= РЫБАЛКА — КОМАНДЫ =================
 @cmd("рыбалка")
 @cmd("рыба")
 @cmd("рыбачить")
@@ -5758,13 +5887,28 @@ async def fishing_cmd(message: types.Message):
     (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish, inv, legendary) = info
     cooldown = format_fishing_cooldown(last_fish)
     if cooldown > 0:
-        hours = cooldown // 3600; mins = (cooldown % 3600) // 60; secs = cooldown % 60
+        hours = cooldown // 3600
+        mins = (cooldown % 3600) // 60
+        secs = cooldown % 60
         parts = []
         if hours > 0: parts.append(f"{hours} ч.")
         if mins > 0: parts.append(f"{mins} мин.")
         if secs > 0 and hours == 0: parts.append(f"{secs} сек.")
         time_str = " ".join(parts) if parts else "1 сек."
-        return await message.reply(f"⏳ Удочка не готова. Подожди <b>{time_str}</b>.", parse_mode="HTML", disable_web_page_preview=True)
+
+        progress = 1.0 - (cooldown / FISH_COOLDOWN_SECONDS)
+        progress = max(0.0, min(1.0, progress))
+        bar_len = 12
+        filled = int(progress * bar_len)
+        bar = "▰" * filled + "▱" * (bar_len - filled)
+        percent = int(progress * 100)
+
+        return await message.reply(
+            f"⏳ <b>Удочка не готова</b>\n\n"
+            f"<code>{bar}</code> {percent}%\n\n"
+            f"⏱ Осталось: <b>{time_str}</b>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
 
     msg = await message.reply("🎣 Забрасываю удочку...")
     await asyncio.sleep(2)
@@ -5809,13 +5953,15 @@ async def fishing_cmd(message: types.Message):
             set_fishing_last_fish(user_id)
             log_fishing(user_id, chat_id, "caught", name, reward)
             level_up_text = ""
-            if new_level > level: level_up_text = f"\n\n🎉 <b>Уровень повышен!</b> Теперь <b>{new_level}</b>"
+            if new_level > level: level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>"
             extra = ""
             if kind == "gear_bait": extra = "\n🍯 Тебе выпала <b>прикормка на 1 час</b>!"
             if kind == "gear_lucky": extra = "\n🎣 Тебе выпала <b>Премиум-удочка</b>!"
             await msg.edit_text(
-                f"🎣 <b>Улов!</b>\n\n{emoji} <b>{name}</b>\n"
-                f"💰 Награда: <b>+{reward}</b> 🍬\n✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
+                f"🎣 <b>УЛОВ</b>\n\n"
+                f"{emoji} <b>{name}</b>\n"
+                f"💰 Награда: <b>+{reward}</b> 🍬\n"
+                f"✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
                 f"📊 Уровень: <b>{new_level}</b> | XP: <b>{new_xp}/{xp_needed_for_level(new_level)}</b>\n"
                 f"🐟 Всего поймано: <b>{total_caught + 1}</b>"
                 f"{level_up_text}{extra}{event_text}",
@@ -5840,13 +5986,29 @@ async def fishing_cmd(message: types.Message):
             update_legendary_count(user_id)
             legendary_text = "\n\n💎 <b>ЛЕГЕНДАРНАЯ РЫБА!</b>"
         else:
-            total_weight = sum(f[4] for f in FISH_LIST)
-            pick = random.uniform(0, total_weight); cumulative = 0
-            chosen = FISH_LIST[0]
+            region = get_chat_region(chat_id)
+            hour = datetime.now().hour
+            time_of_day = "night" if (hour >= 22 or hour < 6) else "day"
+
+            available = []
             for fish in FISH_LIST:
+                fname, femoji, fmin, fmax, fweight, fregion, ftime = fish
+                if fregion not in ("any", region):
+                    continue
+                if ftime not in ("any", time_of_day):
+                    continue
+                available.append(fish)
+
+            if not available:
+                available = FISH_LIST
+
+            total_weight = sum(f[4] for f in available)
+            pick = random.uniform(0, total_weight); cumulative = 0
+            chosen = available[0]
+            for fish in available:
                 cumulative += fish[4]
                 if pick <= cumulative: chosen = fish; break
-            fish_name, fish_emoji, min_r, max_r, _ = chosen
+            fish_name = chosen[0]; fish_emoji = chosen[1]
             legendary_text = ""
 
         add_fish_to_storage(user_id, fish_name, fish_emoji, 1)
@@ -5864,28 +6026,79 @@ async def fishing_cmd(message: types.Message):
         new_ach = check_fishing_achievements(user_id, chat_id)
         ach_text = ""
         if new_ach: ach_text = "\n\n🎖 <b>Новые ачивки:</b>\n" + "\n".join(f"  • {a}" for a in new_ach)
-        level_up_text = ""
-        if new_level > level: level_up_text = f"\n\n🎉 <b>Уровень повышен!</b> Теперь <b>{new_level}</b>"
-        bait_text = ""
-        if bait_active: bait_text = "\n🍯 Прикормка активна"
+
         fish_price = get_fish_price(fish_name)
-        await msg.edit_text(
-            f"🎣 <b>Улов!</b>\n\n{fish_emoji} <b>{fish_name}</b>\n"
-            f"💵 Продажа: <b>{fish_price} 🍬</b>\n✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
-            f"📊 Уровень: <b>{new_level}</b> | XP: <b>{new_xp}/{xp_needed_for_level(new_level)}</b>\n"
-            f"📦 В садке! Продай: <code>.продать</code>\n"
-            f"🐟 Всего поймано: <b>{total_caught + 1}</b>"
-            f"{level_up_text}{bait_text}{legendary_text}{event_text}{ach_text}",
-            parse_mode="HTML"
+        xp_needed = xp_needed_for_level(new_level)
+        bar_len = 10
+        filled = min(bar_len, int((new_xp / xp_needed) * bar_len)) if xp_needed else 0
+        xp_bar = "▰" * filled + "▱" * (bar_len - filled)
+
+        weight = None
+        for f in FISH_LIST:
+            if f[0] == fish_name:
+                weight = f[4]; break
+        if weight is None:
+            rarity_icon = "💎"; rarity_name = "Легендарная"
+        elif weight >= 50:
+            rarity_icon = "⚪"; rarity_name = "Обычная"
+        elif weight >= 15:
+            rarity_icon = "🟢"; rarity_name = "Необычная"
+        elif weight >= 3:
+            rarity_icon = "🔵"; rarity_name = "Редкая"
+        elif weight >= 0.5:
+            rarity_icon = "🟣"; rarity_name = "Эпическая"
+        else:
+            rarity_icon = "🟠"; rarity_name = "Мифическая"
+
+        hour = datetime.now().hour
+        time_icon = "🌙" if (hour >= 22 or hour < 6) else ("🌅" if hour < 11 else ("☀️" if hour < 18 else "🌇"))
+
+        level_up_text = ""
+        if new_level > level:
+            level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>"
+
+        bait_text = "\n🍯 Прикормка активна" if bait_active else ""
+
+        text = (
+            f"🎣 <b>УЛОВ</b> {time_icon}\n\n"
+            f"{fish_emoji} <b>{fish_name}</b>\n"
+            f"{rarity_icon} Редкость: <i>{rarity_name}</i>\n"
+            f"💵 Цена: <b>{fish_price}</b> 🍬\n"
+            f"✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
+            f"📊 <b>Уровень {new_level}</b>\n"
+            f"<code>{xp_bar}</code> {new_xp}/{xp_needed}\n\n"
+            f"🐟 Всего поймано: <b>{total_caught + 1}</b>\n"
+            f"📦 Продай: <code>.продать</code>"
+            f"{level_up_text}{legendary_text}{bait_text}{event_text}{ach_text}"
         )
+        await msg.edit_text(text, parse_mode="HTML")
     else:
         update_fishing(user_id, total_empty=total_empty + 1)
         set_fishing_last_fish(user_id)
         log_fishing(user_id, chat_id, "empty")
-        phrases = ["🐟 Рыба ушла...", "🌊 Ничего не поймал.", "🪝 Пустой крючок...", "💧 Только водоросли.", "🎣 Попробуй ещё раз!"]
+        phrases = [
+            "🐟 Рыба ушла...",
+            "🌊 Ничего не поймал.",
+            "🪝 Пустой крючок...",
+            "💧 Только водоросли.",
+            "🎣 Попробуй ещё раз!",
+            "🦆 Утка утащила наживку!",
+            "🌧 Дождь спугнул рыбу...",
+            "🧦 Поймал старый носок...",
+        ]
         phrase = random.choice(phrases)
+        xp_needed = xp_needed_for_level(level)
+        bar_len = 10
+        filled = min(bar_len, int((xp / xp_needed) * bar_len)) if xp_needed else 0
+        xp_bar = "▰" * filled + "▱" * (bar_len - filled)
+        hour = datetime.now().hour
+        time_icon = "🌙" if (hour >= 22 or hour < 6) else ("🌅" if hour < 11 else ("☀️" if hour < 18 else "🌇"))
         await msg.edit_text(
-            f"{phrase}\n\n📊 Уровень: <b>{level}</b> | XP: <b>{xp}/{xp_needed_for_level(level)}</b>\n📉 Пустых: <b>{total_empty + 1}</b>",
+            f"🎣 <b>ПУСТО</b> {time_icon}\n\n"
+            f"{phrase}\n\n"
+            f"📊 <b>Уровень {level}</b>\n"
+            f"<code>{xp_bar}</code> {xp}/{xp_needed}\n\n"
+            f"📉 Пустых: <b>{total_empty + 1}</b>",
             parse_mode="HTML"
         )
 
@@ -5991,10 +6204,32 @@ async def fishing_stats_cmd(message: types.Message):
         if mins > 0: parts.append(f"{mins} мин.")
         cooldown_text = "⏳ " + " ".join(parts)
     else: cooldown_text = "✅ Готово"
+
+    bar_len = 12
+    filled = min(bar_len, int((xp / xp_needed) * bar_len)) if xp_needed else 0
+    xp_bar = "▰" * filled + "▱" * (bar_len - filled)
+
+    region = get_chat_region(message.chat.id)
+    region_names = {"river": "🏞 Река", "lake": "🌊 Озеро", "sea": "🌊 Море", "ocean": "🌌 Океан"}
+    region_text = region_names.get(region, region)
+
+    if level < 5: lvl_icon = "🟢"
+    elif level < 15: lvl_icon = "🔵"
+    elif level < 30: lvl_icon = "🟣"
+    elif level < 60: lvl_icon = "🟠"
+    else: lvl_icon = "🟡"
+
     await message.reply(
-        f"🎣 <b>Твоя рыбалка</b>\n\n📊 Уровень: <b>{level}</b>\n✨ XP: <b>{xp}/{xp_needed}</b>\n"
-        f"🐟 Поймано: <b>{total_caught}</b>\n📉 Пустых: <b>{total_empty}</b>\n🎯 Успешность: <b>{success_rate}%</b>\n"
-        f"💎 Легендарных: <b>{legendary or 0}</b>\n\n🍯 Прикормка: {bait_text}\n⏰ Кулдаун: {cooldown_text}",
+        f"🎣 <b>Твоя рыбалка</b>\n\n"
+        f"{lvl_icon} Уровень: <b>{level}</b>\n"
+        f"<code>{xp_bar}</code> {xp}/{xp_needed} XP\n\n"
+        f"📍 Регион: {region_text}\n"
+        f"🐟 Поймано: <b>{total_caught}</b>\n"
+        f"📉 Пустых: <b>{total_empty}</b>\n"
+        f"🎯 Успешность: <b>{success_rate}%</b>\n"
+        f"💎 Легендарных: <b>{legendary or 0}</b>\n\n"
+        f"🍯 Прикормка: {bait_text}\n"
+        f"⏰ Кулдаун: {cooldown_text}",
         parse_mode="HTML", disable_web_page_preview=True
     )
 
@@ -6109,6 +6344,54 @@ async def fishing_event_cmd(message: types.Message):
     text = f"{ev_data.get('name', ev_key)}\n📈 Бонус: <b>×{bonus}</b>\n⏰ Осталось: <b>{left} мин.</b>"
     if ev_data.get("rare_boost"): text += f"\n💎 Шанс редких ×{ev_data['rare_boost']}"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("регион")
+@cmd("рыбное место")
+async def region_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    current = get_chat_region(message.chat.id)
+    region_names = {
+        "river": "🏞 Река",
+        "lake":  "🌊 Озеро",
+        "sea":   "🌊 Море",
+        "ocean": "🌌 Океан",
+    }
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply(
+            f"🗺 <b>Регион рыбалки</b>\n\n"
+            f"📍 Сейчас: <b>{region_names.get(current, current)}</b>\n\n"
+            f"📌 Сменить (ранг 3+): <code>.регион река|озеро|море|океан</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    if not has_permission(message.chat.id, message.from_user.id, 3):
+        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+
+    sub = args[1].lower()
+    mapping = {
+        "река": "river", "river": "river", "рек": "river",
+        "озеро": "lake", "lake": "lake", "озер": "lake",
+        "море": "sea", "sea": "sea", "мор": "sea",
+        "океан": "ocean", "ocean": "ocean", "оке": "ocean",
+    }
+    if sub not in mapping:
+        return await message.reply(
+            "❌ Допустимые: <code>река</code>, <code>озеро</code>, <code>море</code>, <code>океан</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    new_region = mapping[sub]
+    set_chat_region(message.chat.id, new_region)
+    await message.reply(
+        f"{em('check', '✅')} <b>Регион изменён!</b>\n\n"
+        f"📍 Теперь: <b>{region_names[new_region]}</b>\n"
+        f"👮 {mention(message.from_user)}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
 @cmd("турнир")
@@ -6524,10 +6807,71 @@ async def disable_captcha_cmd(message: types.Message):
 
 @cmd("капча")
 async def captcha_status_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]: return
+    if message.chat.type not in ["group", "supergroup"]:
+        return
     enabled = is_captcha_enabled(message.chat.id)
+    timeout = get_captcha_timeout(message.chat.id)
     status = "🟢 включена" if enabled else "🔴 выключена"
-    await message.reply(f"🤖 Капча: {status}", parse_mode="HTML", disable_web_page_preview=True)
+    mins = timeout // 60
+    secs = timeout % 60
+    human = f"{mins} мин. {secs} сек." if mins > 0 else f"{secs} сек."
+    await message.reply(
+        f"🤖 <b>Капча</b>\n\n"
+        f"📊 Статус: {status}\n"
+        f"⏱ Время на прохождение: <b>{timeout} сек.</b> ({human})\n\n"
+        f"📌 <code>+капча</code> / <code>-капча</code> — вкл/выкл\n"
+        f"📌 <code>.капчавремя 180</code> — изменить время",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("капчавремя")
+@cmd("капча время")
+async def captcha_time_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+
+    if not await _check_automod_perms(message):
+        return
+
+    args = message.text.split()
+    current = get_captcha_timeout(message.chat.id)
+
+    if len(args) < 2:
+        return await message.reply(
+            f"⏱ <b>Время прохождения капчи</b>\n\n"
+            f"🕐 Сейчас: <b>{current} сек.</b> ({current // 60} мин. {current % 60} сек.)\n\n"
+            f"📌 Установить: <code>.капчавремя 180</code>\n"
+            f"📌 Диапазон: от <b>10</b> до <b>3600</b> секунд",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    raw = args[1].strip()
+    if not raw.isdigit():
+        return await message.reply(
+            "❌ Укажи число секунд.\n📌 Пример: <code>.капчавремя 180</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    seconds = int(raw)
+    if seconds < 10 or seconds > 3600:
+        return await message.reply(
+            "❌ Допустимый диапазон: <b>10</b> – <b>3600</b> секунд.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    set_captcha_timeout(message.chat.id, seconds)
+
+    mins = seconds // 60
+    secs = seconds % 60
+    human = f"{mins} мин. {secs} сек." if mins > 0 else f"{secs} сек."
+
+    await message.reply(
+        f"{em('check', '✅')} <b>Время капчи обновлено!</b>\n\n"
+        f"⏱ Теперь: <b>{seconds} сек.</b> ({human})\n"
+        f"👮 Сделал: {mention(message.from_user)}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
 # ================= ГРАЖДАНСТВО =================
@@ -7142,7 +7486,7 @@ async def grid_command_router(message: types.Message):
                 await bot.send_message(cid, text_to_send, parse_mode="HTML", disable_web_page_preview=True)
                 sent += 1
             except Exception as e:
-                print(f"⚠️ Уведомление не дошло в {cid}: {e}")
+                pass
         return sent
 
     if action in ["+админ", "+админка", "+adm"]:
@@ -7160,12 +7504,11 @@ async def grid_command_router(message: types.Message):
                 mark_bot_promoted(target.id, chat_id, actor_id)
             except Exception as e:
                 failed += 1
-                print(f"❌ +админ в {chat_id}: {e}")
         add_grid_moderator(grid_id, target.id, rank=4, is_admin=1)
         for chat_id, hidden, desc in chats:
             try: set_rank(chat_id, target.id, 4, actor_id)
             except Exception as e:
-                print(f"❌ set_rank {chat_id}: {e}")
+                pass
         notify_text = (
             f"🛡 <b>Назначение администратора в сетке</b>\n\n"
             f"👤 {mention(target)} назначен <b>ТГ-админом</b> во всех чатах сетки.\n"
@@ -7233,7 +7576,7 @@ async def grid_command_router(message: types.Message):
                 await bot.promote_chat_member(chat_id=chat_id, user_id=target.id, rights=empty_admin_rights())
                 removed_from += 1
             except Exception as e:
-                print(f"❌ разжаловать в {chat_id}: {e}")
+                pass
             try: remove_rank(chat_id, target.id)
             except: pass
             try: unmark_bot_promoted(target.id, chat_id)
@@ -7944,12 +8287,11 @@ async def on_join(event: types.ChatMemberUpdated):
         if greeting:
             try: await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
             except Exception as e:
-                print(f"❌ Приветствие не отправлено: {e}")
+                pass
         return
     try:
         await bot.restrict_chat_member(chat_id=chat_id, user_id=user.id, permissions=types.ChatPermissions(can_send_messages=False))
     except Exception as e:
-        print(f"❌ Ограничение не сработало: {e}")
         greeting = get_greeting(chat_id)
         if greeting:
             try: await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
@@ -8000,7 +8342,6 @@ async def on_join(event: types.ChatMemberUpdated):
         save_captcha(user.id, chat_id, msg.message_id, captcha_type, answer)
         asyncio.create_task(captcha_timeout(user.id, chat_id))
     except Exception as e:
-        print(f"❌ Капча не отправлена: {e}")
         greeting = get_greeting(chat_id)
         if greeting:
             try: await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
@@ -8008,7 +8349,13 @@ async def on_join(event: types.ChatMemberUpdated):
 
 
 async def captcha_timeout(user_id, chat_id):
-    await asyncio.sleep(120)
+    try:
+        timeout_sec = get_captcha_timeout(chat_id)
+    except Exception:
+        timeout_sec = 120
+    if timeout_sec < 10: timeout_sec = 10
+    if timeout_sec > 3600: timeout_sec = 3600
+    await asyncio.sleep(timeout_sec)
     cap = get_captcha(user_id, chat_id)
     if cap:
         try:
@@ -8160,9 +8507,9 @@ async def auto_unban_loop():
                             parse_mode="HTML", disable_web_page_preview=True
                         )
                     except Exception as e:
-                        print(f"⚠️ Не смог уведомить чат {chat_id}: {e}")
+                        pass
                 except Exception as e:
-                    print(f"⚠️ auto_unban {chat_id}/{user_id}: {e}")
+                    pass
 
             expired_mutes = get_expired_mutes()
             for chat_id, user_id, reason in expired_mutes:
@@ -8192,11 +8539,11 @@ async def auto_unban_loop():
                             parse_mode="HTML", disable_web_page_preview=True
                         )
                     except Exception as e:
-                        print(f"⚠️ Не смог уведомить чат {chat_id}: {e}")
+                        pass
                 except Exception as e:
-                    print(f"⚠️ auto_unmute {chat_id}/{user_id}: {e}")
+                    pass
         except Exception as e:
-            print(f"⚠️ auto_unban_loop: {e}")
+            pass
         await asyncio.sleep(300)
 
 
@@ -8247,7 +8594,7 @@ async def auto_fishing_events_loop():
                         await bot.send_message(chat_id, f"🌦 <b>Событие!</b>\n\n{ev['name']}\n📈 ×{ev['bonus']}\n⏰ {ev['duration']} мин.", parse_mode="HTML")
                     except: pass
         except Exception as e:
-            print(f"❌ events: {e}")
+            pass
         await asyncio.sleep(60)
 
 
@@ -8274,7 +8621,7 @@ async def auto_tournament_end_loop():
                     try: await bot.send_message(chat_id, text, parse_mode="HTML")
                     except: pass
         except Exception as e:
-            print(f"❌ tournament loop: {e}")
+            pass
         await asyncio.sleep(30)
 
 
@@ -8312,7 +8659,7 @@ async def auto_marriage_divorce_loop():
                             except: pass
                     except: pass
         except Exception as e:
-            print(f"❌ marriage divorce loop: {e}")
+            pass
         await asyncio.sleep(3600)
 
 
