@@ -277,6 +277,8 @@ DEFAULT_ACCESS = {
     "сброс браков": 4,
     "развести вышедших": 3,
 
+    "антиспам": 3,
+
     "мос": 0,
 }
 
@@ -4429,6 +4431,80 @@ async def as_remove_handler(message: types.Message):
         try:
             await message.reply(f"❌ Ошибка -ас: <code>{type(e).__name__}: {e}</code>", parse_mode="HTML")
         except: pass
+
+
+# ================= НОВОЕ: +АНТИСПАМ / -АНТИСПАМ =================
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["+антиспам", "+ антиспам"])
+async def enable_antispam_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+    user_id = message.from_user.id
+    is_creator = False
+    try:
+        member = await bot.get_chat_member(message.chat.id, user_id)
+        is_creator = (member.status == "creator")
+    except:
+        pass
+    if user_id == OWNER_ID or is_coowner(user_id):
+        is_creator = True
+    if not is_creator and not has_permission(message.chat.id, user_id, 3) and not has_agent_rank(user_id, 1):
+        if not await is_tg_admin(message.chat.id, user_id):
+            return await message.reply(
+                f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ, агент или создатель чата.",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+    if is_antispam_enabled(message.chat.id):
+        return await message.reply("ℹ️ Антиспам уже включён в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+    set_antispam_enabled(message.chat.id, True)
+    await message.reply(
+        f"{em('check', '✅')} <b>Антиспам включён!</b>\n\n"
+        f"☢️ Теперь при входе в чат пользователей из антиспама — они будут <b>автоматически выкидываться</b>.",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["-антиспам", "- антиспам"])
+async def disable_antispam_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+    user_id = message.from_user.id
+    is_creator = False
+    try:
+        member = await bot.get_chat_member(message.chat.id, user_id)
+        is_creator = (member.status == "creator")
+    except:
+        pass
+    if user_id == OWNER_ID or is_coowner(user_id):
+        is_creator = True
+    if not is_creator and not has_permission(message.chat.id, user_id, 3) and not has_agent_rank(user_id, 1):
+        if not await is_tg_admin(message.chat.id, user_id):
+            return await message.reply(
+                f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ, агент или создатель чата.",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+    if not is_antispam_enabled(message.chat.id):
+        return await message.reply("ℹ️ Антиспам уже выключен в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+    set_antispam_enabled(message.chat.id, False)
+    await message.reply(
+        f"{em('cross', '❌')} <b>Антиспам выключен!</b>\n\n"
+        f"👥 Теперь пользователи из антиспама <b>могут заходить</b> в чат (бот не будет их выкидывать).",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("антиспам статус")
+@cmd("ас статус")
+async def antispam_status_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+    enabled = is_antispam_enabled(message.chat.id)
+    status = "🟢 включён" if enabled else "🔴 выключен"
+    await message.reply(
+        f"☢️ <b>Антиспам</b> в этом чате: {status}\n\n"
+        f"📌 Включить: <code>+антиспам</code>\n"
+        f"📌 Выключить: <code>-антиспам</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
 @cmd("ас список")
