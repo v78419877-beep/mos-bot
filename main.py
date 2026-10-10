@@ -3353,10 +3353,9 @@ async def remove_city_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "city", None)
     await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= ====== ДОБАВЛЕНО ДЛЯ АНКЕТЫ ====== =================
+# ================= ====== АНКЕТА (новый вид) ====== =================
 
 def _get_profile_field(profile, index, default=None):
-    """Безопасно достать поле из profile (tuple)."""
     try:
         if profile and len(profile) > index:
             val = profile[index]
@@ -3365,10 +3364,22 @@ def _get_profile_field(profile, index, default=None):
         pass
     return default
 
+
+def _owner_status_line(user_id: int) -> str:
+    """Возвращает надпись-статус для владельца/совладельца/агента или пустую строку."""
+    if user_id == OWNER_ID:
+        return "⚜️ Владелец бота"
+    if is_coowner(user_id):
+        return "⚜️ Совладелец бота"
+    if is_agent(user_id):
+        return "🛡 Агент поддержки Mos"
+    return ""
+
+
 async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str:
     """
-    Собирает текст анкеты для target.
-    Если viewer_id указан и не является владельцем/агентов — скрывает поля, если is_hidden=1.
+    Собирает текст анкеты в стиле как на скриншоте.
+    Убрана строка «Звёздность». Добавлена строка со статусом (владелец/совладелец/агент).
     """
     user_id = target.id
     profile = get_user_profile(user_id)
@@ -3389,7 +3400,7 @@ async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str
     if viewer_id:
         is_staff = (viewer_id == OWNER_ID or is_coowner(viewer_id) or has_agent_rank(viewer_id, 1))
 
-    # Если анкета скрыта и смотрит не владелец и не агент — показываем заглушку
+    # Скрытая анкета
     if is_hidden and not is_self and not is_staff:
         return (
             f"🔒 <b>Анкета скрыта</b>\n\n"
@@ -3399,68 +3410,31 @@ async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str
 
     # Имя
     nick = get_user_nick(user_id, chat_id)
-    if nick:
-        display_name = nick
-    else:
-        display_name = html_escape_text(target.first_name or "Пользователь")
+    display_name = nick if nick else html_escape_text(target.first_name or "Пользователь")
 
+    lines = []
+
+    # --- Строка 1: «Это X (был недавно)» ---
+    last_seen_raw = get_last_seen_in_chat(user_id, chat_id)
+    last_seen_str = format_last_seen(last_seen_raw) if last_seen_raw else None
+    suffix = f" (был {last_seen_str})" if last_seen_str and last_seen_str != "нет данных" else ""
+    lines.append(f"👤 <b>Это {display_name}{suffix}</b>")
+
+    # --- Строка 2: ID и username ---
     if getattr(target, "username", None):
-        profile_link = f'<a href="https://t.me/{target.username}">{display_name}</a>'
+        lines.append(f"🆔 @{target.username}")
     else:
-        profile_link = f'<a href="tg://user?id={user_id}">{display_name}</a>'
+        lines.append(f"🆔 <a href=\"tg://user?id={user_id}\">{user_id}</a>")
 
-    lines = [f"📇 <b>Анкета</b> {profile_link}", ""]
+    lines.append("")
 
-    # Пол
-    if gender:
-        lines.append(f"⚥ Пол: <b>{html_escape_text(str(gender))}</b>")
-    else:
-        lines.append("⚥ Пол: <i>не указан</i>")
+    # --- Статус (владелец/совладелец/агент) ---
+    status_line = _owner_status_line(user_id)
+    if status_line:
+        lines.append(status_line)
+        lines.append("")
 
-    # Дата рождения
-    if birth_date:
-        bd_display = str(birth_date)
-        try:
-            # попробуем разобрать дд.мм.гггг
-            parts = bd_display.split(".")
-            if len(parts) == 3:
-                if birth_vis == "год":
-                    bd_display = f"{parts[2]} год"
-                elif birth_vis == "месяц":
-                    bd_display = f"{parts[1]}.{parts[2]}"
-                else:
-                    bd_display = f"{parts[0]}.{parts[1]}.{parts[2]}"
-        except Exception:
-            pass
-        lines.append(f"🎂 ДР: <b>{html_escape_text(bd_display)}</b>")
-    else:
-        lines.append("🎂 ДР: <i>не указан</i>")
-
-    # Город
-    if city:
-        lines.append(f"🏙 Город: <b>{html_escape_text(str(city))}</b>")
-    else:
-        lines.append("🏙 Город: <i>не указан</i>")
-
-    # Звание
-    rank_text = get_user_rank_text(user_id, chat_id)
-    if rank_text:
-        lines.append(f"🎖 Звание: <b>{rank_text}</b>")
-
-    # Девиз
-    if motto:
-        lines.append(f"💭 Девиз: {motto}")
-
-    # О себе
-    about = get_user_about(user_id)
-    if about:
-        lines.append(f"\n📝 <b>О себе:</b>\n{about}")
-
-    # Био из профиля (bio)
-    if bio:
-        lines.append(f"\n📖 <b>Дополнительно:</b>\n{html_escape_text(str(bio))}")
-
-    # Гражданство (если разрешено)
+    # --- Гражданство ---
     if show_citizenship:
         cit = get_citizenship_info(user_id)
         if cit:
@@ -3472,30 +3446,105 @@ async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str
                 date_str = cit_date[:10]
             duration = format_citizenship_duration(cit_date)
             if cit_chat_id == chat_id:
-                lines.append(f"\n🏠 Гражданство: <b>{date_str}</b> ({duration})")
+                lines.append(f"🕰 Во вселенной {target.first_name}: с {date_str} ({duration})")
             else:
                 try:
                     cc = await bot.get_chat(cit_chat_id)
                     cc_title = cc.title or "другой чат"
                 except Exception:
                     cc_title = "другой чат"
-                lines.append(f"\n🏠 Гражданство «{cc_title}»: <b>{date_str}</b> ({duration})")
+                lines.append(f"🕰 Гражданин чата «{cc_title}»: с {date_str} ({duration})")
 
-    # Активность
+    # --- Пол ---
+    if gender:
+        lines.append(f"🙂‍↔️ Пол: <b>{html_escape_text(str(gender))}</b>")
+    else:
+        lines.append("🙂‍↔️ Пол: <i>не указан</i>")
+
+    # --- Дата рождения ---
+    if birth_date:
+        bd_display = str(birth_date)
+        try:
+            parts = bd_display.split(".")
+            if len(parts) == 3:
+                if birth_vis == "год":
+                    bd_display = f"{parts[2]} год"
+                elif birth_vis == "месяц":
+                    bd_display = f"{parts[1]}.{parts[2]}"
+                else:
+                    bd_display = f"{parts[0]}.{parts[1]}.{parts[2]}"
+        except Exception:
+            pass
+        lines.append(f"🗓 Дата рождения: <b>{html_escape_text(bd_display)}</b>")
+    else:
+        lines.append("🗓 Дата рождения: <i>не указана</i>")
+
+    # --- Город ---
+    if city:
+        lines.append(f"🏙 Город: <b>{html_escape_text(str(city))}</b>")
+    else:
+        lines.append("🏙 Город: <i>не указан</i>")
+
+    # --- Активность ---
     day, week, month, total = get_activity_extended(user_id, chat_id)
-    lines.append(f"\n📊 Актив: <b>{day}</b> | <b>{week}</b> | <b>{month}</b> | <b>{total}</b>")
+    lines.append(
+        f"📊 Активность (день|нед|мес|всего): "
+        f"<b>{day}</b> | <b>{week}</b> | <b>{month}</b> | <b>{total}</b>"
+    )
 
-    # Подсказка для себя
+    # --- Звание (если установлено) ---
+    rank_text = get_user_rank_text(user_id, chat_id)
+    if rank_text:
+        lines.append(f"✨ Звание: <b>{rank_text}</b>")
+
+    # --- Гражданство (строка как в новом стиле) ---
+    if show_citizenship:
+        cit2 = get_citizenship_info(user_id)
+        if cit2:
+            cit_chat_id2, cit_date2 = cit2
+            try:
+                d2 = datetime.strptime(cit_date2[:19], "%Y-%m-%d %H:%M:%S")
+                date_str2 = d2.strftime("%d.%m.%Y")
+            except Exception:
+                date_str2 = cit_date2[:10]
+            duration2 = format_citizenship_duration(cit_date2)
+            if cit_chat_id2 == chat_id:
+                lines.append(f"🏠 Гражданин чата: <b>{duration2}</b> (с {date_str2})")
+            else:
+                try:
+                    cc2 = await bot.get_chat(cit_chat_id2)
+                    cc_title2 = cc2.title or "чат"
+                except Exception:
+                    cc_title2 = "чат"
+                lines.append(f"🏠 Гражданин чата «{cc_title2}»: <b>{duration2}</b> (с {date_str2})")
+
+    # --- Девиз ---
+    if motto:
+        lines.append(f"💭 Девиз: {motto}")
+
+    # --- О себе ---
+    about = get_user_about(user_id)
+    if about:
+        lines.append(f"\n📝 <b>О себе:</b>\n{about}")
+
+    # --- Био ---
+    if bio:
+        lines.append(f"\n📖 <b>Дополнительно:</b>\n{html_escape_text(str(bio))}")
+
+    # --- Подсказка для себя ---
     if is_self:
         lines.append("")
-        lines.append("<i>Заполнить: <code>мой пол М</code>, <code>мой др 01.01.2000</code>, <code>!мой город Москва</code>, <code>+о себе</code>, <code>+девиз</code>, <code>+ник</code>, <code>+звание</code></i>")
+        lines.append(
+            "<i>Заполнить: <code>мой пол М</code>, <code>мой др 01.01.2000</code>, "
+            "<code>!мой город Москва</code>, <code>+о себе</code>, <code>+девиз</code>, "
+            "<code>+ник</code>, <code>+звание</code></i>"
+        )
 
     return "\n".join(lines)
 
 
 @cmd("анкета")
 async def anketa_cmd(message: types.Message):
-    """Показать анкету свою или по упоминанию/ID."""
     target = None
     if message.reply_to_message and message.reply_to_message.from_user:
         target = message.reply_to_message.from_user
@@ -3509,7 +3558,6 @@ async def anketa_cmd(message: types.Message):
                 elif arg.lstrip("-").isdigit():
                     target = await bot.get_chat(int(arg))
             except Exception:
-                # пробуем по БД
                 with sqlite3.connect(DATABASE_PATH) as conn:
                     c = conn.cursor()
                     if arg.startswith("@"):
@@ -3541,7 +3589,6 @@ async def anketa_cmd(message: types.Message):
 @cmd("моя анкета")
 @cmd("моя профиль")
 async def my_anketa_cmd(message: types.Message):
-    """Показать только свою анкету."""
     text = await _build_anketa_text(message.from_user, message.chat.id, viewer_id=message.from_user.id)
     try:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
@@ -3551,7 +3598,6 @@ async def my_anketa_cmd(message: types.Message):
 
 @cmd("твоя анкета")
 async def your_anketa_cmd(message: types.Message):
-    """Показать анкету другого пользователя."""
     target = None
     if message.reply_to_message:
         target = message.reply_to_message.from_user
@@ -3599,11 +3645,9 @@ async def your_anketa_cmd(message: types.Message):
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+био"))
 async def set_bio_cmd(message: types.Message):
-    """+био — заполнить поле bio в анкете."""
     if not message.text: return
     nl_idx = message.text.find("\n")
     if nl_idx == -1:
-        # можно в одну строку: +био текст
         idx = message.text.lower().find("+био")
         raw = message.text[idx + len("+био"):].strip()
         if not raw:
@@ -3623,9 +3667,9 @@ async def remove_bio_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "bio", None)
     await message.reply("✅ Био удалено.", parse_mode="HTML", disable_web_page_preview=True)
 
-# ================= ====== КОНЕЦ ДОБАВЛЕНИЯ ДЛЯ АНКЕТЫ ====== =================
+# ================= ====== КОНЕЦ АНКЕТЫ ====== =================
 
-# ================= ПРОФИЛЬ =================
+# ================= ПРОФИЛЬ (вернул как было — без блока анкеты) =================
 @cmd("профиль")
 async def profile_cmd(message: types.Message):
     target = None
@@ -3735,43 +3779,6 @@ async def profile_cmd(message: types.Message):
     lines.append(last_line)
     lines.append(activity_line)
 
-    # ====== ДОБАВЛЕНО: краткий блок анкеты в профиль ======
-    profile = get_user_profile(user_id)
-    p_gender = _get_profile_field(profile, 0)
-    p_birth = _get_profile_field(profile, 1)
-    p_city = _get_profile_field(profile, 2)
-    p_motto = _get_profile_field(profile, 6)
-    p_hidden = _get_profile_field(profile, 4, 1)
-    viewer_is_self = (message.from_user.id == user_id)
-    viewer_is_staff = (message.from_user.id == OWNER_ID or is_coowner(message.from_user.id) or has_agent_rank(message.from_user.id, 1))
-    show_anketa_brief = True
-    if p_hidden and not viewer_is_self and not viewer_is_staff:
-        show_anketa_brief = False
-
-    if show_anketa_brief:
-        anketa_bits = []
-        if p_gender:
-            anketa_bits.append(f"⚥ {p_gender}")
-        if p_birth:
-            anketa_bits.append(f"🎂 {p_birth}")
-        if p_city:
-            anketa_bits.append(f"🏙 {p_city}")
-        if anketa_bits:
-            lines.append("📇 " + " | ".join(anketa_bits))
-        if p_motto:
-            lines.append(f"💭 {p_motto}")
-        about = get_user_about(user_id)
-        if about:
-            short_about = about if len(about) <= 120 else about[:120] + "..."
-            lines.append(f"📝 {short_about}")
-        rank_text = get_user_rank_text(user_id, chat_id)
-        if rank_text:
-            lines.append(f"🎖 {rank_text}")
-    else:
-        lines.append("🔒 Анкета скрыта (открыть: <code>.анкета</code> для владельца/агента)")
-
-    # ====== КОНЕЦ ДОБАВЛЕНИЯ ======
-
     if as_line:
         lines.append(as_line)
     elif in_ignore:
@@ -3796,6 +3803,7 @@ async def profile_cmd(message: types.Message):
             await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
     else:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
 
 @cmd("мойид")
 async def myid_cmd(message: types.Message):
@@ -7375,8 +7383,7 @@ async def grid_command_router(message: types.Message):
             if success_this_chat: removed_from += 1
             else: failed += 1
             try: remove_rank(chat_id, target.id)
-            except: pass
-            try: unmark_bot_promoted(target.id, chat_id)
+            except: pass            try: unmark_bot_promoted(target.id, chat_id)
             except: pass
         remove_grid_moderator(grid_id, target.id)
         try: remove_grid_user_rank(grid_id, target.id)
