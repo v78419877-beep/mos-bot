@@ -67,7 +67,6 @@ def cmd(name: str):
 
 
 def mod_cmd(name: str):
-    """Декоратор для команд модерации: print + try/except с ответом в чат."""
     name_lower = name.lower().strip()
     def decorator(func):
         @dp.message(lambda m: _match_command(m, name_lower))
@@ -146,6 +145,20 @@ def mention_by_id(user_id, first_name, username=None):
 def user_link(user_id, first_name="Пользователь", username=None):
     if username: return f'<a href="https://t.me/{username}">{first_name}</a>'
     return f'<b>{first_name}</b>'
+
+
+def profile_link_html(user) -> str:
+    """HTML-ссылка на профиль юзера. @username → t.me; иначе tg://user?id="""
+    if not user:
+        return ""
+    first_name = html_escape_text(getattr(user, "first_name", "") or "Пользователь")
+    username = getattr(user, "username", None)
+    user_id = getattr(user, "id", None)
+    if username:
+        return f'<a href="https://t.me/{username}">{first_name}</a>'
+    if user_id:
+        return f'<a href="tg://user?id={user_id}">{first_name}</a>'
+    return f"<b>{first_name}</b>"
 
 
 def html_escape_text(text: str) -> str:
@@ -324,7 +337,30 @@ def init_db():
         c.execute("CREATE TABLE IF NOT EXISTS antispam (user_id INTEGER PRIMARY KEY, reason TEXT, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         c.execute("CREATE TABLE IF NOT EXISTS ignore_list (user_id INTEGER, chat_id INTEGER, reason TEXT, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS chat_codes (chat_id INTEGER PRIMARY KEY, code TEXT UNIQUE)")
-        c.execute("CREATE TABLE IF NOT EXISTS messages_stats (user_id INTEGER, chat_id INTEGER, date DATE, count INTEGER DEFAULT 1, UNIQUE(user_id, chat_id, date))")
+        # --- messages_stats с last_message_at ---
+        c.execute("""CREATE TABLE IF NOT EXISTS messages_stats (
+            user_id INTEGER, chat_id INTEGER, date DATE,
+            count INTEGER DEFAULT 1,
+            last_message_at TIMESTAMP,
+            UNIQUE(user_id, chat_id, date)
+        )""")
+        # Миграция
+        try:
+            c.execute("PRAGMA table_info(messages_stats)")
+            cols = [row[1] for row in c.fetchall()]
+            if "last_message_at" not in cols:
+                c.execute("ALTER TABLE messages_stats ADD COLUMN last_message_at TIMESTAMP")
+                c.execute("UPDATE messages_stats SET last_message_at = date || ' 12:00:00' WHERE last_message_at IS NULL")
+                conn.commit()
+        except Exception as e:
+            print(f"⚠️ Миграция messages_stats: {e}")
+        # Индексы для скорости
+        try:
+            c.execute("CREATE INDEX IF NOT EXISTS idx_messages_stats_chat_date ON messages_stats(chat_id, date)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_messages_stats_user_chat ON messages_stats(user_id, chat_id)")
+        except Exception as e:
+            print(f"⚠️ Индексы: {e}")
+
         c.execute("CREATE TABLE IF NOT EXISTS admins (user_id INTEGER, chat_id INTEGER, rank INTEGER DEFAULT 1, added_by INTEGER, added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS bot_promoted (user_id INTEGER, chat_id INTEGER, promoted_by INTEGER, promoted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(user_id, chat_id))")
         c.execute("CREATE TABLE IF NOT EXISTS warns (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, chat_id INTEGER, reason TEXT, warned_by INTEGER, warned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
@@ -520,6 +556,69 @@ def _fmt_added_dt(s: str) -> str:
             return s[:19]
 
 
+def format_last_seen(last_seen_str):
+    """Форматирует 'последняя активность'."""
+    if not last_seen_str:
+        return "нет данных"
+    try:
+        if isinstance(last_seen_str, str):
+            ls = datetime.strptime(last_seen_str[:19], "%Y-%m-%d %H:%M:%S")
+        else:
+            ls = last_seen_str
+    except Exception:
+        return "нет данных"
+    delta = (datetime.now() - ls).total_seconds()
+    if delta < 0: delta = 0
+    if delta < 60:
+        return "только что"
+    if delta < 3600:
+        return f"{int(delta // 60)} мин назад"
+    if delta < 86400:
+        return f"{int(delta // 3600)} ч назад"
+    if delta < 86400 * 7:
+        return f"{int(delta // 86400)} дн назад"
+    return ls.strftime("%d.%m.%Y")
+
+
+def format_citizenship_short(became_at_str):
+    """Короткий формат: '14 секунд', '2 минут', '3 часов', '5 дней'."""
+    if not became_at_str:
+        return "недавно"
+    try:
+        became_at = datetime.strptime(became_at_str[:19], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        try:
+            became_at = datetime.strptime(became_at_str[:10], "%Y-%m-%d")
+        except Exception:
+            return "недавно"
+    delta = (datetime.now() - became_at).total_seconds()
+    if delta < 0: delta = 0
+
+    def _plural(n, one, few, many):
+        n10, n100 = n % 10, n % 100
+        if n10 == 1 and n100 != 11: return one
+        if 2 <= n10 <= 4 and not (12 <= n100 <= 14): return few
+        return many
+
+    if delta < 60:
+        n = int(delta)
+        return f"{n} {_plural(n, 'секунда', 'секунды', 'секунд')}"
+    if delta < 3600:
+        n = int(delta // 60)
+        return f"{n} {_plural(n, 'минута', 'минуты', 'минут')}"
+    if delta < 86400:
+        n = int(delta // 3600)
+        return f"{n} {_plural(n, 'час', 'часа', 'часов')}"
+    if delta < 86400 * 30:
+        n = int(delta // 86400)
+        return f"{n} {_plural(n, 'день', 'дня', 'дней')}"
+    if delta < 86400 * 365:
+        n = int(delta // (86400 * 30))
+        return f"{n} {_plural(n, 'месяц', 'месяца', 'месяцев')}"
+    n = int(delta // (86400 * 365))
+    return f"{n} {_plural(n, 'год', 'года', 'лет')}"
+
+
 # ================= ЕДИНЫЙ СТИЛЬ ОТВЕТОВ =================
 def mod_action_text(
     action_emoji: str,
@@ -672,18 +771,15 @@ async def check_command_access(message, command):
     chat_id = message.chat.id
     user_id = message.from_user.id
     if user_id == OWNER_ID or is_coowner(user_id):
-        print(f"   ✅ Доступ: владелец/совладелец")
         return True
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status == "creator":
-            print(f"   ✅ Доступ: создатель чата")
             return True
     except: pass
     canon = _canonical(command)
     access = get_command_access(chat_id, canon)
     notify = is_command_notify_enabled(chat_id)
-    print(f"   📊 ДК '{canon}' = {access}")
     if access == -1:
         if notify: await message.reply(f"{em('cross', '❌')} Команда отключена.", parse_mode="HTML")
         return False
@@ -906,9 +1002,7 @@ async def is_tg_admin(chat_id, user_id):
     except: return False
 
 
-# ================= УЛУЧШЕННЫЙ resolve_target =================
 class _FakeUser:
-    """Заглушка юзера, когда bot.get_chat() не смог его получить."""
     def __init__(self, user_id, first_name, username=None):
         self.id = user_id
         self.first_name = first_name
@@ -917,7 +1011,6 @@ class _FakeUser:
 
 
 async def resolve_target(message):
-    # 1. Reply
     if message.reply_to_message and message.reply_to_message.from_user:
         return message.reply_to_message.from_user, None
     if not message.text: return None, None
@@ -925,8 +1018,6 @@ async def resolve_target(message):
     for a in args[1:]:
         raw = a.strip().rstrip('.,;:!?')
         if not raw: continue
-
-        # @username
         if raw.startswith('@'):
             username = raw[1:]
             try:
@@ -939,11 +1030,9 @@ async def resolve_target(message):
                 r = c.fetchone()
                 if r:
                     try: return await bot.get_chat(r[0]), raw
-                    except: 
+                    except:
                         return _FakeUser(r[0], r[1], r[2]), raw
             continue
-
-        # ID
         if raw.lstrip('-').isdigit():
             user_id = int(raw)
             try:
@@ -957,8 +1046,6 @@ async def resolve_target(message):
             if r:
                 return _FakeUser(user_id, r[0] or str(user_id), r[1]), raw
             return _FakeUser(user_id, f"ID {user_id}"), raw
-
-        # username без @
         if 3 <= len(raw) <= 32 and re.match(r'^[a-zA-Z][a-zA-Z0-9_]+$', raw):
             try:
                 return await bot.get_chat(f"@{raw}"), raw
@@ -1361,34 +1448,112 @@ def clear_warns(user_id, chat_id):
         conn.commit()
 
 
+# ================= ТОП / АКТИВНОСТЬ 24/7 =================
 def get_top_users(chat_id, period="today", limit=10):
-    today = datetime.now().date()
-    if period == "today":
-        query = "SELECT user_id, SUM(count) FROM messages_stats WHERE chat_id = ? AND date = ? GROUP BY user_id ORDER BY SUM(count) DESC LIMIT ?"
-        params = (chat_id, today.isoformat(), limit)
-    elif period == "week":
-        query = "SELECT user_id, SUM(count) FROM messages_stats WHERE chat_id = ? AND date >= ? GROUP BY user_id ORDER BY SUM(count) DESC LIMIT ?"
-        params = (chat_id, (today - timedelta(days=7)).isoformat(), limit)
-    elif period == "month":
-        query = "SELECT user_id, SUM(count) FROM messages_stats WHERE chat_id = ? AND date >= ? GROUP BY user_id ORDER BY SUM(count) DESC LIMIT ?"
-        params = (chat_id, (today - timedelta(days=30)).isoformat(), limit)
-    else:
-        query = "SELECT user_id, SUM(count) FROM messages_stats WHERE chat_id = ? GROUP BY user_id ORDER BY SUM(count) DESC LIMIT ?"
+    """
+    period:
+      'today' | '24h' — за последние 24 часа (rolling)
+      'week'  | '7d'  — за 7 дней
+      'month' | '30d' — за 30 дней
+      'all'           — за всё время
+    """
+    now = datetime.now()
+
+    if period in ("today", "24h", "day", "день"):
+        cutoff_date = (now - timedelta(hours=24)).date().isoformat()
+        query = """SELECT user_id, SUM(count) as cnt FROM messages_stats
+                   WHERE chat_id = ? AND date >= ?
+                   GROUP BY user_id ORDER BY cnt DESC LIMIT ?"""
+        params = (chat_id, cutoff_date, limit)
+    elif period in ("week", "7d", "неделя"):
+        cutoff_date = (now - timedelta(days=7)).date().isoformat()
+        query = """SELECT user_id, SUM(count) as cnt FROM messages_stats
+                   WHERE chat_id = ? AND date >= ?
+                   GROUP BY user_id ORDER BY cnt DESC LIMIT ?"""
+        params = (chat_id, cutoff_date, limit)
+    elif period in ("month", "30d", "месяц"):
+        cutoff_date = (now - timedelta(days=30)).date().isoformat()
+        query = """SELECT user_id, SUM(count) as cnt FROM messages_stats
+                   WHERE chat_id = ? AND date >= ?
+                   GROUP BY user_id ORDER BY cnt DESC LIMIT ?"""
+        params = (chat_id, cutoff_date, limit)
+    else:  # all
+        query = """SELECT user_id, SUM(count) as total FROM messages_stats
+                   WHERE chat_id = ?
+                   GROUP BY user_id ORDER BY total DESC LIMIT ?"""
         params = (chat_id, limit)
+
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute(query, params)
-        return c.fetchall()
+        rows = c.fetchall()
+    return [(r[0], r[1] or 0) for r in rows]
 
 
 def get_inactive_users(chat_id, days=7, limit=30):
-    cutoff = (datetime.now().date() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("""SELECT user_id, MAX(date) as last_date FROM messages_stats
-            WHERE chat_id = ? GROUP BY user_id HAVING last_date < ?
-            ORDER BY last_date ASC LIMIT ?""", (chat_id, cutoff, limit))
+        c.execute("""
+            SELECT user_id, MAX(COALESCE(last_message_at, date || ' 12:00:00')) as last_seen
+            FROM messages_stats
+            WHERE chat_id = ?
+            GROUP BY user_id
+            HAVING last_seen < ?
+            ORDER BY last_seen ASC
+            LIMIT ?
+        """, (chat_id, cutoff, limit))
         return c.fetchall()
+
+
+def get_last_seen_in_chat(user_id, chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT MAX(COALESCE(last_message_at, date || ' 12:00:00'))
+            FROM messages_stats
+            WHERE user_id = ? AND chat_id = ?
+        """, (user_id, chat_id))
+        r = c.fetchone()
+        return r[0] if r and r[0] else None
+
+
+def get_activity_extended(user_id, chat_id):
+    """day(24ч), week(7д), month(30д), total для конкретного чата."""
+    now = datetime.now()
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT SUM(count) FROM messages_stats
+            WHERE user_id = ? AND chat_id = ? AND date >= ?""",
+            (user_id, chat_id, (now - timedelta(hours=24)).date().isoformat()))
+        day = c.fetchone()[0] or 0
+
+        c.execute("""SELECT SUM(count) FROM messages_stats
+            WHERE user_id = ? AND chat_id = ? AND date >= ?""",
+            (user_id, chat_id, (now - timedelta(days=7)).date().isoformat()))
+        week = c.fetchone()[0] or 0
+
+        c.execute("""SELECT SUM(count) FROM messages_stats
+            WHERE user_id = ? AND chat_id = ? AND date >= ?""",
+            (user_id, chat_id, (now - timedelta(days=30)).date().isoformat()))
+        month = c.fetchone()[0] or 0
+
+        c.execute("""SELECT SUM(count) FROM messages_stats
+            WHERE user_id = ? AND chat_id = ?""", (user_id, chat_id))
+        total = c.fetchone()[0] or 0
+    return day, week, month, total
+
+
+def get_user_position_in_chat(user_id, chat_id, period="30d"):
+    """Позиция юзера в топе чата за период (1-based)."""
+    try:
+        top = get_top_users(chat_id, period, limit=500)
+        for i, (uid, _) in enumerate(top, 1):
+            if uid == user_id:
+                return i
+    except Exception:
+        pass
+    return None
 
 
 # ================= ИРИСКИ =================
@@ -3372,160 +3537,144 @@ async def remove_city_cmd(message: types.Message):
     await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= ПРОФИЛЬ =================
+# ================= ПРОФИЛЬ (улучшенный) =================
 @cmd("профиль")
 async def profile_cmd(message: types.Message):
     target = None
-    if message.reply_to_message:
+    arg_raw = None
+    if message.reply_to_message and message.reply_to_message.from_user:
         target = message.reply_to_message.from_user
     else:
         args = message.text.split()
         if len(args) >= 2:
+            arg_raw = args[1].strip()
             try:
-                if args[1].startswith('@'): target = await bot.get_chat(args[1])
-                elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
-            except:
-                return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML", disable_web_page_preview=True)
-    if not target: target = message.from_user
+                if arg_raw.startswith("@"):
+                    target = await bot.get_chat(arg_raw)
+                elif arg_raw.lstrip("-").isdigit():
+                    target = await bot.get_chat(int(arg_raw))
+            except Exception:
+                return await message.reply(
+                    f"{em('cross', '❌')} Пользователь <code>{arg_raw}</code> не найден.",
+                    parse_mode="HTML", disable_web_page_preview=True
+                )
+    if not target:
+        target = message.from_user
 
-    today_count, all_count = get_user_stats(target.id, message.chat.id)
-    in_antispam = is_in_antispam(target.id)
-    in_ignore = is_ignored(message.chat.id, target.id)
-    if in_antispam and in_ignore: status = f"{em('ban', '🚫')} В АС + {em('mute', '🔇')} В игноре"
-    elif in_antispam: status = f"{em('ban', '🚫')} В антиспаме"
-    elif in_ignore: status = f"{em('mute', '🔇')} В игноре"
-    else: status = f"{em('check', '✅')} Чист"
+    chat_id = message.chat.id
+    user_id = target.id
 
-    role_line = ""
-    if target.id == OWNER_ID: role_line = "👑 <b>Владелец бота</b>"
-    elif is_coowner(target.id): role_line = "⚜️ <b>Совладелец бота</b>"
-    elif get_rank(message.chat.id, target.id) == 5: role_line = "⚜️ <b>Владелец чата</b>"
-    elif is_bot_promoted(target.id, message.chat.id): role_line = "🛡 <b>Telegram-админ</b>"
-    elif is_agent(target.id): role_line = "🛡 <b>Агент поддержки Mos</b>"
+    register_user(user_id, target.first_name, target.username or "")
 
-    rank = get_rank(message.chat.id, target.id)
+    rank = get_rank(chat_id, user_id)
     rank_name = RANK_NAMES.get(rank, "👤 Участник")
 
-    nick = get_user_nick(target.id, message.chat.id)
-    display_name = nick or target.first_name
-    rank_text = get_user_rank_text(target.id, message.chat.id)
+    # Статус в чате
+    member_status_icon = "🟢"
+    member_status_text = "Состоит в чате"
+    try:
+        m = await bot.get_chat_member(chat_id, user_id)
+        if m.status == "creator":
+            member_status_icon, member_status_text = "👑", "Создатель чата"
+        elif m.status == "administrator":
+            member_status_icon, member_status_text = "🛡", "Администратор"
+        elif m.status == "restricted":
+            member_status_icon, member_status_text = "🔇", "Ограничен"
+        elif m.status == "left":
+            member_status_icon, member_status_text = "⚪", "Вышел из чата"
+        elif m.status == "kicked":
+            member_status_icon, member_status_text = "🚫", "Забанен"
+    except Exception:
+        pass
 
-    cit = get_citizenship_info(target.id)
-    cit_line = ""
+    # Антиспам
+    in_antispam = is_in_antispam(user_id)
+    in_ignore = is_ignored(chat_id, user_id)
+    as_line = None
+    if in_antispam:
+        info = get_antispam_info(user_id)
+        reason = info[0] if info else "не указана"
+        as_line = f"☢️ В антиспаме: <i>{reason}</i>"
+
+    # Варны
+    warns_count = count_warns(user_id, chat_id)
+    warn_line = f"❗ Предупреждения: <b>{warns_count}/3</b>" if warns_count > 0 else "❗ Предупреждения: нет"
+
+    # Гражданство
+    cit = get_citizenship_info(user_id)
     if cit:
         cit_chat_id, cit_date = cit
+        short = format_citizenship_short(cit_date)
         try:
-            cit_chat = await bot.get_chat(cit_chat_id)
-            cit_title = cit_chat.title or f"Чат {cit_chat_id}"
-        except: cit_title = f"Чат {cit_chat_id}"
-        cit_line = f"🏠 Гражданин «{cit_title}» {format_citizenship_duration(cit_date)}"
+            d = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
+            date_str = d.strftime("%d.%m.%Y")
+        except Exception:
+            date_str = cit_date[:10]
+        if cit_chat_id == chat_id:
+            cit_line = f"🏠 Гражданство беседы: {date_str} ({short})"
+        else:
+            try:
+                cc = await bot.get_chat(cit_chat_id)
+                cc_title = cc.title or "другой чат"
+            except Exception:
+                cc_title = "другой чат"
+            cit_line = f"🏠 Гражданство «{cc_title}»: {date_str} ({short})"
+    else:
+        cit_line = "🏠 Гражданство беседы: нет"
 
-    vip_emoji = get_vip_emoji(target.id)
-    user_ach = get_user_achievements(target.id, message.chat.id)
-    ach_text = " ".join([f"{a[2]}{a[1]}" for a in user_ach]) if user_ach else ""
-    about = get_user_about(target.id)
+    # Активность
+    last_seen = get_last_seen_in_chat(user_id, chat_id)
+    last_seen_str = format_last_seen(last_seen)
+    last_line = f"⏰ Последний актив: {last_seen_str}"
 
-    lines = [
-        f"{em('user', '👤')} <b>Профиль {vip_emoji}{display_name}{vip_emoji}</b>", ""
-    ]
-    if role_line: lines.append(role_line)
-    lines.append(f"{em('id', '🆔')} ID: <code>{target.id}</code>")
-    if nick and nick != target.first_name: lines.append(f"📛 Имя: {target.first_name}")
-    lines.append(f"🔤 Ник: {nick or display_name}")
-    lines.append(f"📌 Звание: {rank_text or '—'}")
-    lines.append(f"🏆 Ранг: {rank_name}")
+    day, week, month, total = get_activity_extended(user_id, chat_id)
+    activity_line = f"📊 Актив (д|н|м|весь): {day} | {week} | {month} | {total}"
+
+    # НИК → ссылка на профиль
+    nick = get_user_nick(user_id, chat_id)
+    if nick:
+        display_name = nick
+    else:
+        display_name = html_escape_text(target.first_name or "Пользователь")
+
+    if getattr(target, "username", None):
+        profile_link = f'<a href="https://t.me/{target.username}">{display_name}</a>'
+    else:
+        profile_link = f'<a href="tg://user?id={user_id}">{display_name}</a>'
+
+    header_line = f"👤 Это пользователь {profile_link}"
+
+    lines = [header_line]
+    lines.append(f"{member_status_icon} {member_status_text}")
     lines.append("")
-    lines.append(f"{em('stats', '📊')} Сегодня: <b>{today_count}</b> • Всего: <b>{all_count}</b>")
-    lines.append(f"{em('shield', '🛡')} Статус: {status}")
-    if cit_line: lines.append(cit_line)
-    if ach_text:
-        lines.append("")
-        lines.append(f"🎖 <b>Ачивки:</b> {ach_text}")
-    if about:
-        lines.append("")
-        lines.append(f"✏️ <b>О себе:</b>")
-        lines.append(about)
+    lines.append(f"👑 Ранг: [{rank}] {rank_name}")
+    lines.append(warn_line)
+    lines.append(cit_line)
+    lines.append(last_line)
+    lines.append(activity_line)
+
+    if as_line:
+        lines.append(as_line)
+    elif in_ignore:
+        lines.append(f"{em('mute', '🔇')} В игноре")
 
     text = "\n".join(lines)
+
     chart_buf = None
-    try: chart_buf = generate_user_chat_activity_chart(target.id, message.chat.id, days=30)
-    except: pass
+    try:
+        chart_buf = generate_user_chat_activity_chart(user_id, chat_id, days=30)
+    except Exception as e:
+        print(f"⚠️ График профиля: {e}")
 
     if chart_buf:
-        await message.reply_photo(
-            photo=types.BufferedInputFile(chart_buf.getvalue(), filename="user_chat_activity.png"),
-            caption=text, parse_mode="HTML"
-        )
-    else:
-        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-@cmd("анкета")
-async def profile_full_cmd(message: types.Message):
-    target = None
-    if message.reply_to_message:
-        target = message.reply_to_message.from_user
-    else:
-        args = message.text.split()
-        if len(args) >= 2:
-            try:
-                if args[1].startswith('@'): target = await bot.get_chat(args[1])
-                elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
-            except: pass
-    if not target: target = message.from_user
-    register_user(target.id, target.first_name, target.username or "")
-    user_info = get_user_info(target.id)
-    if not user_info: first_seen = datetime.now()
-    else:
-        try: first_seen = datetime.strptime(user_info[0], "%Y-%m-%d %H:%M:%S")
-        except: first_seen = datetime.now()
-    profile = get_user_profile(target.id)
-    gender, birth_date, city, bio, is_hidden, birth_visibility, motto, show_cit = profile
-    viewer_id = message.from_user.id
-    is_owner_viewer = (viewer_id == OWNER_ID or is_coowner(viewer_id))
-    is_agent_viewer = is_agent(viewer_id)
-    is_self = (viewer_id == target.id)
-    can_see_full = is_owner_viewer or is_agent_viewer or is_self or (not is_hidden)
-    if not can_see_full:
-        return await message.reply(f"🔒 {mention(target)} скрыл анкету.", parse_mode="HTML", disable_web_page_preview=True)
-    day, week, month, total = get_activity_stats(target.id)
-    role_line = ""
-    if target.id == OWNER_ID: role_line = "👑 <b>Владелец бота</b>"
-    elif is_coowner(target.id): role_line = "⚜️ <b>Совладелец бота</b>"
-    elif get_rank(message.chat.id, target.id) == 5: role_line = "⚜️ <b>Владелец чата</b>"
-    elif is_bot_promoted(target.id, message.chat.id): role_line = "🛡 <b>Telegram-админ</b>"
-    elif is_agent(target.id): role_line = "🛡 <b>Агент поддержки Mos</b>"
-    user_ach = get_user_achievements(target.id, message.chat.id)
-    ach_text = " ".join([f"{a[2]}{a[1]}" for a in user_ach]) if user_ach else ""
-    cit_line = ""
-    cit = get_citizenship_info(target.id)
-    if cit and (show_cit or is_owner_viewer or is_agent_viewer or is_self):
-        cit_chat_id, cit_date = cit
         try:
-            cit_chat = await bot.get_chat(cit_chat_id)
-            cit_title = cit_chat.title or "Чат"
-        except: cit_title = "Чат"
-        cit_line = f"\n🏠 Гражданин «{cit_title}» {format_citizenship_duration(cit_date)}"
-    reg_date = first_seen.strftime("%d.%m.%Y")
-    time_in = format_time_since(first_seen.strftime("%Y-%m-%d"))
-    text = (f"👤 <b>Это {mention(target)}</b>\n🆔 <code>{target.id}</code>\n")
-    if role_line: text += f"{role_line}\n"
-    text += (
-        f"\n⏱ В Mos с {reg_date} ({time_in})\n"
-        f"👨 Пол: {gender or '—'}\n"
-        f"📆 ДР: {birth_date or '—'}\n"
-        f"🗺 Город: {city or '—'}\n"
-        f"📊 Активность: {format_number(day)}|{format_number(week)}|{format_number(month)}|{format_number(total)}"
-        f"{cit_line}"
-    )
-    if ach_text: text += f"\n\n🎖 <b>Ачивки:</b> {ach_text}"
-    if motto: text += f"\n\n💭 {motto}"
-    if bio: text += f"\n\n📝 {bio}"
-    chart = None
-    try: chart = generate_user_activity_chart(target.id, days=30)
-    except: pass
-    if chart:
-        await message.reply_photo(photo=types.BufferedInputFile(chart.getvalue(), filename="anketa.png"), caption=text, parse_mode="HTML")
+            await message.reply_photo(
+                photo=types.BufferedInputFile(chart_buf.getvalue(), filename="profile.png"),
+                caption=text,
+                parse_mode="HTML"
+            )
+        except Exception:
+            await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
     else:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
@@ -3578,27 +3727,82 @@ async def get_chat_id_cmd(message: types.Message):
     )
 
 
+# ================= ТОП (улучшенный, 24/7) =================
 @cmd("топ")
 async def top_cmd(message: types.Message):
     args = message.text.split()
-    period = "today"; period_name = "за сегодня"
+
+    period = "24h"
+    period_name = "за последние 24 часа"
+    period_icon = "🕐"
+
     if len(args) >= 2:
         p = args[1].lower()
-        if p in ["неделя", "week", "н"]: period, period_name = "week", "за неделю"
-        elif p in ["месяц", "month", "м"]: period, period_name = "month", "за месяц"
-        elif p in ["все", "all", "всё"]: period, period_name = "all", "за всё время"
+        if p in ["24ч", "24h", "день", "сутки", "today", "day"]:
+            period, period_name, period_icon = "24h", "за последние 24 часа", "🕐"
+        elif p in ["7д", "7d", "неделя", "week", "н"]:
+            period, period_name, period_icon = "7d", "за 7 дней", "📆"
+        elif p in ["30д", "30d", "месяц", "month", "м"]:
+            period, period_name, period_icon = "30d", "за 30 дней", "🗓"
+        elif p in ["все", "всё", "all", "*"]:
+            period, period_name, period_icon = "all", "за всё время", "🏆"
+        else:
+            return await message.reply(
+                "📊 <b>Как пользоваться топом</b>\n\n"
+                "• <code>.топ</code> или <code>.топ 24ч</code> — за 24 часа\n"
+                "• <code>.топ 7д</code> — за 7 дней\n"
+                "• <code>.топ 30д</code> — за 30 дней\n"
+                "• <code>.топ всё</code> — за всё время\n\n"
+                "🕐 Статистика <b>24/7</b>: окно скользящее, не сбрасывается в полночь.",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("📊 Топ работает только в группах.", parse_mode="HTML")
+
     top_users = get_top_users(message.chat.id, period, limit=10)
+
+    header = (
+        f"{em('stats', '📊')} <b>Топ {period_icon} {period_name}</b>\n"
+        f"<i>Чат:</i> {message.chat.title or 'личка'}\n"
+        f"<i>Обновлено:</i> {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+    )
+
     if not top_users:
-        return await message.reply(f"📭 Нет данных {period_name}.", parse_mode="HTML", disable_web_page_preview=True)
-    text = f"{em('stats', '📊')} <b>Топ {period_name}:</b>\n\n"
+        return await message.reply(
+            header + "📭 <i>Пока нет данных за этот период.</i>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    total_msgs = sum(cnt or 0 for _, cnt in top_users)
+
+    text = header
     medals = ["🥇", "🥈", "🥉"]
+    max_count = top_users[0][1] or 1
+
     for i, (user_id, count) in enumerate(top_users, 1):
         try:
             user = await bot.get_chat(user_id)
             name = user_link(user_id, user.first_name, user.username)
-        except: name = f"ID: {user_id}"
-        medal = medals[i-1] if i <= 3 else f"{i}."
-        text += f"{medal} {name} — <b>{count}</b>\n"
+        except:
+            name = f"<code>{user_id}</code>"
+
+        medal = medals[i-1] if i <= 3 else f"<b>{i}.</b>"
+
+        bar_len = 10
+        filled = int((count / max_count) * bar_len) if max_count else 0
+        bar = "▰" * filled + "▱" * (bar_len - filled)
+
+        text += f"{medal} {name}\n"
+        text += f"    <code>{bar}</code> <b>{count}</b>\n\n"
+
+    text += (
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"📈 Всего сообщений: <b>{total_msgs}</b>\n"
+        f"👥 Участников: <b>{len(top_users)}</b>\n"
+        f"🕐 Живая статистика <b>24/7</b>"
+    )
+
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
@@ -4261,7 +4465,6 @@ async def _parse_as_command(message):
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+]?\s*\+ас(\s|$)', m.text.strip(), re.IGNORECASE))
 async def as_command_handler(message: types.Message):
-    print(f"🎯 +АС от {message.from_user.id}: {message.text!r}")
     try:
         if not await _check_as_perms(message): return
         target, mode, reason = await _parse_as_command(message)
@@ -4350,7 +4553,6 @@ async def as_command_handler(message: types.Message):
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-ас(\s|$)', m.text.strip(), re.IGNORECASE))
 async def as_remove_handler(message: types.Message):
-    print(f"🎯 -АС от {message.from_user.id}: {message.text!r}")
     try:
         if not await _check_as_perms(message): return
 
@@ -4433,7 +4635,7 @@ async def as_remove_handler(message: types.Message):
         except: pass
 
 
-# ================= НОВОЕ: +АНТИСПАМ / -АНТИСПАМ =================
+# ================= +АНТИСПАМ / -АНТИСПАМ =================
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+антиспам", "+ антиспам"])
 async def enable_antispam_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
@@ -7602,10 +7804,6 @@ async def import_db_cmd(message: types.Message):
 async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot: return
 
-    # Логируем все сообщения для отладки
-    if message.text:
-        print(f"📩 [{message.chat.id}] {message.from_user.id}: {message.text!r}")
-
     if is_bot_ignored(message.from_user.id) and message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
         try: await message.delete()
         except: pass
@@ -7700,12 +7898,16 @@ async def all_messages(message: types.Message):
         update_agent_activity(message.from_user.id)
 
     today = datetime.now().date().isoformat()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute(
-            "INSERT INTO messages_stats (user_id, chat_id, date, count) VALUES (?, ?, ?, 1) "
-            "ON CONFLICT(user_id, chat_id, date) DO UPDATE SET count = count + 1",
-            (message.from_user.id, message.chat.id, today)
+            """INSERT INTO messages_stats (user_id, chat_id, date, count, last_message_at)
+               VALUES (?, ?, ?, 1, ?)
+               ON CONFLICT(user_id, chat_id, date) DO UPDATE SET
+                   count = count + 1,
+                   last_message_at = excluded.last_message_at""",
+            (message.from_user.id, message.chat.id, today, now_str)
         )
         conn.commit()
 
