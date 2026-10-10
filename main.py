@@ -7383,8 +7383,8 @@ async def grid_command_router(message: types.Message):
             if success_this_chat: removed_from += 1
             else: failed += 1
             try: remove_rank(chat_id, target.id)
-            except: pass            try: unmark_bot_promoted(target.id, chat_id)
-            except: pass
+            except: pass           
+                try: unmark_bot_promoted(target.id, chat_id)
         remove_grid_moderator(grid_id, target.id)
         try: remove_grid_user_rank(grid_id, target.id)
         except: pass
