@@ -37,7 +37,8 @@ BOT_START_TIME = datetime.now()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ===== БЛОК 1 КОНЕЦ =====# ================= ХЕЛПЕРЫ ИМЁН =================
+
+# ================= ХЕЛПЕРЫ ИМЁН =================
 def _match_command(message: types.Message, name_lower: str) -> bool:
     if not message.text: return False
     txt = message.text.strip()
@@ -218,11 +219,117 @@ def _extract_html_after(message: types.Message, char_index: int) -> str:
     html = entities_to_html_from(message, char_index)
     return re.sub(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', r'\1', html, flags=re.DOTALL)
 
-# ===== БЛОК 2 КОНЕЦ =====# ================= РАНГИ =================
+
+# ================= РАНГИ =================
 RANK_NAMES = {0: "👤 Участник", 1: "🛡️ Мл. Модератор", 2: "🛡️ Ст. Модератор",
               3: "👑 Мл. Админ", 4: "👑 Ст. Админ", 5: "⚜️ Владелец"}
 
+RANK_ICONS = {0: "👤", 1: "🛡️", 2: "🛡️", 3: "👑", 4: "👑", 5: "⚜️"}
+
 AGENT_RANKS = {1: "🛡 Мл. Агент", 2: "🛡 Агент", 3: "🛡 Ст. Агент", 4: "⚜️ Гл. Агент"}
+
+
+# ================= НАЗВАНИЯ МОДЕРАТОРОВ =================
+DEFAULT_MODERATOR_TITLES = {
+    0: {"nom": "Участник",      "gen": "Участника",      "dat": "Участнику",      "ins": "Участником",      "plu": "Участники"},
+    1: {"nom": "Мл. Модератор", "gen": "Мл. Модератора", "dat": "Мл. Модератору", "ins": "Мл. Модератором", "plu": "Мл. Модераторы"},
+    2: {"nom": "Ст. Модератор", "gen": "Ст. Модератора", "dat": "Ст. Модератору", "ins": "Ст. Модератором", "plu": "Ст. Модераторы"},
+    3: {"nom": "Мл. Админ",     "gen": "Мл. Админа",     "dat": "Мл. Админу",     "ins": "Мл. Админом",     "plu": "Мл. Админы"},
+    4: {"nom": "Ст. Админ",     "gen": "Ст. Админа",     "dat": "Ст. Админу",     "ins": "Ст. Админом",     "plu": "Ст. Админы"},
+    5: {"nom": "Владелец",      "gen": "Владельца",      "dat": "Владельцу",      "ins": "Владельцем",      "plu": "Владельцы"},
+}
+
+
+def get_moderator_title(chat_id: int, rank: int, case: str = "nom") -> str:
+    case_map = {"nom": 2, "gen": 3, "dat": 4, "ins": 5, "plu": 6}
+    col = case_map.get(case, 2)
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute(f"""SELECT title_nom, title_gen, title_dat, title_ins, title_plu
+                          FROM moderator_titles WHERE chat_id = ? AND rank = ?""",
+                      (chat_id, rank))
+            r = c.fetchone()
+            if r and r[col - 2]:
+                return r[col - 2]
+    except Exception:
+        pass
+    default = DEFAULT_MODERATOR_TITLES.get(rank, DEFAULT_MODERATOR_TITLES[0])
+    return default.get(case, default["nom"])
+
+
+def set_moderator_title(chat_id: int, rank: int, case: str, value: str):
+    col_map = {
+        "nom": "title_nom", "gen": "title_gen", "dat": "title_dat",
+        "ins": "title_ins", "plu": "title_plu",
+    }
+    col = col_map.get(case)
+    if not col: return False
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO moderator_titles (chat_id, rank) VALUES (?, ?)", (chat_id, rank))
+        c.execute(f"UPDATE moderator_titles SET {col} = ? WHERE chat_id = ? AND rank = ?", (value, chat_id, rank))
+        conn.commit()
+    return True
+
+
+def reset_moderator_titles(chat_id: int):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM moderator_titles WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+
+
+def get_all_moderator_titles(chat_id: int) -> dict:
+    result = {}
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("""SELECT rank, title_nom, title_gen, title_dat, title_ins, title_plu
+                         FROM moderator_titles WHERE chat_id = ?""", (chat_id,))
+            custom = {row[0]: row[1:] for row in c.fetchall()}
+    except Exception:
+        custom = {}
+    for rank in range(6):
+        base = dict(DEFAULT_MODERATOR_TITLES.get(rank, DEFAULT_MODERATOR_TITLES[0]))
+        if rank in custom:
+            vals = custom[rank]
+            for i, key in enumerate(["nom", "gen", "dat", "ins", "plu"]):
+                if vals[i]: base[key] = vals[i]
+        result[rank] = base
+    return result
+
+
+def parse_title_template(text: str) -> dict:
+    result = {}
+    parts = re.split(r'[;|]', text)
+    for p in parts:
+        p = p.strip()
+        if "=" not in p: continue
+        k, v = p.split("=", 1)
+        k = k.strip().lower()
+        v = v.strip()
+        key_map = {"и": "nom", "р": "gen", "д": "dat", "т": "ins", "мн": "plu",
+                   "nom": "nom", "gen": "gen", "dat": "dat", "ins": "ins", "plu": "plu"}
+        if k in key_map and v:
+            result[key_map[k]] = v
+    return result
+
+
+def rank_display(chat_id: int, rank: int, case: str = "nom") -> str:
+    icon = RANK_ICONS.get(rank, "👤")
+    title = get_moderator_title(chat_id, rank, case)
+    return f"{icon} {title}"
+
+
+def cleanup_zero_ranks():
+    try:
+        with sqlite3.connect(DATABASE_PATH) as conn:
+            c = conn.cursor()
+            c.execute("DELETE FROM admins WHERE rank <= 0")
+            conn.commit()
+    except Exception:
+        pass
 
 
 # ================= ДК =================
@@ -283,6 +390,9 @@ DEFAULT_ACCESS = {
 
     "антиспам": 3,
     "мос": 0,
+    "модераторы": 4,
+    "названия": 4,
+    "названия рангов": 4,
 }
 
 
@@ -299,13 +409,16 @@ ALIASES = {
     "события": "событие", "снасти": "магазин снастей",
     "моя рыба": "садок", "рыбасадок": "садок",
     "локации": "локация",
+    "кто админ": "админы", "ктоадмин": "админы",
+    "названия рангов": "модераторы",
 }
 
 
 def _canonical(cmd_name):
     return ALIASES.get(cmd_name, cmd_name)
 
-# ===== БЛОК 3 КОНЕЦ =====# ================= БАЗА ДАННЫХ =================
+
+# ================= БАЗА ДАННЫХ =================
 def init_db():
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -474,7 +587,6 @@ def init_db():
             prolong_price INTEGER DEFAULT 50,
             divorce_mode TEXT DEFAULT 'выключить'
         )""")
-        # НОВОЕ: таблица праздников
         c.execute("""CREATE TABLE IF NOT EXISTS holidays (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
@@ -485,9 +597,13 @@ def init_db():
             UNIQUE(date, name)
         )""")
         c.execute("CREATE INDEX IF NOT EXISTS idx_holidays_date ON holidays(date)")
-        conn.commit()
-
-# ===== БЛОК 4 КОНЕЦ =====# ================= ХЕЛПЕРЫ ПРАВ =================
+        c.execute("""CREATE TABLE IF NOT EXISTS moderator_titles (
+            chat_id INTEGER, rank INTEGER,
+            title_nom TEXT, title_gen TEXT, title_dat TEXT,
+            title_ins TEXT, title_plu TEXT,
+            PRIMARY KEY (chat_id, rank)
+        )""")
+        conn.commit()# ================= ХЕЛПЕРЫ ПРАВ =================
 def _admin_rights_kwargs(**overrides):
     base = {
         "is_anonymous": False,
@@ -700,7 +816,9 @@ def remove_rank(chat_id, user_id):
 def get_all_admins(chat_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("SELECT user_id, rank FROM admins WHERE chat_id = ? ORDER BY rank DESC", (chat_id,))
+        c.execute("""SELECT user_id, rank FROM admins 
+                     WHERE chat_id = ? AND rank > 0 
+                     ORDER BY rank DESC""", (chat_id,))
         return c.fetchall()
 
 
@@ -782,7 +900,7 @@ async def check_command_access(message, command):
     if access == 0: return True
     if has_permission(chat_id, user_id, access): return True
     if notify:
-        await message.reply(f"{em('cross', '❌')} Недостаточно прав.\n🔒 Нужен: <b>{RANK_NAMES.get(access, access)}</b>", parse_mode="HTML")
+        await message.reply(f"{em('cross', '❌')} Недостаточно прав.\n🔒 Нужен: <b>{rank_display(chat_id, access)}</b>", parse_mode="HTML")
     return False
 
 
@@ -955,7 +1073,8 @@ def get_antispam_info(user_id):
         c.execute("SELECT reason, added_by, added_at FROM antispam WHERE user_id = ?", (user_id,))
         return c.fetchone()
 
-# ===== БЛОК 5 КОНЕЦ =====# ================= ДОП. ХЕЛПЕРЫ =================
+
+# ================= ДОП. ХЕЛПЕРЫ =================
 def get_chat_by_code(code):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1564,7 +1683,8 @@ def get_user_position_in_chat(user_id, chat_id, period="30d"):
         pass
     return None
 
-# ===== БЛОК 6 КОНЕЦ =====# ================= ИРИСКИ =================
+
+# ================= ИРИСКИ =================
 def get_balance(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2030,9 +2150,7 @@ def mark_report_reviewed(report_id, reviewed_by):
         c = conn.cursor()
         c.execute("UPDATE reports SET status = 'reviewed', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
                   (reviewed_by, report_id))
-        conn.commit()
-
-# ===== БЛОК 7 КОНЕЦ =====# ================= РЫБАЛКА — ДАННЫЕ =================
+        conn.commit()# ================= РЫБАЛКА — ДАННЫЕ =================
 
 LOCATIONS = {
     "pier": {
@@ -2089,7 +2207,6 @@ LOCATIONS = {
 
 
 FISH_LIST = [
-    # ============ РЕКА ============
     ("Окунь",        "🐟", 1,   3,   100,  "river", "any"),
     ("Ёрш",          "🐡", 2,   4,   80,   "river", "any"),
     ("Пескарь",      "🐟", 1,   3,   75,   "river", "any"),
@@ -2109,20 +2226,14 @@ FISH_LIST = [
     ("Хариус",       "🐠", 10,  20,  16,   "river", "day"),
     ("Таймень",      "🐡", 30,  60,  4,    "river", "any"),
     ("Ручьевая форель","🐟",14, 28, 14,   "river", "day"),
-    # ============ ОЗЕРО ============
     ("Карась",       "🐠", 2,   5,   95,   "lake", "any"),
-    ("Краснопёрка",  "🐠", 3,   7,   60,   "lake", "any"),
-    ("Линь",         "🐠", 6,   12,  45,   "lake", "any"),
     ("Карп",         "🐠", 10,  24,  22,   "lake", "day"),
     ("Сазан",        "🐟", 12,  26,  18,   "lake", "day"),
     ("Толстолобик",  "🐡", 14,  28,  15,   "lake", "day"),
     ("Белый амур",   "🐟", 16,  32,  12,   "lake", "day"),
     ("Линь-гигант",  "🐠", 25,  50,  3,    "lake", "any"),
     ("Угорь",        "🐍", 18,  34,  10,   "lake", "night"),
-    ("Щука",         "🐡", 8,   18,  35,   "lake", "any"),
-    ("Окунь",        "🐟", 1,   3,   100,  "lake", "any"),
     ("Золотой карась","✨", 40,  80,  2,    "lake", "any"),
-    # ============ МОРЕ ============
     ("Сельдь",       "🐟", 10,  20,  28,   "sea", "any"),
     ("Скумбрия",     "🐠", 15,  28,  22,   "sea", "day"),
     ("Ставрида",     "🐟", 12,  22,  24,   "sea", "any"),
@@ -2140,7 +2251,6 @@ FISH_LIST = [
     ("Рыба-попугай", "🦜", 30,  60,  3,    "sea", "day"),
     ("Кальмар",      "🦑", 30,  60,  6,    "sea", "night"),
     ("Осьминог",     "🐙", 45,  90,  2,    "sea", "night"),
-    # ============ ОКЕАН ============
     ("Тунец",        "🐟", 40,  80,  5,    "ocean", "any"),
     ("Меч-рыба",     "🗡", 55,  110, 3,    "ocean", "day"),
     ("Рыба-меч",     "🗡", 60,  120, 2,    "ocean", "any"),
@@ -2148,55 +2258,45 @@ FISH_LIST = [
     ("Парусник",     "🐟", 80,  160, 1.2,  "ocean", "day"),
     ("Мурена",       "🐍", 50,  100, 3,    "ocean", "night"),
     ("Ильная рыба",  "🐟", 45,  90,  1.8,  "ocean", "night"),
-    ("Морской чёрт", "🐡", 60,  120, 2,    "ocean", "night"),
     ("Гигантский тресковый","🐟",50,100,2,"ocean", "any"),
     ("Королевский лосось","🐠",55,110,1,  "ocean", "day"),
     ("Кета",         "🐡", 45,  90,  1.2,  "ocean", "any"),
     ("Кижуч",        "🐟", 55,  110, 1,    "ocean", "day"),
     ("Нерка",        "🐟", 60,  120, 0.8,  "ocean", "any"),
-    # ============ РЕДКАЯ ============
     ("Призрачный карп","👻",100,200,0.3,  "any", "night"),
     ("Лунная рыба",  "🌙", 150, 300, 0.2,  "any", "night"),
     ("Рыба-дракончик","🐉",200, 400, 0.1,  "any", "any"),
     ("Золотая рыбка","✨", 250, 500, 0.05, "any", "any"),
     ("Радужный лосось","🌈",180,360,0.1,  "any", "any"),
     ("Стеклянная рыба","🔮",220,440,0.08, "any", "any"),
-    # --- Электрические ---
     ("Электрический угорь","⚡",180, 340, 0.4, "river", "any"),
     ("Скат-электро",       "⚡",250, 480, 0.2, "sea",   "night"),
     ("Рыба-молния",        "⚡",320, 620, 0.1, "any",   "any"),
-    # --- Глубоководные ---
     ("Удильщик",           "🎣",150, 290, 0.5, "ocean", "night"),
     ("Рыба-фонарь",        "🔦",120, 240, 0.6, "ocean", "night"),
     ("Гигантский кальмар", "🦑",280, 540, 0.15,"ocean", "night"),
     ("Плащеносец",         "🦎",200, 400, 0.2, "ocean", "night"),
-    # --- Древние ---
     ("Древний латимерия",  "🦴",450, 900, 0.05,"any",   "any"),
     ("Акула-молот",        "🦈",400, 800, 0.08,"ocean", "day"),
     ("Акула-тигр",         "🦈",380, 760, 0.1, "ocean", "any"),
     ("Китовая акула",      "🦈",700, 1400,0.02,"ocean", "any"),
-    # --- Магические ---
     ("Русалочья рыбка",    "🧜",300, 600, 0.1, "sea",   "day"),
     ("Рыба-пегас",         "🦄",350, 700, 0.08,"any",   "day"),
     ("Единороговая рыба",  "🦄",420, 840, 0.05,"any",   "any"),
     ("Кристальная рыба",   "💎",380, 760, 0.06,"any",   "day"),
-    # --- Тропические ---
     ("Рыба-клоун",         "🐠",25,  50,  20,  "sea",   "day"),
     ("Хирург-рыба",        "🐠",30,  60,  15,  "sea",   "day"),
     ("Мурена-радуга",      "🐍",55,  110, 5,   "sea",   "night"),
     ("Крылатка",           "🦁",80,  160, 3,   "sea",   "any"),
     ("Рыба-шар",           "🟠",40,  80,  10,  "sea",   "any"),
-    # --- Хищники ---
     ("Щука-гигант",        "🐡",120, 240, 1.5, "lake",  "any"),
     ("Сом-людоед",         "🐡",150, 300, 1.0, "river", "night"),
     ("Пирания",            "🐟",90,  180, 2.5, "river", "any"),
     ("Барракуда-гигант",   "🐡",180, 360, 1.2, "sea",   "night"),
-    # --- Сезонные ---
     ("Майская рыба",       "🌸",60,  120, 5,   "any",   "day"),
     ("Осенний лосось",     "🍂",100, 200, 3,   "river", "any"),
     ("Зимний сиг",         "❄️",80,  160, 4,   "lake",  "any"),
     ("Летний окунь",       "☀️",50,  100, 8,   "any",   "day"),
-    # --- Особые ---
     ("Рыба-хамелеон",      "🦎",150, 300, 1.5, "any",   "any"),
     ("Стеклянный карп",    "🔮",180, 360, 1.0, "lake",  "any"),
     ("Стальная щука",      "⚙️",220, 440, 0.5, "river", "any"),
@@ -2391,7 +2491,8 @@ FISH_COOLDOWN_MIN = 900
 LEVEL_XP_BASE = 50
 TOURNAMENT_DURATION_MIN = 60
 
-# ===== БЛОК 8 КОНЕЦ =====# ================= РЫБАЛКА — ФУНКЦИИ =================
+
+# ================= РЫБАЛКА — ФУНКЦИИ =================
 def get_fishing(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2805,7 +2906,6 @@ def set_chat_location(chat_id, loc: str):
         conn.commit()
 
 
-# ================= РЕГИОН РЫБАЛКИ =================
 def get_chat_region(chat_id) -> str:
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2867,7 +2967,8 @@ STANDARD_RP = {
     "укусить за ухо": {"emoji": "👂", "text": "{actor} укусил(а) {target} за ушко 👂💕", "self_text": "{actor} укусил(а) себя 👂"},
 }
 
-# ===== БЛОК 9 КОНЕЦ =====# ================= СЕТКА — DB =================
+
+# ================= СЕТКА — DB =================
 def create_grid(name, creator_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -3500,7 +3601,6 @@ async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str
             f"<i>Он(а) может открыть её командой <code>+анкета</code>.</i>"
         )
 
-    # В анкете ВСЕГДА имя из Telegram, ник не используется
     display_name = html_escape_text(target.first_name or "Пользователь")
     if getattr(target, "username", None):
         display_name = f'<a href="https://t.me/{target.username}">{display_name}</a>'
@@ -3704,9 +3804,7 @@ def get_vip_days_left(user_id):
 def get_vip_emoji(user_id):
     v = get_vip(user_id)
     if v and v[1]: return v[1]
-    return ""
-
-# ===== БЛОК 10 КОНЕЦ =====# ================= ПОГОДА =================
+    return ""# ================= ПОГОДА =================
 def get_weather(city: str):
     try:
         geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={quote(city)}&count=1&language=ru&format=json"
@@ -4148,10 +4246,7 @@ async def weather_cmd(message: types.Message):
         f"💨 Ветер: <b>{weather['wind']} м/с</b>"
     )
     try: await msg.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
-    except: await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-# ================= ПЕРЕВОДЧИК =================
+    except: await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)# ================= ПЕРЕВОДЧИК =================
 @dp.message(lambda m: m.text and re.match(
     r'^\s*[.\/!]?\s*(перевод|translate)\s+\S+',
     m.text.strip(), re.IGNORECASE
@@ -4795,9 +4890,7 @@ async def set_city_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-мой город")
 async def remove_city_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "city", None)
-    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
-
-# ===== БЛОК 11 КОНЕЦ =====# ================= АНКЕТА (КОМАНДЫ) =================
+    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)# ================= АНКЕТА (КОМАНДЫ) =================
 @cmd("анкета")
 async def anketa_cmd(message: types.Message):
     target = None
@@ -5007,7 +5100,7 @@ async def profile_cmd(message: types.Message):
     register_user(user_id, target.first_name, target.username or "")
 
     rank = get_rank(chat_id, user_id)
-    rank_name = RANK_NAMES.get(rank, "👤 Участник")
+    rank_name = rank_display(chat_id, rank)
 
     member_status_icon = "🟢"
     member_status_text = "Состоит в чате"
@@ -5081,7 +5174,7 @@ async def profile_cmd(message: types.Message):
     lines = [header_line]
     lines.append(f"{member_status_icon} {member_status_text}")
     lines.append("")
-    lines.append(f"👑 Ранг: [{rank}] {rank_name}")
+    lines.append(f"👑 Ранг: <b>[{rank}]</b> {rank_name}")
     lines.append(warn_line)
     lines.append(cit_line)
     lines.append(last_line)
@@ -5333,18 +5426,19 @@ async def refresh_chat_cmd(message: types.Message):
 async def dk_main_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+    chat_id = message.chat.id
     is_creator = False
     try:
-        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
+        member = await bot.get_chat_member(chat_id, message.from_user.id)
         is_creator = (member.status == "creator")
     except: pass
     if message.from_user.id == OWNER_ID or is_coowner(message.from_user.id): is_creator = True
-    if not is_creator and not has_permission(message.chat.id, message.from_user.id, 3):
+    if not is_creator and not has_permission(chat_id, message.from_user.id, 3):
         return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3).", parse_mode="HTML", disable_web_page_preview=True)
     args = message.text.split(maxsplit=2)
     if len(args) < 2: return await _show_dk_list(message)
     if args[1].lower() in ["сброс", "reset"]:
-        reset_command_access(message.chat.id)
+        reset_command_access(chat_id)
         return await message.reply(f"{em('check', '✅')} Все ДК сброшены.", parse_mode="HTML", disable_web_page_preview=True)
     if len(args) < 3:
         return await message.reply(
@@ -5363,11 +5457,20 @@ async def dk_main_cmd(message: types.Message):
     else:
         return await message.reply("❌ Допустимые: <code>все</code>, <code>0-5</code>, <code>выкл</code>, <code>создатель</code>", parse_mode="HTML", disable_web_page_preview=True)
     if not is_creator:
-        actor_rank = get_rank(message.chat.id, message.from_user.id)
+        actor_rank = get_rank(chat_id, message.from_user.id)
         if new_rank > actor_rank and new_rank not in (-1, -2):
             return await message.reply(f"{em('cross', '❌')} Нельзя выше своего.", parse_mode="HTML", disable_web_page_preview=True)
-    set_command_access(message.chat.id, cmd_name, new_rank)
-    level_names = {-2: "👑 Только создатель", -1: "🔒 Отключено", 0: "🌐 Все", 1: "🛡 Мл. Модератор", 2: "🛡 Ст. Модератор", 3: "👑 Мл. Админ", 4: "👑 Ст. Админ", 5: "⚜️ Владелец"}
+    set_command_access(chat_id, cmd_name, new_rank)
+    level_names = {
+        -2: "👑 Только создатель",
+        -1: "🔒 Отключено",
+        0: f"🌐 {get_moderator_title(chat_id, 0, 'nom')}",
+        1: rank_display(chat_id, 1),
+        2: rank_display(chat_id, 2),
+        3: rank_display(chat_id, 3),
+        4: rank_display(chat_id, 4),
+        5: rank_display(chat_id, 5),
+    }
     return await message.reply(
         f"{em('check', '✅')} ДК обновлён\n📌 <code>{cmd_name}</code>\n🔒 {level_names.get(new_rank, str(new_rank))}",
         parse_mode="HTML", disable_web_page_preview=True
@@ -5380,7 +5483,16 @@ async def _show_dk_list(message: types.Message):
     groups = {-2: [], -1: [], 0: [], 1: [], 2: [], 3: [], 4: [], 5: []}
     for cmd_name, rank in access.items():
         if rank in groups: groups[rank].append(cmd_name)
-    level_names = {-2: "👑 Только создатель", -1: "🔒 Отключено", 0: "🌐 Все", 1: "🛡 Мл. Модератор", 2: "🛡 Ст. Модератор", 3: "👑 Мл. Админ", 4: "👑 Ст. Админ", 5: "⚜️ Владелец"}
+    level_names = {
+        -2: "👑 Только создатель",
+        -1: "🔒 Отключено",
+        0: "🌐 Все",
+        1: rank_display(chat_id, 1),
+        2: rank_display(chat_id, 2),
+        3: rank_display(chat_id, 3),
+        4: rank_display(chat_id, 4),
+        5: rank_display(chat_id, 5),
+    }
     text = f"{em('shield', '🛡')} <b>Доступы к командам (ДК)</b>\n\n"
     for level in [-2, -1, 0, 1, 2, 3, 4, 5]:
         cmds = sorted(groups[level])
@@ -5436,7 +5548,8 @@ async def command_notify_status_cmd(message: types.Message):
     status = "🟢 включены" if enabled else "🔴 выключены"
     await message.reply(f"🔔 Оповещения: {status}\n\n<code>+команды</code> / <code>-команды</code>", parse_mode="HTML", disable_web_page_preview=True)
 
-# ===== БЛОК 12 КОНЕЦ =====# ================= МОДЕРАЦИЯ =================
+
+# ================= МОДЕРАЦИЯ =================
 @mod_cmd("бан")
 async def ban_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
@@ -6071,7 +6184,6 @@ async def as_remove_handler(message: types.Message):
         except: pass
 
 
-# ================= +АНТИСПАМ / -АНТИСПАМ =================
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+антиспам", "+ антиспам"])
 async def enable_antispam_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
@@ -6178,7 +6290,8 @@ async def as_list_cmd(message: types.Message):
         )
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
-# ===== БЛОК 13 КОНЕЦ =====# ================= АГЕНТЫ =================
+
+# ================= АГЕНТЫ =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+агент"))
 async def add_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
@@ -6385,7 +6498,7 @@ async def promote_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and new_rank >= actor_rank:
         return await message.reply(f"{em('cross', '❌')} Нельзя ≥ твоего.", parse_mode="HTML", disable_web_page_preview=True)
     set_rank(message.chat.id, target.id, new_rank, message.from_user.id)
-    await message.reply(f"🏆 {mention(target)}: {RANK_NAMES[new_rank]}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"🏆 {mention(target)}: {rank_display(message.chat.id, new_rank)}", parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("понизить")
@@ -6409,7 +6522,7 @@ async def demote_cmd(message: types.Message):
         remove_rank(message.chat.id, target.id)
         return await message.reply(f"📉 {mention(target)} разжалован.", parse_mode="HTML", disable_web_page_preview=True)
     set_rank(message.chat.id, target.id, new_rank, message.from_user.id)
-    await message.reply(f"📉 {mention(target)}: {RANK_NAMES[new_rank]}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"📉 {mention(target)}: {rank_display(message.chat.id, new_rank)}", parse_mode="HTML", disable_web_page_preview=True)
 
 
 @cmd("разжаловать")
@@ -6425,18 +6538,104 @@ async def demote_all_cmd(message: types.Message):
 
 
 @cmd("админы")
+@cmd("кто админ")
+@cmd("ктоадмин")
 async def list_admins_cmd(message: types.Message):
-    admins = get_all_admins(message.chat.id)
+    chat_id = message.chat.id
+    admins = get_all_admins(chat_id)
     if not admins:
-        return await message.reply("📭 Нет админов.", parse_mode="HTML", disable_web_page_preview=True)
-    text = "🏆 <b>Админы:</b>\n\n"
-    for user_id, rank in admins:
+        return await message.reply(
+            "📭 <b>Нет модераторов</b>\n\nНазначить: <code>.повысить @user 1</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    text = "🏆 <b>Модераторы:</b>\n\n"
+    admins_sorted = sorted(admins, key=lambda x: x[1], reverse=True)
+    for user_id, rank in admins_sorted:
         try:
             user = await bot.get_chat(user_id)
             name = user_link(user_id, user.first_name, user.username)
-        except: name = f"ID: {user_id}"
-        text += f"{RANK_NAMES.get(rank, '👤')} — {name}\n"
+        except:
+            name = f"ID: {user_id}"
+        icon = RANK_ICONS.get(rank, "👤")
+        title = get_moderator_title(chat_id, rank, "nom")
+        text += f"<b>[{rank}]</b> {icon} <b>{title}</b> — {name}\n"
+    text += f"\n📌 Всего: <b>{len(admins)}</b>"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= МОДЕРАТОРЫ (НАЗВАНИЯ) =================
+@cmd("модераторы")
+@cmd("названия")
+@cmd("названия рангов")
+async def moderator_titles_cmd(message: types.Message):
+    chat_id = message.chat.id
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+
+    is_creator = False
+    try:
+        m = await bot.get_chat_member(chat_id, message.from_user.id)
+        is_creator = (m.status == "creator")
+    except:
+        pass
+    if not is_creator and not has_permission(chat_id, message.from_user.id, 4) \
+            and message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
+        return await message.reply(f"{em('cross', '❌')} Нужен <b>Ст. Админ (4+)</b> или создатель.",
+                                   parse_mode="HTML", disable_web_page_preview=True)
+
+    args = message.text.split(maxsplit=2)
+    sub = args[1].lower().strip() if len(args) >= 2 else ""
+
+    if not sub:
+        titles = get_all_moderator_titles(chat_id)
+        text = "🏷 <b>Названия модераторов</b>\n\n"
+        text += "<i>Шаблон: </i><code>и=...;р=...;д=...;т=...;мн=...</code>\n\n"
+        for rank in range(6):
+            t = titles[rank]
+            icon = RANK_ICONS.get(rank, "👤")
+            text += f"<b>{rank}</b> {icon} <b>{t['nom']}</b>\n"
+            text += f"   и={t['nom']} | р={t['gen']} | д={t['dat']} | т={t['ins']} | мн={t['plu']}\n\n"
+        text += (
+            "📌 <b>Как менять:</b>\n"
+            "<code>.модераторы 3 и=Мл. Админ;р=Мл. Админа;д=Мл. Админу;т=Мл. Админом;мн=Мл. Админы</code>\n\n"
+            "📌 <b>Сброс:</b> <code>.модераторы сброс</code>"
+        )
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+    if sub in ["сброс", "reset"]:
+        reset_moderator_titles(chat_id)
+        return await message.reply(f"{em('check', '✅')} Названия сброшены к стандартным.",
+                                   parse_mode="HTML", disable_web_page_preview=True)
+
+    if not sub.isdigit() or int(sub) not in range(6):
+        return await message.reply("❌ Укажи ранг от 0 до 5.", parse_mode="HTML", disable_web_page_preview=True)
+
+    rank = int(sub)
+    if len(args) < 3:
+        return await message.reply(
+            f"📌 <code>.модераторы {rank} и=...;р=...;д=...;т=...;мн=...</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    template = args[2]
+    parsed = parse_title_template(template)
+    if not parsed:
+        return await message.reply(
+            "❌ Не удалось распарсить шаблон.\nПример: <code>и=Власть;р=Власти;д=Власти;т=Властью;мн=Власти</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    for case, value in parsed.items():
+        set_moderator_title(chat_id, rank, case, value[:64])
+
+    titles = get_all_moderator_titles(chat_id)
+    t = titles[rank]
+    await message.reply(
+        f"{em('check', '✅')} <b>Название для ранга {rank} обновлено!</b>\n\n"
+        f"{RANK_ICONS.get(rank, '👤')} <b>{t['nom']}</b>\n"
+        f"и={t['nom']} | р={t['gen']} | д={t['dat']} | т={t['ins']} | мн={t['plu']}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
 
 
 # ================= УХОЖУ В ОТСТАВКУ =================
@@ -6462,7 +6661,7 @@ async def resign_cmd(message: types.Message):
     remove_rank(chat_id, user_id)
     try: unmark_bot_promoted(user_id, chat_id)
     except: pass
-    rank_name = RANK_NAMES.get(current_rank, f"Ранг {current_rank}")
+    rank_name = rank_display(chat_id, current_rank)
     await message.reply(
         f"{em('check', '✅')} <b>Вы ушли в отставку</b>\n\n👤 {mention(message.from_user)}\n📉 Было: <b>{rank_name}</b>",
         parse_mode="HTML", disable_web_page_preview=True
@@ -6658,10 +6857,7 @@ async def afl_ban_cmd(message): await _set_automod_time(message, "antiflood", "b
 async def ac_mute_cmd(message): await _set_automod_time(message, "anticaps", "mute")
 
 @cmd("антисtickermut")
-async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker", "mute")
-
-
-# ================= АЧИВКИ =================
+async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker", "mute")# ================= АЧИВКИ =================
 @cmd("ачивки")
 @cmd("все ачивки")
 async def list_achievements_cmd(message: types.Message):
@@ -7181,7 +7377,8 @@ async def successful_payment_handler(message: types.Message):
         parse_mode="HTML", disable_web_page_preview=True
     )
 
-# ===== БЛОК 14 КОНЕЦ =====# ================= РЫБАЛКА — ПОМОЩЬ =================
+
+# ================= РЫБАЛКА — ПОМОЩЬ =================
 def _fishing_help_text() -> str:
     return (
         "🎣 <b>Рыбалка — Mos</b>\n"
@@ -8058,7 +8255,8 @@ async def events_status_cmd(message: types.Message):
     status = "🟢 включены" if enabled else "🔴 выключены"
     await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True)
 
-# ===== БЛОК 15 КОНЕЦ =====# ================= МРП =================
+
+# ================= МРП =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+мрп\b', m.text.strip(), re.IGNORECASE))
 async def create_rp_cmd(message: types.Message):
     if not get_vip(message.from_user.id):
@@ -8811,10 +9009,7 @@ async def get_note_cmd(message: types.Message):
     if not note:
         return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML", disable_web_page_preview=True)
     try: await message.reply(note[2], parse_mode="HTML", disable_web_page_preview=True)
-    except: await message.reply(note[2], disable_web_page_preview=True)
-
-
-# ================= СЕТКА =================
+    except: await message.reply(note[2], disable_web_page_preview=True)# ================= СЕТКА =================
 @cmd("создать сетку")
 async def create_grid_cmd(message: types.Message):
     if message.chat.type != "private":
@@ -10264,11 +10459,12 @@ async def auto_marriage_divorce_loop():
 # ================= ЗАПУСК =================
 async def main():
     init_db()
+    cleanup_zero_ranks()
     print("✅ Бот запущен!")
     print(f"👑 Владелец: {OWNER_ID}")
 
     # Стартовая база праздников (заливается один раз)
-    if get_all_holidays_count() == 0:
+    if get_all_holidays_count() < 100:
         STARTER_HOLIDAYS = [
             # ========== 11 ОКТЯБРЯ ==========
             ("10-11", "Всемирный день против боли", "global"),
@@ -10292,99 +10488,411 @@ async def main():
             ("01-01", "Новый год", "local"),
             ("01-01", "Новый год", "fun"),
             ("01-01", "День былинного богатыря Ильи Муромца", "folk"),
+            ("01-02", "День научной фантастики", "fun"),
+            ("01-03", "День стереоскопического кино", "fun"),
+            ("01-04", "Всемирный день азбуки Брайля", "global"),
+            ("01-05", "День физики", "fun"),
+            ("01-06", "Сочельник", "church"),
             ("01-07", "Рождество Христово", "church"),
+            ("01-08", "День поворачивания на правый бок", "fun"),
+            ("01-09", "День путешествия на воздушном шаре", "fun"),
+            ("01-10", "День благодарности комнатным растениям", "fun"),
+            ("01-11", "Всемирный день спасибо", "fun"),
+            ("01-12", "День работника прокуратуры РФ", "prof"),
             ("01-13", "Старый Новый год (Васильев вечер)", "folk"),
+            ("01-14", "Всемирный день логики", "global"),
+            ("01-14", "День защитников неба", "fun"),
+            ("01-15", "День рождения Википедии", "global"),
+            ("01-15", "Национальный день шляпы", "fun"),
+            ("01-16", "День ледовара", "fun"),
+            ("01-17", "День детских изобретений", "fun"),
+            ("01-18", "День Винни-Пуха", "fun"),
             ("01-19", "Крещение Господне", "church"),
+            ("01-20", "День пингвина", "fun"),
+            ("01-21", "День объятий", "global"),
+            ("01-22", "День дедушки", "fun"),
+            ("01-23", "День ручного письма", "global"),
+            ("01-24", "Международный день образования", "global"),
+            ("01-24", "Международный день эскимо", "fun"),
             ("01-25", "День российского студенчества (Татьянин день)", "prof"),
             ("01-25", "Татьянин день", "folk"),
+            ("01-25", "Международный день женщин в многосторонних процессах", "global"),
+            ("01-26", "Международный день таможенника", "prof"),
             ("01-27", "Международный день памяти жертв Холокоста", "global"),
+            ("01-28", "День открытия Антарктиды", "global"),
+            ("01-28", "Международный день ЛЕГО", "fun"),
+            ("01-29", "День необъятной любви к себе", "fun"),
+            ("01-30", "День деда Мороза и Снегурочки", "folk"),
+            ("01-31", "Международный день ювелира", "prof"),
 
             # ========== ФЕВРАЛЬ ==========
+            ("02-01", "День лифтовика", "prof"),
+            ("02-02", "День сурка", "fun"),
+            ("02-02", "День ежа", "fun"),
+            ("02-03", "Всемирный день борьбы с ненормативной лексикой", "global"),
+            ("02-04", "Всемирный день борьбы против рака", "global"),
+            ("02-04", "Праздник хорошего настроения", "fun"),
+            ("02-05", "День эрудита", "fun"),
+            ("02-06", "День бармена", "prof"),
+            ("02-07", "День балета", "global"),
             ("02-08", "День российской науки", "prof"),
+            ("02-09", "День стоматолога", "prof"),
+            ("02-10", "День домового", "folk"),
+            ("02-11", "Всемирный день больного", "global"),
+            ("02-11", "Международный день женщин и девочек в науке", "global"),
+            ("02-12", "День Дарвина", "global"),
+            ("02-13", "Всемирный день радио", "global"),
             ("02-14", "День всех влюблённых", "global"),
             ("02-15", "Сретение Господне", "church"),
+            ("02-16", "День свежего ананаса", "fun"),
+            ("02-17", "День спонтанного проявления доброты", "global"),
+            ("02-18", "День пельменей", "fun"),
+            ("02-19", "Всемирный день китов", "global"),
+            ("02-20", "Всемирный день социальной справедливости", "global"),
+            ("02-21", "Международный день родного языка", "global"),
+            ("02-22", "День кошки в Японии", "fun"),
             ("02-23", "День защитника Отечества", "global"),
             ("02-23", "День защитника Отечества", "prof"),
+            ("02-24", "День рождения лотереи", "fun"),
+            ("02-25", "День открытия спирта", "fun"),
+            ("02-26", "День неторопливости", "fun"),
+            ("02-27", "Международный день полярного медведя", "global"),
+            ("02-28", "День общественного сна", "fun"),
+            ("02-29", "День Кащея Бессмертного", "folk"),
 
             # ========== МАРТ ==========
+            ("03-01", "Всемирный день кошек", "global"),
+            ("03-02", "День спичек", "fun"),
+            ("03-03", "Всемирный день дикой природы", "global"),
+            ("03-04", "День грамматики", "fun"),
+            ("03-05", "День выключенных гаджетов", "fun"),
+            ("03-06", "Международный день зубного врача", "prof"),
+            ("03-07", "День тюльпанов", "fun"),
             ("03-08", "Международный женский день", "global"),
             ("03-08", "Международный женский день", "prof"),
+            ("03-09", "День диджея", "prof"),
+            ("03-10", "День архивов", "prof"),
+            ("03-11", "День работника органов наркоконтроля", "prof"),
+            ("03-12", "День посадки деревьев", "global"),
+            ("03-13", "День рождения микрофона", "fun"),
+            ("03-14", "Международный день числа Пи", "global"),
+            ("03-15", "Всемирный день защиты прав потребителей", "global"),
+            ("03-16", "День цветных карандашей", "fun"),
+            ("03-17", "День Святого Патрика", "global"),
             ("03-18", "День воссоединения Крыма с Россией", "global"),
+            ("03-19", "День моряка-подводника", "prof"),
+            ("03-20", "Международный день счастья", "global"),
+            ("03-21", "Всемирный день поэзии", "global"),
+            ("03-21", "Международный день Навруз", "global"),
+            ("03-22", "Всемирный день водных ресурсов", "global"),
+            ("03-23", "Всемирный метеорологический день", "global"),
+            ("03-24", "Всемирный день борьбы с туберкулёзом", "global"),
             ("03-25", "День работника культуры РФ", "prof"),
+            ("03-26", "День фиолетового дня", "fun"),
             ("03-27", "Всемирный день театра", "global"),
+            ("03-28", "День уважения кошек", "fun"),
+            ("03-29", "День самопознания", "fun"),
+            ("03-30", "День защиты Земли", "global"),
+            ("03-31", "Международный день бэкапа", "global"),
 
             # ========== АПРЕЛЬ ==========
             ("04-01", "День смеха", "fun"),
+            ("04-02", "Международный день детской книги", "global"),
+            ("04-03", "Всемирный день вечеринки", "fun"),
+            ("04-04", "Международный день интернета", "global"),
+            ("04-05", "Международный день супа", "fun"),
+            ("04-06", "Международный день спорта", "global"),
             ("04-07", "Всемирный день здоровья", "global"),
+            ("04-08", "День российской анимации", "prof"),
+            ("04-09", "День финского языка", "global"),
+            ("04-10", "День братьев и сестёр", "global"),
+            ("04-11", "Международный день освобождения узников фашистских лагерей", "global"),
             ("04-12", "День космонавтики", "global"),
             ("04-12", "День космонавтики", "prof"),
+            ("04-13", "Всемирный день рок-н-ролла", "global"),
+            ("04-14", "День медицинской службы", "prof"),
+            ("04-15", "Всемирный день искусства", "global"),
+            ("04-16", "Всемирный день голоса", "global"),
+            ("04-17", "Всемирный день гемофилии", "global"),
+            ("04-18", "Международный день памятников и исторических мест", "global"),
+            ("04-19", "День российской полиграфии", "prof"),
+            ("04-20", "Международный день цирка", "global"),
+            ("04-21", "Всемирный день творчества", "global"),
             ("04-22", "Международный день Матери-Земли", "global"),
+            ("04-23", "Всемирный день книги", "global"),
+            ("04-24", "Международный день солидарности молодёжи", "global"),
+            ("04-25", "Всемирный день пингвинов", "fun"),
+            ("04-26", "Международный день интеллектуальной собственности", "global"),
+            ("04-27", "Всемирный день графического дизайна", "prof"),
+            ("04-28", "Всемирный день охраны труда", "global"),
+            ("04-29", "Международный день танца", "global"),
             ("04-30", "День пожарной охраны", "prof"),
 
             # ========== МАЙ ==========
             ("05-01", "Праздник Весны и Труда", "global"),
-            ("05-01", "Праздник Весны и Труда", "prof"),
+            ("05-02", "Всемирный день тунца", "fun"),
+            ("05-03", "Всемирный день свободы печати", "global"),
+            ("05-04", "День пожарных", "prof"),
+            ("05-05", "День водолаза", "prof"),
             ("05-07", "День радио", "prof"),
+            ("05-08", "Всемирный день Красного Креста", "global"),
             ("05-09", "День Победы", "global"),
-            ("05-09", "День Победы", "prof"),
+            ("05-10", "Всемирный день движения", "global"),
+            ("05-11", "Всемирный день борьбы с гипертонией", "global"),
+            ("05-12", "Международный день медсестры", "prof"),
+            ("05-13", "День Черноморского флота", "prof"),
+            ("05-14", "День фрилансера", "prof"),
+            ("05-15", "Международный день семьи", "global"),
+            ("05-16", "Международный день биографов", "fun"),
+            ("05-17", "Всемирный день электросвязи", "global"),
             ("05-18", "Международный день музеев", "global"),
+            ("05-19", "День пионерии", "global"),
+            ("05-20", "Всемирный день метрологии", "global"),
+            ("05-21", "Всемирный день культурного разнообразия", "global"),
+            ("05-22", "Международный день биологического разнообразия", "global"),
+            ("05-23", "Всемирный день черепахи", "global"),
             ("05-24", "День славянской письменности и культуры", "prof"),
+            ("05-25", "День филолога", "prof"),
+            ("05-26", "День российского предпринимательства", "prof"),
             ("05-27", "Общероссийский день библиотек", "prof"),
             ("05-28", "День пограничника", "prof"),
+            ("05-29", "День военного автомобилиста", "prof"),
+            ("05-30", "Всемирный день без табака", "global"),
+            ("05-31", "Всемирный день блондинок", "fun"),
 
             # ========== ИЮНЬ ==========
             ("06-01", "Международный день защиты детей", "global"),
+            ("06-02", "День здорового питания", "global"),
+            ("06-03", "Всемирный день велосипеда", "global"),
+            ("06-04", "Международный день невинных детей", "global"),
             ("06-05", "Всемирный день окружающей среды", "global"),
             ("06-06", "День русского языка (Пушкинский день)", "prof"),
+            ("06-07", "Всемирный день безопасности пищевых продуктов", "global"),
+            ("06-08", "Всемирный день океанов", "global"),
+            ("06-09", "Международный день друзей", "global"),
+            ("06-10", "Всемирный день мороженого", "fun"),
+            ("06-11", "Всемирный день куклы", "fun"),
             ("06-12", "День России", "global"),
             ("06-12", "День России", "prof"),
+            ("06-13", "Международный день распространения информации об альбинизме", "global"),
+            ("06-14", "Всемирный день донора крови", "global"),
+            ("06-15", "Всемирный день ветра", "global"),
+            ("06-16", "Международный день отца", "global"),
+            ("06-17", "Всемирный день борьбы с опустыниванием", "global"),
+            ("06-18", "Международный день пикника", "fun"),
+            ("06-19", "Всемирный день неспешной прогулки", "fun"),
+            ("06-20", "Всемирный день беженцев", "global"),
+            ("06-21", "Международный день йоги", "global"),
             ("06-22", "День памяти и скорби", "global"),
+            ("06-23", "Международный Олимпийский день", "global"),
+            ("06-24", "День парада Победы", "global"),
+            ("06-25", "День дружбы и единения славян", "global"),
+            ("06-26", "Международный день борьбы с наркоманией", "global"),
             ("06-27", "День молодёжи России", "prof"),
+            ("06-28", "День украинской Конституции", "global"),
+            ("06-29", "Международный день тропиков", "global"),
+            ("06-30", "Всемирный день астероида", "global"),
 
             # ========== ИЮЛЬ ==========
+            ("07-01", "Всемирный день архитектуры", "prof"),
+            ("07-02", "Всемирный день НЛО", "fun"),
+            ("07-03", "День ГИБДД", "prof"),
+            ("07-04", "День независимости США", "global"),
+            ("07-05", "Всемирный день поцелуя", "fun"),
+            ("07-06", "Всемирный день кардиолога", "prof"),
+            ("07-07", "Иван Купала", "folk"),
             ("07-08", "День семьи, любви и верности", "global"),
             ("07-08", "День семьи, любви и верности", "prof"),
+            ("07-09", "Всемирный день веры в единорогов", "fun"),
+            ("07-10", "День рыбака", "prof"),
+            ("07-11", "Всемирный день шоколада", "fun"),
+            ("07-12", "Всемирный день бортпроводника", "prof"),
+            ("07-13", "Международный день головоломки", "fun"),
+            ("07-14", "День взятия Бастилии", "global"),
+            ("07-15", "Всемирный день навыков молодёжи", "global"),
+            ("07-16", "Международный день змеи", "global"),
+            ("07-17", "Всемирный день эмодзи", "fun"),
+            ("07-18", "Международный день Нельсона Манделы", "global"),
+            ("07-19", "Всемирный день фотографии", "fun"),
+            ("07-20", "Международный день шахмат", "global"),
+            ("07-21", "День металлурга", "prof"),
+            ("07-22", "Всемирный день мозга", "global"),
+            ("07-23", "Всемирный день китов и дельфинов", "global"),
+            ("07-24", "День флориста", "prof"),
+            ("07-25", "День системного администратора", "prof"),
+            ("07-26", "День парашютиста", "prof"),
+            ("07-27", "День работников торговли", "prof"),
+            ("07-28", "Всемирный день борьбы с гепатитом", "global"),
+            ("07-29", "Международный день тигра", "global"),
+            ("07-30", "Международный день дружбы", "global"),
+            ("07-31", "День военно-морского флота", "prof"),
 
             # ========== АВГУСТ ==========
+            ("08-01", "Всемирный день матери-кормилицы", "global"),
             ("08-02", "День Воздушно-десантных войск", "prof"),
+            ("08-03", "День арбуза", "fun"),
+            ("08-04", "День одиноких работающих женщин", "fun"),
+            ("08-05", "Международный день светофора", "fun"),
+            ("08-06", "День железнодорожника", "prof"),
+            ("08-07", "День холостяка", "fun"),
+            ("08-08", "Всемирный день кошек", "global"),
+            ("08-09", "День физкультурника", "prof"),
+            ("08-10", "День строителя", "prof"),
+            ("08-12", "Международный день молодёжи", "global"),
+            ("08-13", "День левшей", "fun"),
+            ("08-15", "День археолога", "prof"),
+            ("08-16", "День малинового варенья", "fun"),
+            ("08-17", "День рождения русской тельняшки", "fun"),
+            ("08-18", "День географа", "prof"),
+            ("08-19", "Всемирный день фотографии", "global"),
+            ("08-20", "Всемирный день лени", "fun"),
+            ("08-21", "День офицера России", "prof"),
             ("08-22", "День Государственного флага РФ", "global"),
             ("08-22", "День Государственного флага РФ", "prof"),
+            ("08-23", "День разгрома немецко-фашистских войск в Курской битве", "global"),
+            ("08-24", "День рождения картофельных чипсов", "fun"),
+            ("08-25", "День шахтёра", "prof"),
+            ("08-26", "День благодарности собаке", "fun"),
             ("08-27", "День российского кино", "prof"),
+            ("08-28", "День мечты", "fun"),
+            ("08-29", "День спецназа", "prof"),
+            ("08-30", "День кино", "prof"),
+            ("08-31", "День блога", "fun"),
 
             # ========== СЕНТЯБРЬ ==========
             ("09-01", "День знаний", "global"),
             ("09-01", "День знаний", "prof"),
+            ("09-02", "День окончания Второй мировой войны", "global"),
             ("09-03", "День солидарности в борьбе с терроризмом", "global"),
+            ("09-04", "День специалиста по ядерному обеспечению", "prof"),
+            ("09-05", "День благотворительности", "global"),
+            ("09-06", "День чтения книг", "fun"),
+            ("09-07", "День барабанщика", "fun"),
             ("09-08", "Международный день грамотности", "global"),
+            ("09-09", "Всемирный день красоты", "global"),
+            ("09-10", "Всемирный день предотвращения самоубийств", "global"),
+            ("09-11", "Всемирный день трезвости", "global"),
+            ("09-12", "День программиста", "prof"),
+            ("09-13", "День парикмахера", "prof"),
+            ("09-14", "День слушания шорохов", "fun"),
+            ("09-15", "Международный день демократии", "global"),
+            ("09-16", "День рождения Джульетты", "fun"),
+            ("09-17", "Всемирный день безопасности пациентов", "global"),
+            ("09-18", "Всемирный день мониторинга качества воды", "global"),
+            ("09-19", "День смайлика", "fun"),
+            ("09-20", "Всемирный день благодарности", "fun"),
+            ("09-21", "Международный день мира", "global"),
+            ("09-22", "Всемирный день без автомобиля", "global"),
+            ("09-23", "День осеннего равноденствия", "global"),
+            ("09-24", "Международный день караванщика", "prof"),
+            ("09-25", "Всемирный день фармацевта", "prof"),
+            ("09-26", "Всемирный день контрацепции", "global"),
             ("09-27", "Всемирный день туризма", "global"),
             ("09-27", "День воспитателя и всех дошкольных работников", "prof"),
+            ("09-28", "Всемирный день борьбы против бешенства", "global"),
+            ("09-29", "Всемирный день сердца", "global"),
+            ("09-30", "Международный день переводчика", "prof"),
 
             # ========== ОКТЯБРЬ ==========
             ("10-01", "Международный день пожилых людей", "global"),
             ("10-01", "Международный день музыки", "global"),
+            ("10-02", "Международный день ненасилия", "global"),
+            ("10-03", "Всемирный день трезвости и борьбы с алкоголизмом", "global"),
             ("10-04", "День защиты животных", "global"),
             ("10-05", "День учителя", "global"),
             ("10-05", "День учителя", "prof"),
+            ("10-06", "Всемирный день охраны мест обитания", "global"),
+            ("10-07", "Всемирный день улыбки", "fun"),
+            ("10-08", "Всемирный день осьминога", "fun"),
             ("10-09", "Всемирный день почты", "global"),
             ("10-10", "Всемирный день психического здоровья", "global"),
+            ("10-12", "Всемирный день борьбы с артритом", "global"),
+            ("10-13", "Всемирный день тромбоза", "global"),
+            ("10-14", "Всемирный день зрения", "global"),
+            ("10-15", "Всемирный день мытья рук", "global"),
             ("10-16", "Всемирный день продовольствия", "global"),
+            ("10-17", "Международный день борьбы за ликвидацию нищеты", "global"),
+            ("10-18", "Всемирный день конфет", "fun"),
+            ("10-19", "Всемирный день детского церебрального паралича", "global"),
+            ("10-20", "Всемирный день статистики", "global"),
+            ("10-21", "День яблока", "fun"),
+            ("10-22", "День белых журавлей", "global"),
+            ("10-23", "День работников рекламы", "prof"),
+            ("10-24", "День Организации Объединённых Наций", "global"),
+            ("10-25", "День маркетолога", "prof"),
+            ("10-26", "День приятных неожиданностей", "fun"),
+            ("10-27", "Всемирный день аудиовизуального наследия", "global"),
+            ("10-28", "День бабушек и дедушек", "fun"),
+            ("10-29", "Всемирный день борьбы с инсультом", "global"),
+            ("10-30", "День памяти жертв политических репрессий", "global"),
+            ("10-31", "Хэллоуин", "fun"),
 
             # ========== НОЯБРЬ ==========
+            ("11-01", "День менеджера", "prof"),
+            ("11-02", "День международного признания Санкт-Петербурга", "local"),
+            ("11-03", "День рождения паровоза", "fun"),
             ("11-04", "День народного единства", "global"),
             ("11-04", "День народного единства", "prof"),
+            ("11-05", "День военного разведчика", "prof"),
+            ("11-06", "День саамского народа", "folk"),
+            ("11-07", "День Октябрьской революции", "global"),
+            ("11-08", "День пианиста", "prof"),
+            ("11-09", "День качества", "global"),
             ("11-10", "День сотрудника органов внутренних дел РФ", "prof"),
+            ("11-11", "День холостяка (11.11)", "fun"),
+            ("11-12", "День специалиста по безопасности", "prof"),
+            ("11-13", "Всемирный день доброты", "global"),
+            ("11-14", "День социолога", "prof"),
+            ("11-15", "Всемирный день вторичной переработки", "global"),
             ("11-16", "Международный день толерантности", "global"),
+            ("11-17", "Международный день студентов", "global"),
+            ("11-18", "День рождения Деда Мороза", "fun"),
+            ("11-19", "Международный день мужчин", "global"),
             ("11-20", "Всемирный день ребёнка", "global"),
+            ("11-21", "Всемирный день приветствий", "global"),
+            ("11-22", "День психолога", "prof"),
+            ("11-23", "День благодарения", "global"),
+            ("11-24", "День моржа", "fun"),
+            ("11-25", "Международный день борьбы за ликвидацию насилия в отношении женщин", "global"),
+            ("11-26", "Всемирный день информации", "global"),
             ("11-27", "День матери", "prof"),
+            ("11-28", "День бухгалтера", "prof"),
+            ("11-29", "День буквы Ё", "fun"),
+            ("11-30", "День домашних животных", "fun"),
 
             # ========== ДЕКАБРЬ ==========
             ("12-01", "Всемирный день борьбы со СПИДом", "global"),
+            ("12-02", "День банковского работника", "prof"),
             ("12-03", "Международный день инвалидов", "global"),
             ("12-03", "День юриста", "prof"),
+            ("12-04", "День информатики", "prof"),
+            ("12-05", "День добровольца", "global"),
+            ("12-06", "День рождения микроволновой печи", "fun"),
+            ("12-07", "День гражданской авиации", "prof"),
+            ("12-08", "День художника", "prof"),
+            ("12-09", "День героев Отечества", "global"),
             ("12-10", "День прав человека", "global"),
+            ("12-11", "Международный день гор", "global"),
             ("12-12", "День Конституции РФ", "global"),
             ("12-12", "День Конституции РФ", "prof"),
+            ("12-13", "День медведя", "fun"),
+            ("12-14", "День обезьян", "fun"),
+            ("12-15", "День чая", "fun"),
+            ("12-16", "День покорения вершин", "fun"),
+            ("12-17", "День ракетных войск", "prof"),
+            ("12-18", "День работников ЗАГС", "prof"),
+            ("12-19", "День вечнозелёных растений", "fun"),
+            ("12-20", "День рождения ёлочной гирлянды", "fun"),
+            ("12-21", "День зимнего солнцестояния", "global"),
+            ("12-22", "День энергетика", "prof"),
+            ("12-23", "День дальней авиации", "prof"),
+            ("12-24", "Католический сочельник", "church"),
+            ("12-25", "Католическое Рождество", "church"),
+            ("12-26", "День подарков", "fun"),
             ("12-27", "День спасателя", "prof"),
+            ("12-28", "День кино", "prof"),
+            ("12-29", "День конституции Ирландии", "global"),
+            ("12-30", "День заворачивания подарков", "fun"),
             ("12-31", "Новогодний вечер", "fun"),
         ]
         with sqlite3.connect(DATABASE_PATH) as conn:
