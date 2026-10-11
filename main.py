@@ -37,8 +37,7 @@ BOT_START_TIME = datetime.now()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-
-# ================= ХЕЛПЕРЫ ИМЁН =================
+# ===== ЧАСТЬ 1 КОНЕЦ =====# ================= ХЕЛПЕРЫ ИМЁН =================
 def _match_command(message: types.Message, name_lower: str) -> bool:
     if not message.text: return False
     txt = message.text.strip()
@@ -219,8 +218,7 @@ def _extract_html_after(message: types.Message, char_index: int) -> str:
     html = entities_to_html_from(message, char_index)
     return re.sub(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', r'\1', html, flags=re.DOTALL)
 
-
-# ================= РАНГИ =================
+# ===== ЧАСТЬ 2 КОНЕЦ =====# ================= РАНГИ =================
 RANK_NAMES = {0: "👤 Участник", 1: "🛡️ Мл. Модератор", 2: "🛡️ Ст. Модератор",
               3: "👑 Мл. Админ", 4: "👑 Ст. Админ", 5: "⚜️ Владелец"}
 
@@ -238,14 +236,15 @@ DEFAULT_ACCESS = {
     "купить коины": 0, "бкоин": 0, "коинытоп": 0, "купитьириски": 0,
     "рыбалка": 0, "рыба": 0, "рыбачить": 0, "рыбтоп": 0,
     "моя рыбалка": 0, "рыбстата": 0, "магазин снастей": 0, "снасти": 0,
-    "купить": 0, "инвентарь": 0, "инв": 0, "мои рыбные ачивки": 0,
-    "рыбные ачивки": 0, "событие": 0, "события": 0, "турнир": 0,
+    "купить": 0, "улучшить": 0, "инвентарь": 0, "инв": 0,
+    "мои рыбные ачивки": 0, "рыбные ачивки": 0,
+    "событие": 0, "события": 0, "турнир": 0,
     "садок": 0, "моя рыба": 0, "рыбасадок": 0, "продать": 0,
     "ачивки": 0, "все ачивки": 0, "мои ачивки": 0, "твои ачивки": 0, "вип": 0, "купить вип": 0,
     "мрп": 0, "репорт": 0, "админы": 0, "ухожу в отставку": 0,
-    "регион": 3, "рыбное место": 3,
+    "регион": 3, "рыбное место": 3, "локация": 3, "локации": 3,
 
-    "translate": 0,
+    "перевод": 0, "translate": 0,
     "калькулятор": 0, "кальк": 0, "calc": 0,
     "курс": 0, "крипта": 0, "биржа": 0,
 
@@ -281,7 +280,6 @@ DEFAULT_ACCESS = {
     "развести вышедших": 3,
 
     "антиспам": 3,
-
     "мос": 0,
 }
 
@@ -298,14 +296,14 @@ ALIASES = {
     "баланс": "коины", "моя пара": "мой брак",
     "события": "событие", "снасти": "магазин снастей",
     "моя рыба": "садок", "рыбасадок": "садок",
+    "локации": "локация",
 }
 
 
 def _canonical(cmd_name):
     return ALIASES.get(cmd_name, cmd_name)
 
-
-# ================= БАЗА ДАННЫХ =================
+# ===== ЧАСТЬ 3 КОНЕЦ =====# ================= БАЗА ДАННЫХ =================
 def init_db():
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -477,18 +475,9 @@ def init_db():
             prolong_price INTEGER DEFAULT 50,
             divorce_mode TEXT DEFAULT 'выключить'
         )""")
-        c.execute("""CREATE TABLE IF NOT EXISTS marriage_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER,
-            from_id INTEGER,
-            to_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(chat_id, from_id, to_id)
-        )""")
         conn.commit()
 
-
-# ================= ХЕЛПЕРЫ ПРАВ =================
+# ===== ЧАСТЬ 4 КОНЕЦ =====# ================= ХЕЛПЕРЫ ПРАВ =================
 def _admin_rights_kwargs(**overrides):
     base = {
         "is_anonymous": False,
@@ -956,8 +945,7 @@ def get_antispam_info(user_id):
         c.execute("SELECT reason, added_by, added_at FROM antispam WHERE user_id = ?", (user_id,))
         return c.fetchone()
 
-
-# ================= ДОП. ХЕЛПЕРЫ =================
+# ===== ЧАСТЬ 5 КОНЕЦ =====# ================= ДОП. ХЕЛПЕРЫ =================
 def get_chat_by_code(code):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1567,8 +1555,7 @@ def get_user_position_in_chat(user_id, chat_id, period="30d"):
         pass
     return None
 
-
-# ================= ИРИСКИ =================
+# ===== ЧАСТЬ 6 КОНЕЦ =====# ================= ИРИСКИ =================
 def get_balance(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2036,9 +2023,64 @@ def mark_report_reviewed(report_id, reviewed_by):
                   (reviewed_by, report_id))
         conn.commit()
 
+# ===== ЧАСТЬ 7 КОНЕЦ =====# ================= РЫБАЛКА — ДАННЫЕ =================
 
-# ================= РЫБАЛКА — ДАННЫЕ =================
+LOCATIONS = {
+    "pier": {
+        "name": "🌊 Пирс",
+        "emoji": "🌊",
+        "desc": "Спокойное место для новичков",
+        "min_level": 1,
+        "vip_required": False,
+        "rare_chance": 0,
+        "legendary_chance": 0,
+        "treasure_chance": 0,
+    },
+    "rocks": {
+        "name": "🪨 Камни",
+        "emoji": "🪨",
+        "desc": "Больше редкой рыбы, чем на пирсе",
+        "min_level": 5,
+        "vip_required": False,
+        "rare_chance": 10,
+        "legendary_chance": 2,
+        "treasure_chance": 0,
+    },
+    "sunset_cape": {
+        "name": "🌅 Закатный мыс",
+        "emoji": "🌅",
+        "desc": "Здесь ловится мифическая рыба",
+        "min_level": 15,
+        "vip_required": False,
+        "rare_chance": 20,
+        "legendary_chance": 5,
+        "treasure_chance": 5,
+    },
+    "abyss": {
+        "name": "🌌 Бездна",
+        "emoji": "🌌",
+        "desc": "Только для опытных. Опасно, но выгодно",
+        "min_level": 20,
+        "vip_required": False,
+        "rare_chance": 35,
+        "legendary_chance": 12,
+        "treasure_chance": 10,
+    },
+    "treasure_island": {
+        "name": "🏝 Остров сокровищ",
+        "emoji": "🏝",
+        "desc": "Здесь ловятся сокровища и редчайшая рыба",
+        "min_level": 30,
+        "vip_required": True,
+        "rare_chance": 50,
+        "legendary_chance": 20,
+        "treasure_chance": 25,
+    },
+}
+
+
 FISH_LIST = [
+    # ============ РЕКА ============
     ("Окунь",        "🐟", 1,   3,   100,  "river", "any"),
     ("Ёрш",          "🐡", 2,   4,   80,   "river", "any"),
     ("Пескарь",      "🐟", 1,   3,   75,   "river", "any"),
@@ -2058,6 +2100,7 @@ FISH_LIST = [
     ("Хариус",       "🐠", 10,  20,  16,   "river", "day"),
     ("Таймень",      "🐡", 30,  60,  4,    "river", "any"),
     ("Ручьевая форель","🐟",14, 28, 14,   "river", "day"),
+    # ============ ОЗЕРО ============
     ("Карась",       "🐠", 2,   5,   95,   "lake", "any"),
     ("Краснопёрка",  "🐠", 3,   7,   60,   "lake", "any"),
     ("Линь",         "🐠", 6,   12,  45,   "lake", "any"),
@@ -2070,6 +2113,7 @@ FISH_LIST = [
     ("Щука",         "🐡", 8,   18,  35,   "lake", "any"),
     ("Окунь",        "🐟", 1,   3,   100,  "lake", "any"),
     ("Золотой карась","✨", 40,  80,  2,    "lake", "any"),
+    # ============ МОРЕ ============
     ("Сельдь",       "🐟", 10,  20,  28,   "sea", "any"),
     ("Скумбрия",     "🐠", 15,  28,  22,   "sea", "day"),
     ("Ставрида",     "🐟", 12,  22,  24,   "sea", "any"),
@@ -2087,6 +2131,7 @@ FISH_LIST = [
     ("Рыба-попугай", "🦜", 30,  60,  3,    "sea", "day"),
     ("Кальмар",      "🦑", 30,  60,  6,    "sea", "night"),
     ("Осьминог",     "🐙", 45,  90,  2,    "sea", "night"),
+    # ============ ОКЕАН ============
     ("Тунец",        "🐟", 40,  80,  5,    "ocean", "any"),
     ("Меч-рыба",     "🗡", 55,  110, 3,    "ocean", "day"),
     ("Рыба-меч",     "🗡", 60,  120, 2,    "ocean", "any"),
@@ -2100,13 +2145,54 @@ FISH_LIST = [
     ("Кета",         "🐡", 45,  90,  1.2,  "ocean", "any"),
     ("Кижуч",        "🐟", 55,  110, 1,    "ocean", "day"),
     ("Нерка",        "🐟", 60,  120, 0.8,  "ocean", "any"),
+    # ============ РЕДКАЯ ============
     ("Призрачный карп","👻",100,200,0.3,  "any", "night"),
     ("Лунная рыба",  "🌙", 150, 300, 0.2,  "any", "night"),
     ("Рыба-дракончик","🐉",200, 400, 0.1,  "any", "any"),
     ("Золотая рыбка","✨", 250, 500, 0.05, "any", "any"),
     ("Радужный лосось","🌈",180,360,0.1,  "any", "any"),
     ("Стеклянная рыба","🔮",220,440,0.08, "any", "any"),
+    # --- Электрические ---
+    ("Электрический угорь","⚡",180, 340, 0.4, "river", "any"),
+    ("Скат-электро",       "⚡",250, 480, 0.2, "sea",   "night"),
+    ("Рыба-молния",        "⚡",320, 620, 0.1, "any",   "any"),
+    # --- Глубоководные ---
+    ("Удильщик",           "🎣",150, 290, 0.5, "ocean", "night"),
+    ("Рыба-фонарь",        "🔦",120, 240, 0.6, "ocean", "night"),
+    ("Гигантский кальмар", "🦑",280, 540, 0.15,"ocean", "night"),
+    ("Плащеносец",         "🦎",200, 400, 0.2, "ocean", "night"),
+    # --- Древние ---
+    ("Древний латимерия",  "🦴",450, 900, 0.05,"any",   "any"),
+    ("Акула-молот",        "🦈",400, 800, 0.08,"ocean", "day"),
+    ("Акула-тигр",         "🦈",380, 760, 0.1, "ocean", "any"),
+    ("Китовая акула",      "🦈",700, 1400,0.02,"ocean", "any"),
+    # --- Магические ---
+    ("Русалочья рыбка",    "🧜",300, 600, 0.1, "sea",   "day"),
+    ("Рыба-пегас",         "🦄",350, 700, 0.08,"any",   "day"),
+    ("Единороговая рыба",  "🦄",420, 840, 0.05,"any",   "any"),
+    ("Кристальная рыба",   "💎",380, 760, 0.06,"any",   "day"),
+    # --- Тропические ---
+    ("Рыба-клоун",         "🐠",25,  50,  20,  "sea",   "day"),
+    ("Хирург-рыба",        "🐠",30,  60,  15,  "sea",   "day"),
+    ("Мурена-радуга",      "🐍",55,  110, 5,   "sea",   "night"),
+    ("Крылатка",           "🦁",80,  160, 3,   "sea",   "any"),
+    ("Рыба-шар",           "🟠",40,  80,  10,  "sea",   "any"),
+    # --- Хищники ---
+    ("Щука-гигант",        "🐡",120, 240, 1.5, "lake",  "any"),
+    ("Сом-людоед",         "🐡",150, 300, 1.0, "river", "night"),
+    ("Пирания",            "🐟",90,  180, 2.5, "river", "any"),
+    ("Барракуда-гигант",   "🐡",180, 360, 1.2, "sea",   "night"),
+    # --- Сезонные ---
+    ("Майская рыба",       "🌸",60,  120, 5,   "any",   "day"),
+    ("Осенний лосось",     "🍂",100, 200, 3,   "river", "any"),
+    ("Зимний сиг",         "❄️",80,  160, 4,   "lake",  "any"),
+    ("Летний окунь",       "☀️",50,  100, 8,   "any",   "day"),
+    # --- Особые ---
+    ("Рыба-хамелеон",      "🦎",150, 300, 1.5, "any",   "any"),
+    ("Стеклянный карп",    "🔮",180, 360, 1.0, "lake",  "any"),
+    ("Стальная щука",      "⚙️",220, 440, 0.5, "river", "any"),
 ]
+
 
 LEGENDARY_FISH = [
     ("Мурена-гигант",   "🐍", 250,   500,   25),
@@ -2126,7 +2212,12 @@ LEGENDARY_FISH = [
     ("Рыба-бог",        "⚡", 15000, 30000, 0.15),
     ("Император морей", "🔱", 20000, 40000, 0.1),
     ("Посейдон",        "🌊", 30000, 60000, 0.05),
+    ("Аватар моря",     "🌊", 50000, 100000, 0.03),
+    ("Рыба-титан",      "🗿", 70000, 140000, 0.02),
+    ("Рыба-хаос",       "🌀", 100000, 200000, 0.01),
+    ("Дух океана",      "👻", 150000, 300000, 0.005),
 ]
+
 
 THINGS_LIST = [
     ("Ржавый ключ",         "🗝", 60,  1,   "candies"),
@@ -2171,34 +2262,102 @@ THINGS_LIST = [
     ("Ржавый якорь",        "⚓", 25,  20,  "candies"),
     ("Рыбий жир",           "🧴", 20,  30,  "candies"),
     ("Бутылка рома",        "🥃", 8,   100, "candies"),
-    ("Прикормка (+1 ч)",         "🍯", 3,   0, "gear_bait"),
-    ("Счастливая монета (+1 улов)","🍀", 1.5, 0, "gear_lucky"),
-    ("Крепкий крючок",           "🪝", 2,   0, "gear_hook"),
-    ("Обломок лодки",            "🛶", 0.5, 0, "gear_boat"),
+    ("Золотая маска",       "🎭", 0.5, 2500,"candies"),
+    ("Корона глубин",       "👑", 0.3, 3000,"candies"),
+    ("Кристалл силы",       "💠", 0.4, 2200,"candies"),
+    ("Прикормка (+1 ч)",    "🍯", 3,   0,   "gear_bait"),
+    ("Счастливая монета",   "🍀", 1.5, 0,   "gear_lucky"),
+    ("Крепкий крючок",      "🪝", 2,   0,   "gear_hook"),
+    ("Обломок лодки",       "🛶", 0.5, 0,   "gear_boat"),
+    ("Осколок поплавка",    "🔮", 1,   0,   "gear_float"),
 ]
 
+
 FISHING_GEAR = {
-    "hook": {"name": "🪝 Крючок", "price": 500, "bonus": 0.05, "desc": "+5% к улову"},
-    "spinning": {"name": "🎣 Спиннинг", "price": 1500, "bonus": 0.10, "desc": "+10% к улову"},
-    "bucket": {"name": "🪣 Ведро", "price": 2000, "bonus": 0.0, "desc": "+1 🍬 к награде", "flat": 1},
-    "boat": {"name": "🚤 Лодка", "price": 5000, "bonus": 0.0, "desc": "Шанс поймать редкую рыбу"},
-    "premium_rod": {"name": "🎣 Премиум-удочка", "price": 10000, "bonus": 0.15, "desc": "+15% к улову"},
+    "hook": {
+        "name": "🪝 Крючок",
+        "base_price": 500,
+        "max_level": 5,
+        "bonus_per_level": 0.05,
+        "flat_per_level": 0,
+        "desc": "+5% к улову за уровень",
+    },
+    "spinning": {
+        "name": "🎣 Спиннинг",
+        "base_price": 1500,
+        "max_level": 5,
+        "bonus_per_level": 0.10,
+        "flat_per_level": 0,
+        "desc": "+10% к улову за уровень",
+    },
+    "bucket": {
+        "name": "🪣 Ведро",
+        "base_price": 2000,
+        "max_level": 5,
+        "bonus_per_level": 0.0,
+        "flat_per_level": 1,
+        "desc": "+1 🍬 к награде за уровень",
+    },
+    "boat": {
+        "name": "🚤 Лодка",
+        "base_price": 5000,
+        "max_level": 3,
+        "bonus_per_level": 0.0,
+        "flat_per_level": 0,
+        "rare_per_level": 10,
+        "desc": "+10% к шансу редкой рыбы за уровень",
+    },
+    "premium_rod": {
+        "name": "🎣 Премиум-удочка",
+        "base_price": 10000,
+        "max_level": 3,
+        "bonus_per_level": 0.05,
+        "flat_per_level": 0,
+        "legendary_per_level": 3,
+        "desc": "+5% к улову и +3% к шансу легендарки за уровень",
+    },
+    "magic_float": {
+        "name": "🔮 Магический поплавок",
+        "base_price": 25000,
+        "max_level": 5,
+        "bonus_per_level": 0.0,
+        "flat_per_level": 0,
+        "legendary_per_level": 2,
+        "desc": "+2% к шансу легендарки за уровень",
+    },
 }
+
 
 FISHING_EVENTS = {
     "rain":      {"name": "🌧 Дождь",         "bonus": 1.2, "duration": 30},
-    "night":     {"name": "🌙 Ночь",          "bonus": 1.3, "duration": 45, "rare_boost": 2.0},
-    "school":    {"name": "🐟 Стая",          "bonus": 1.2, "duration": 20},
-    "storm":     {"name": "⛈ Гроза",          "bonus": 0.8, "duration": 15},
-    "calm":      {"name": "☀️ Штиль",         "bonus": 1.0, "duration": 30},
-    "full_moon": {"name": "🌕 Полнолуние",    "bonus": 1.4, "duration": 40, "rare_boost": 3.0},
+    "heavy_rain":{"name": "⛈ Сильный дождь",  "bonus": 1.1, "duration": 20, "rare_boost": 1.2},
+    "storm":     {"name": "🌩 Гроза",          "bonus": 0.8, "duration": 15},
     "fog":       {"name": "🌫 Туман",         "bonus": 0.9, "duration": 20},
-    "sunrise":   {"name": "🌅 Рассвет",       "bonus": 1.25,"duration": 25},
-    "sunset":    {"name": "🌇 Закат",         "bonus": 1.35,"duration": 30},
-    "boil":      {"name": "🫧 Кипение",       "bonus": 1.5, "duration": 15},
-    "migration": {"name": "🐟 Миграция",      "bonus": 1.8, "duration": 20, "rare_boost": 1.5},
-    "eclipse":   {"name": "🌑 Затмение",      "bonus": 1.7, "duration": 15, "rare_boost": 2.5},
+    "snow":      {"name": "❄️ Снег",           "bonus": 1.15,"duration": 40},
+    "hail":      {"name": "🌨 Град",           "bonus": 0.7, "duration": 10},
+    "wind":      {"name": "💨 Ветер",          "bonus": 1.1, "duration": 25},
+    "calm":      {"name": "☀️ Штиль",         "bonus": 1.0, "duration": 30},
+    "sunrise":   {"name": "🌅 Рассвет",       "bonus": 1.25,"duration": 25, "rare_boost": 1.3},
+    "sunset":    {"name": "🌇 Закат",         "bonus": 1.35,"duration": 30, "rare_boost": 1.4},
+    "night":     {"name": "🌙 Ночь",          "bonus": 1.3, "duration": 45, "rare_boost": 2.0},
+    "midnight":  {"name": "🌑 Полночь",       "bonus": 1.5, "duration": 20, "rare_boost": 2.5},
+    "twilight":  {"name": "🌆 Сумерки",       "bonus": 1.2, "duration": 20},
+    "full_moon":    {"name": "🌕 Полнолуние",  "bonus": 1.4, "duration": 40, "rare_boost": 3.0},
+    "new_moon":     {"name": "🌑 Новолуние",   "bonus": 1.35,"duration": 40, "rare_boost": 2.5},
+    "eclipse":      {"name": "🌒 Затмение",    "bonus": 1.7, "duration": 15, "rare_boost": 2.5},
+    "meteor":       {"name": "☄️ Метеоритный дождь","bonus": 1.6, "duration": 20, "rare_boost": 2.0},
+    "aurora":       {"name": "🌌 Северное сияние","bonus": 1.8, "duration": 30, "rare_boost": 2.5},
+    "school":       {"name": "🐟 Стая",          "bonus": 1.2, "duration": 20},
+    "migration":    {"name": "🐟 Миграция",      "bonus": 1.8, "duration": 20, "rare_boost": 1.5},
+    "boil":         {"name": "🫧 Кипение воды",  "bonus": 1.5, "duration": 15},
+    "spawning":     {"name": "🥚 Нерест",        "bonus": 2.0, "duration": 15, "rare_boost": 1.5},
+    "magic_hour":   {"name": "✨ Магический час", "bonus": 2.5, "duration": 10, "rare_boost": 3.0},
+    "portal":       {"name": "🌀 Портал",        "bonus": 3.0, "duration": 5,  "rare_boost": 5.0},
+    "sea_spirit":   {"name": "🧜 Дух моря",      "bonus": 2.2, "duration": 15, "rare_boost": 3.5},
+    "magnetic":     {"name": "🧲 Магнитная буря","bonus": 1.3, "duration": 25, "rare_boost": 1.8},
+    "blackout":     {"name": "⚡ Энергетическая буря","bonus": 1.4, "duration": 15},
 }
+
 
 FISHING_ACHIEVEMENTS = {
     "first_fish":      {"name": "🥇 Первый улов",         "check": lambda u: u["total_caught"] >= 1},
@@ -2216,12 +2375,15 @@ FISHING_ACHIEVEMENTS = {
     "legendary_50":    {"name": "💎 50 легендарок",       "check": lambda u: u["legendary_caught"] >= 50},
 }
 
+
 BAIT_DURATION_HOURS = 1
-FISH_COOLDOWN_SECONDS = 7200
+FISH_COOLDOWN_BASE = 7200
+FISH_COOLDOWN_MIN = 900
 LEVEL_XP_BASE = 50
 TOURNAMENT_DURATION_MIN = 60
 
 
+# ================= РЫБАЛКА — ФУНКЦИИ =================
 def get_fishing(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -2275,12 +2437,42 @@ def get_fishing_top(limit=10):
         return c.fetchall()
 
 
-def format_fishing_cooldown(last_fish_str):
-    if not last_fish_str: return 0
-    try: last = datetime.strptime(last_fish_str[:19], "%Y-%m-%d %H:%M:%S")
-    except: return 0
+def get_user_fish_cooldown(user_id) -> int:
+    """Персональный кулдаун пользователя в секундах (зависит от снастей)."""
+    inv = get_fishing_inventory(user_id)
+    cooldown = FISH_COOLDOWN_BASE
+
+    hook_level = inv.get("hook", 0)
+    if isinstance(hook_level, int) and hook_level > 0:
+        cooldown -= hook_level * 600
+
+    spinning_level = inv.get("spinning", 0)
+    if isinstance(spinning_level, int) and spinning_level > 0:
+        cooldown -= spinning_level * 300
+
+    premium_level = inv.get("premium_rod", 0)
+    if isinstance(premium_level, int) and premium_level > 0:
+        cooldown -= premium_level * 180
+
+    float_level = inv.get("magic_float", 0)
+    if isinstance(float_level, int) and float_level > 0:
+        cooldown -= float_level * 180
+
+    return max(FISH_COOLDOWN_MIN, cooldown)
+
+
+def format_fishing_cooldown(last_fish_str, cooldown_seconds: int = None):
+    """Форматирует время, оставшееся до следующего заброса."""
+    if not last_fish_str:
+        return 0
+    try:
+        last = datetime.strptime(last_fish_str[:19], "%Y-%m-%d %H:%M:%S")
+    except:
+        return 0
+    if cooldown_seconds is None:
+        cooldown_seconds = FISH_COOLDOWN_BASE
     delta = (datetime.now() - last).total_seconds()
-    remaining = FISH_COOLDOWN_SECONDS - delta
+    remaining = cooldown_seconds - delta
     return max(0, int(remaining))
 
 
@@ -2307,8 +2499,14 @@ def get_fishing_inventory(user_id):
 
 
 def add_to_fishing_inventory(user_id, gear_key, count=1):
+    """Добавляет снасть в инвентарь. Для уровневых снастей — только 1-й уровень."""
     inv = get_fishing_inventory(user_id)
-    inv[gear_key] = inv.get(gear_key, 0) + count
+    gear = FISHING_GEAR.get(gear_key)
+    if gear and "max_level" in gear:
+        if gear_key not in inv:
+            inv[gear_key] = 1
+    else:
+        inv[gear_key] = inv.get(gear_key, 0) + count
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("INSERT OR IGNORE INTO fishing (user_id) VALUES (?)", (user_id,))
@@ -2316,17 +2514,78 @@ def add_to_fishing_inventory(user_id, gear_key, count=1):
         conn.commit()
 
 
-def get_fishing_gear_bonus(user_id):
+def upgrade_fishing_gear(user_id, gear_key) -> tuple:
+    """Улучшает снасть на 1 уровень."""
+    gear = FISHING_GEAR.get(gear_key)
+    if not gear:
+        return False, "Снасть не найдена", 0
     inv = get_fishing_inventory(user_id)
-    total = 0.0; flat = 0; has_boat = False; has_premium = False
-    for key, count in inv.items():
-        if count <= 0: continue
+    cur_level = inv.get(gear_key, 0)
+    if cur_level <= 0:
+        return False, "Сначала купи снасть", 0
+    if cur_level >= gear["max_level"]:
+        return False, f"Максимум — ур. {gear['max_level']}", cur_level
+
+    upgrade_cost = int(gear["base_price"] * (cur_level + 1) * 0.6)
+    if get_balance(user_id) < upgrade_cost:
+        return False, f"Нужно <b>{upgrade_cost}</b> 🍬", cur_level
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (upgrade_cost, user_id))
+        conn.commit()
+
+    inv[gear_key] = cur_level + 1
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE fishing SET inventory = ? WHERE user_id = ?", (json.dumps(inv), user_id))
+        conn.commit()
+
+    return True, f"Улучшено до ур. {cur_level + 1} (-{upgrade_cost} 🍬)", cur_level + 1
+
+
+def get_fishing_gear_bonus(user_id):
+    """Возвращает (bonus, flat, boat_level, legendary_bonus, rare_bonus, gear_info)."""
+    inv = get_fishing_inventory(user_id)
+    total_bonus = 0.0
+    flat = 0
+    boat_level = 0
+    legendary_bonus = 0
+    rare_bonus = 0
+    gear_info = []
+
+    for key, level in inv.items():
+        if not isinstance(level, int) or level <= 0:
+            continue
         gear = FISHING_GEAR.get(key)
-        if not gear: continue
-        total += gear.get("bonus", 0); flat += gear.get("flat", 0)
-        if key == "boat": has_boat = True
-        if key == "premium_rod": has_premium = True
-    return total, flat, has_boat, has_premium
+        if not gear:
+            continue
+
+        lvl_bonus = gear.get("bonus_per_level", 0) * level
+        lvl_flat = gear.get("flat_per_level", 0) * level
+        lvl_legendary = gear.get("legendary_per_level", 0) * level
+        lvl_rare = gear.get("rare_per_level", 0) * level
+
+        total_bonus += lvl_bonus
+        flat += lvl_flat
+        legendary_bonus += lvl_legendary
+        rare_bonus += lvl_rare
+
+        if key == "boat":
+            boat_level = level
+
+        gear_info.append({
+            "key": key,
+            "name": gear["name"],
+            "level": level,
+            "max_level": gear["max_level"],
+            "bonus": lvl_bonus,
+            "flat": lvl_flat,
+            "legendary": lvl_legendary,
+            "rare": lvl_rare,
+        })
+
+    return total_bonus, flat, boat_level, legendary_bonus, rare_bonus, gear_info
 
 
 def get_active_event(chat_id):
@@ -2525,7 +2784,24 @@ def end_tournament(chat_id):
     return winners
 
 
-# ================= РЕГИОН РЫБАЛКИ =================
+def get_chat_location(chat_id) -> str:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT value FROM global_settings WHERE key = ?", (f"location:{chat_id}",))
+        r = c.fetchone()
+        if r:
+            return r[0]
+        return "pier"
+
+
+def set_chat_location(chat_id, loc: str):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)",
+                  (f"location:{chat_id}", loc))
+        conn.commit()
+
+# ===== ЧАСТЬ 8 КОНЕЦ =====# ================= РЕГИОН РЫБАЛКИ =================
 def get_chat_region(chat_id) -> str:
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -3156,7 +3432,197 @@ def format_time_since(date_str):
     except: return "недавно"
 
 
-# ================= VIP =================
+def _get_profile_field(profile, index, default=None):
+    try:
+        if profile and len(profile) > index:
+            val = profile[index]
+            return val if val is not None else default
+    except Exception:
+        pass
+    return default
+
+
+def _fmt_activity_num(n: int) -> str:
+    n = int(n or 0)
+    if n < 1000:
+        return str(n)
+    if n < 10000:
+        v = n / 1000
+        s = f"{v:.1f}".rstrip("0").rstrip(".")
+        return s.replace(".", ",") + "k"
+    if n < 100000:
+        return f"{n // 1000}k"
+    if n < 1000000:
+        v = n / 1000
+        return f"{v:.0f}k"
+    v = n / 1000000
+    s = f"{v:.1f}".rstrip("0").rstrip(".")
+    return s.replace(".", ",") + "M"
+
+
+def _owner_status_line(user_id: int) -> str:
+    if user_id == OWNER_ID:
+        return "⚜️ <b>Владелец бота</b>"
+    if is_coowner(user_id):
+        return "⚜️ <b>Совладелец бота</b>"
+    if is_agent(user_id):
+        return "🛡 <b>Агент поддержки Mos</b>"
+    return ""
+
+
+async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str:
+    user_id = target.id
+    profile = get_user_profile(user_id)
+    if not profile:
+        return "❌ Анкета не найдена."
+
+    gender = _get_profile_field(profile, 0)
+    birth_date = _get_profile_field(profile, 1)
+    city = _get_profile_field(profile, 2)
+    bio = _get_profile_field(profile, 3)
+    is_hidden = _get_profile_field(profile, 4, 1)
+    birth_vis = _get_profile_field(profile, 5, 'месяц')
+    motto = _get_profile_field(profile, 6)
+    show_citizenship = _get_profile_field(profile, 7, 1)
+
+    is_self = (viewer_id == user_id) if viewer_id else True
+    is_staff = False
+    if viewer_id:
+        is_staff = (viewer_id == OWNER_ID or is_coowner(viewer_id) or has_agent_rank(viewer_id, 1))
+
+    if is_hidden and not is_self and not is_staff:
+        return (
+            f"🔒 <b>Анкета скрыта</b>\n\n"
+            f"👤 {mention(target)} закрыл(а) свою анкету.\n"
+            f"<i>Он(а) может открыть её командой <code>+анкета</code>.</i>"
+        )
+
+    nick = get_user_nick(user_id, chat_id)
+    display_name = nick if nick else html_escape_text(target.first_name or "Пользователь")
+
+    has_link_in_name = isinstance(display_name, str) and "<a " in display_name
+    if not has_link_in_name:
+        if getattr(target, "username", None):
+            display_name = f'<a href="https://t.me/{target.username}">{display_name}</a>'
+        else:
+            display_name = f'<a href="tg://user?id={user_id}">{display_name}</a>'
+
+    lines = []
+
+    last_seen_raw = get_last_seen_in_chat(user_id, chat_id)
+    last_seen_str = format_last_seen(last_seen_raw) if last_seen_raw else None
+    suffix = f" (был {last_seen_str})" if last_seen_str and last_seen_str != "нет данных" else ""
+    lines.append(f"👤 <b>Это {display_name}{suffix}</b>")
+
+    lines.append(f"🆔 <a href=\"tg://user?id={user_id}\">{user_id}</a>")
+
+    status_line = _owner_status_line(user_id)
+    if status_line:
+        lines.append("")
+        lines.append(status_line)
+
+    lines.append("")
+
+    cit = get_citizenship_info(user_id)
+    if show_citizenship and cit:
+        cit_chat_id, cit_date = cit
+        try:
+            d = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
+            date_str = d.strftime("%d.%m.%Y")
+        except Exception:
+            date_str = cit_date[:10]
+        duration = format_citizenship_duration(cit_date)
+        lines.append(f"🕰 Во вселенной <b>Mos</b>: с {date_str} ({duration})")
+
+    if gender:
+        lines.append(f"🙂‍↔️ Пол: <b>{html_escape_text(str(gender).lower())}</b>")
+    else:
+        lines.append("🙂‍↔️ Пол: <i>не указан</i>")
+
+    if birth_date:
+        bd_display = str(birth_date)
+        try:
+            parts = bd_display.split(".")
+            if len(parts) == 3:
+                if birth_vis == "год":
+                    bd_display = f"{parts[2]} год"
+                elif birth_vis == "месяц":
+                    bd_display = f"{parts[1]}.{parts[2]}"
+                else:
+                    bd_display = f"{parts[0]}.{parts[1]}.{parts[2]}"
+        except Exception:
+            pass
+        lines.append(f"🗓 Дата рождения: <b>{html_escape_text(bd_display)}</b>")
+    else:
+        lines.append("🗓 Дата рождения: <i>не указана</i>")
+
+    if city:
+        lines.append(f"🏙 Город: <b>{html_escape_text(str(city))}</b>")
+    else:
+        lines.append("🏙 Город: <i>не указан</i>")
+
+    day, week, month, total = get_activity_extended_global(user_id)
+    lines.append(
+        f"📊 Активность (день|нед|мес|всего): "
+        f"<b>{_fmt_activity_num(day)}</b> | "
+        f"<b>{_fmt_activity_num(week)}</b> | "
+        f"<b>{_fmt_activity_num(month)}</b> | "
+        f"<b>{_fmt_activity_num(total)}</b>"
+    )
+
+    rank_text = get_user_rank_text(user_id, chat_id)
+    if rank_text:
+        lines.append(f"✨ Звание: <b>{rank_text}</b>")
+
+    if show_citizenship and cit:
+        cit_chat_id, cit_date = cit
+        try:
+            d2 = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
+            date_str2 = d2.strftime("%d.%m.%Y")
+        except Exception:
+            date_str2 = cit_date[:10]
+        duration2 = format_citizenship_duration(cit_date)
+        try:
+            cc2 = await bot.get_chat(cit_chat_id)
+            cc_title2 = cc2.title or "чат"
+        except Exception:
+            cc_title2 = "чат"
+
+        if cit_chat_id != chat_id and not is_staff and not is_self:
+            try:
+                m = await bot.get_chat_member(chat_id, user_id)
+                in_this_chat = m.status in ("member", "administrator", "creator", "restricted")
+            except Exception:
+                in_this_chat = False
+            if not in_this_chat:
+                lines.append(
+                    f"🏠 Гражданин чата «***» (не в каталоге): "
+                    f"<b>{duration2}</b> (с {date_str2})"
+                )
+            else:
+                lines.append(
+                    f"🏠 Гражданин чата «{cc_title2}»: "
+                    f"<b>{duration2}</b> (с {date_str2})"
+                )
+        else:
+            lines.append(
+                f"🏠 Гражданин чата «{cc_title2}»: "
+                f"<b>{duration2}</b> (с {date_str2})"
+            )
+
+    if motto:
+        lines.append(f"💭 Девиз: {motto}")
+
+    about = get_user_about(user_id)
+    if about:
+        lines.append(f"\n📝 <b>О себе:</b>\n{about}")
+
+    if bio:
+        lines.append(f"\n📖 <b>Дополнительно:</b>\n{html_escape_text(str(bio))}")
+
+    return "\n".join(lines)
+
+# ===== ЧАСТЬ 9 КОНЕЦ =====# ================= VIP =================
 def get_vip_price(chat_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -3587,7 +4053,7 @@ async def info_cmd(message: types.Message):
     )
 
 
-# ================= ПОГОДА =================
+# ================= ПОГОДА (КОМАНДА) =================
 @cmd("погода")
 async def weather_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
@@ -4004,200 +4470,884 @@ async def remove_city_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "city", None)
     await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
 
-
-# ================= АНКЕТА =================
-def _get_profile_field(profile, index, default=None):
-    try:
-        if profile and len(profile) > index:
-            val = profile[index]
-            return val if val is not None else default
-    except Exception:
-        pass
-    return default
-
-
-def _fmt_activity_num(n: int) -> str:
-    n = int(n or 0)
-    if n < 1000:
-        return str(n)
-    if n < 10000:
-        v = n / 1000
-        s = f"{v:.1f}".rstrip("0").rstrip(".")
-        return s.replace(".", ",") + "k"
-    if n < 100000:
-        return f"{n // 1000}k"
-    if n < 1000000:
-        v = n / 1000
-        return f"{v:.0f}k"
-    v = n / 1000000
-    s = f"{v:.1f}".rstrip("0").rstrip(".")
-    return s.replace(".", ",") + "M"
-
-
-def _owner_status_line(user_id: int) -> str:
-    if user_id == OWNER_ID:
-        return "⚜️ <b>Владелец бота</b>"
-    if is_coowner(user_id):
-        return "⚜️ <b>Совладелец бота</b>"
-    if is_agent(user_id):
-        return "🛡 <b>Агент поддержки Mos</b>"
-    return ""
-
-
-async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str:
-    user_id = target.id
-    profile = get_user_profile(user_id)
-    if not profile:
-        return "❌ Анкета не найдена."
-
-    gender = _get_profile_field(profile, 0)
-    birth_date = _get_profile_field(profile, 1)
-    city = _get_profile_field(profile, 2)
-    bio = _get_profile_field(profile, 3)
-    is_hidden = _get_profile_field(profile, 4, 1)
-    birth_vis = _get_profile_field(profile, 5, 'месяц')
-    motto = _get_profile_field(profile, 6)
-    show_citizenship = _get_profile_field(profile, 7, 1)
-
-    is_self = (viewer_id == user_id) if viewer_id else True
-    is_staff = False
-    if viewer_id:
-        is_staff = (viewer_id == OWNER_ID or is_coowner(viewer_id) or has_agent_rank(viewer_id, 1))
-
-    if is_hidden and not is_self and not is_staff:
-        return (
-            f"🔒 <b>Анкета скрыта</b>\n\n"
-            f"👤 {mention(target)} закрыл(а) свою анкету.\n"
-            f"<i>Он(а) может открыть её командой <code>+анкета</code>.</i>"
-        )
-
-    nick = get_user_nick(user_id, chat_id)
-    display_name = nick if nick else html_escape_text(target.first_name or "Пользователь")
-
-    has_link_in_name = isinstance(display_name, str) and "<a " in display_name
-    if not has_link_in_name:
-        if getattr(target, "username", None):
-            display_name = f'<a href="https://t.me/{target.username}">{display_name}</a>'
-        else:
-            display_name = f'<a href="tg://user?id={user_id}">{display_name}</a>'
-
-    lines = []
-
-    last_seen_raw = get_last_seen_in_chat(user_id, chat_id)
-    last_seen_str = format_last_seen(last_seen_raw) if last_seen_raw else None
-    suffix = f" (был {last_seen_str})" if last_seen_str and last_seen_str != "нет данных" else ""
-    lines.append(f"👤 <b>Это {display_name}{suffix}</b>")
-
-    # --- Строка 2: только ID, без username ---
-    lines.append(f"🆔 <a href=\"tg://user?id={user_id}\">{user_id}</a>")
-
-    status_line = _owner_status_line(user_id)
-    if status_line:
-        lines.append("")
-        lines.append(status_line)
-
-    lines.append("")
-
-    cit = get_citizenship_info(user_id)
-    if show_citizenship and cit:
-        cit_chat_id, cit_date = cit
-        try:
-            d = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
-            date_str = d.strftime("%d.%m.%Y")
-        except Exception:
-            date_str = cit_date[:10]
-        duration = format_citizenship_duration(cit_date)
-        lines.append(f"🕰 Во вселенной <b>Mos</b>: с {date_str} ({duration})")
-
-    if gender:
-        lines.append(f"🙂‍↔️ Пол: <b>{html_escape_text(str(gender).lower())}</b>")
-    else:
-        lines.append("🙂‍↔️ Пол: <i>не указан</i>")
-
-    if birth_date:
-        bd_display = str(birth_date)
-        try:
-            parts = bd_display.split(".")
-            if len(parts) == 3:
-                if birth_vis == "год":
-                    bd_display = f"{parts[2]} год"
-                elif birth_vis == "месяц":
-                    bd_display = f"{parts[1]}.{parts[2]}"
-                else:
-                    bd_display = f"{parts[0]}.{parts[1]}.{parts[2]}"
-        except Exception:
-            pass
-        lines.append(f"🗓 Дата рождения: <b>{html_escape_text(bd_display)}</b>")
-    else:
-        lines.append("🗓 Дата рождения: <i>не указана</i>")
-
-    if city:
-        lines.append(f"🏙 Город: <b>{html_escape_text(str(city))}</b>")
-    else:
-        lines.append("🏙 Город: <i>не указан</i>")
-
-    day, week, month, total = get_activity_extended_global(user_id)
-    lines.append(
-        f"📊 Активность (день|нед|мес|всего): "
-        f"<b>{_fmt_activity_num(day)}</b> | "
-        f"<b>{_fmt_activity_num(week)}</b> | "
-        f"<b>{_fmt_activity_num(month)}</b> | "
-        f"<b>{_fmt_activity_num(total)}</b>"
+# ===== ЧАСТЬ 10 КОНЕЦ =====# ================= РЫБАЛКА — ПОМОЩЬ =================
+def _fishing_help_text() -> str:
+    return (
+        "🎣 <b>Рыбалка — Mos</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🎯 <b>Основные</b>\n"
+        "• <code>.рыбалка</code> — забросить удочку\n"
+        "• <code>.моя рыбалка</code> — статистика\n"
+        "• <code>.рыбтоп</code> — топ-10 рыбаков\n"
+        "• <code>.событие</code> — событие в чате\n\n"
+        "🌊 <b>Локации</b>\n"
+        "• <code>.локация</code> — список\n"
+        "• 🌊 Пирс — старт\n"
+        "• 🪨 Камни — ур. 5+\n"
+        "• 🌅 Закатный мыс — ур. 15+\n"
+        "• 🌌 Бездна — ур. 20+\n"
+        "• 🏝 Остров сокровищ — ур. 30+ 💎VIP\n"
+        "Смена: <code>.локация пирс</code> (ранг 3+)\n\n"
+        "🎒 <b>Садок и продажа</b>\n"
+        "• <code>.садок</code> — что поймал\n"
+        "• <code>.продать все</code>\n"
+        "• <code>.продать Щука 5</code>\n\n"
+        "🛒 <b>Снасти с прокачкой</b>\n"
+        "• <code>.магазин снастей</code>\n"
+        "• <code>.купить hook</code> — купить снасть\n"
+        "• <code>.улучшить hook</code> — улучшить на ур.\n"
+        "• 🪝 Крючок 1-5 ур. (-10 мин КД за ур.)\n"
+        "• 🎣 Спиннинг 1-5 ур. (-5 мин КД за ур.)\n"
+        "• 🪣 Ведро 1-5 ур.\n"
+        "• 🚤 Лодка 1-3 ур.\n"
+        "• 🎣 Премиум-удочка 1-3 ур.\n"
+        "• 🔮 Магический поплавок 1-5 ур.\n"
+        "• <code>+прикормка</code> — +15% на 1 ч (20 🍬)\n\n"
+        "🏆 <b>Турнир</b>\n"
+        "• <code>.турнир</code> — запустить (админ)\n"
+        "• <code>.турнир участвовать</code>\n\n"
+        "🎖 <b>Ачивки</b>\n"
+        "• <code>.мои рыбные ачивки</code>\n\n"
+        "🗺 <b>Регионы</b> (не зависят от локаций)\n"
+        "🏞 река · 🌊 озеро · 🌊 море · 🌌 океан\n"
+        "Смена: <code>.регион река</code> (ранг 3+)\n\n"
+        "📊 <b>Как работает</b>\n"
+        "• КД между забросами: <b>2 часа</b> (сокращается снастями до 15 мин)\n"
+        "• 🪝 Крючок: −10 мин за уровень\n"
+        "• 🎣 Спиннинг: −5 мин за уровень\n"
+        "• 🎣 Премиум-удочка: −3 мин за уровень\n"
+        "• 🔮 Магический поплавок: −3 мин за уровень\n"
+        "• Шанс улова: <b>55% + 5% × уровень</b>\n"
+        "• XP за рыбу: <b>5–15</b>, за вещь: <b>3–8</b>\n"
+        "• Шанс легендарки: базово <b>3%</b> + бонусы\n"
     )
 
-    rank_text = get_user_rank_text(user_id, chat_id)
-    if rank_text:
-        lines.append(f"✨ Звание: <b>{rank_text}</b>")
 
-    if show_citizenship and cit:
-        cit_chat_id, cit_date = cit
-        try:
-            d2 = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
-            date_str2 = d2.strftime("%d.%m.%Y")
-        except Exception:
-            date_str2 = cit_date[:10]
-        duration2 = format_citizenship_duration(cit_date)
-        try:
-            cc2 = await bot.get_chat(cit_chat_id)
-            cc_title2 = cc2.title or "чат"
-        except Exception:
-            cc_title2 = "чат"
+@dp.message(lambda m: m.text and re.match(
+    r'^\s*[.\/!]?\s*рыбалка\s+(помощь|хелп|help)\s*$',
+    m.text.strip(), re.IGNORECASE
+))
+async def fishing_help_cmd(message: types.Message):
+    await message.reply(
+        _fishing_help_text(),
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
 
-        if cit_chat_id != chat_id and not is_staff and not is_self:
-            try:
-                m = await bot.get_chat_member(chat_id, user_id)
-                in_this_chat = m.status in ("member", "administrator", "creator", "restricted")
-            except Exception:
-                in_this_chat = False
-            if not in_this_chat:
-                lines.append(
-                    f"🏠 Гражданин чата «***» (не в каталоге): "
-                    f"<b>{duration2}</b> (с {date_str2})"
+
+# ================= РЫБАЛКА — ОСНОВНОЕ =================
+@cmd("рыбалка")
+@cmd("рыба")
+@cmd("рыбачить")
+async def fishing_cmd(message: types.Message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    info = get_fishing(user_id)
+    (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish, inv, legendary) = info
+
+    location_key = get_chat_location(chat_id)
+    location = LOCATIONS.get(location_key, LOCATIONS["pier"])
+
+    user_cooldown = get_user_fish_cooldown(user_id)
+    cooldown = format_fishing_cooldown(last_fish, user_cooldown)
+
+    if cooldown > 0:
+        hours = cooldown // 3600
+        mins = (cooldown % 3600) // 60
+        secs = cooldown % 60
+        parts = []
+        if hours > 0: parts.append(f"{hours} ч.")
+        if mins > 0: parts.append(f"{mins} мин.")
+        if secs > 0 and hours == 0: parts.append(f"{secs} сек.")
+        time_str = " ".join(parts) if parts else "1 сек."
+
+        progress = 1.0 - (cooldown / user_cooldown) if user_cooldown else 0
+        progress = max(0.0, min(1.0, progress))
+        bar_len = 12
+        filled = int(progress * bar_len)
+        bar = "▰" * filled + "▱" * (bar_len - filled)
+        percent = int(progress * 100)
+
+        cd_min = user_cooldown // 60
+        cd_hours = cd_min // 60
+        cd_min = cd_min % 60
+        if cd_hours > 0:
+            cd_str = f"{cd_hours} ч. {cd_min} мин."
+        else:
+            cd_str = f"{cd_min} мин."
+
+        return await message.reply(
+            f"⏳ <b>Удочка не готова</b>\n\n"
+            f"<code>{bar}</code> {percent}%\n\n"
+            f"⏱ Осталось: <b>{time_str}</b>\n"
+            f"⚙️ Твой кулдаун: <b>{cd_str}</b> <i>(улучшай снасти!)</i>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    msg = await message.reply("🎣 Забрасываю удочку...")
+    await asyncio.sleep(2)
+    event = get_active_event(chat_id)
+    event_bonus = 1.0; event_text = ""; rare_boost = 1.0
+    if event:
+        ev_key, ev_bonus, ev_exp = event
+        ev_data = FISHING_EVENTS.get(ev_key, {})
+        event_bonus = ev_bonus
+        rare_boost = ev_data.get("rare_boost", 1.0)
+        event_text = f"\n{ev_data.get('name', ev_key)} — бонус ×{event_bonus}"
+
+    chance = 55 + (level - 1) * 5 + 10
+    bait_active = is_bait_active(bait_until)
+    if bait_active: chance += 15
+
+    gear_bonus, gear_flat, boat_level, legendary_bonus, rare_bonus, gear_info = get_fishing_gear_bonus(user_id)
+
+    chance = int(chance * (1 + gear_bonus))
+    chance = min(chance, 98)
+    roll = random.randint(1, 100)
+
+    if roll <= chance:
+        is_thing = random.randint(1, 100) <= (20 + location["treasure_chance"])
+        if is_thing:
+            total_weight = sum(t[2] for t in THINGS_LIST)
+            pick = random.uniform(0, total_weight); cumulative = 0
+            chosen = THINGS_LIST[0]
+            for thing in THINGS_LIST:
+                cumulative += thing[2]
+                if pick <= cumulative: chosen = thing; break
+            name, emoji, weight, reward_mult, kind = chosen
+            reward = reward_mult * random.randint(1, 3)
+            add_candies(user_id, reward, 0)
+            xp_gain = random.randint(3, 8)
+            if kind == "gear_bait": set_fishing_bait(user_id)
+            if kind == "gear_lucky": add_to_fishing_inventory(user_id, "hook", 1)
+            if kind == "gear_float": add_to_fishing_inventory(user_id, "magic_float", 1)
+            new_xp = xp + xp_gain
+            new_level = level
+            while new_xp >= xp_needed_for_level(new_level):
+                new_xp -= xp_needed_for_level(new_level)
+                new_level += 1
+            update_fishing(user_id, level=new_level, xp=new_xp, total_caught=total_caught + 1)
+            set_fishing_last_fish(user_id)
+            log_fishing(user_id, chat_id, "caught", name, reward)
+            level_up_text = ""
+            if new_level > level: level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>"
+            extra = ""
+            if kind == "gear_bait": extra = "\n🍯 Тебе выпала <b>прикормка на 1 час</b>!"
+            if kind == "gear_lucky": extra = "\n🪝 Тебе выпал <b>Крючок 1 ур.</b>!"
+            if kind == "gear_float": extra = "\n🔮 Тебе выпал <b>Магический поплавок 1 ур.</b>!"
+            await msg.edit_text(
+                f"🎣 <b>УЛОВ</b>\n\n"
+                f"{emoji} <b>{name}</b>\n"
+                f"💰 Награда: <b>+{reward}</b> 🍬\n"
+                f"✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
+                f"📊 Уровень: <b>{new_level}</b> | XP: <b>{new_xp}/{xp_needed_for_level(new_level)}</b>\n"
+                f"🐟 Всего поймано: <b>{total_caught + 1}</b>"
+                f"{level_up_text}{extra}{event_text}",
+                parse_mode="HTML"
+            )
+            return
+
+        legendary_chance = 3 + legendary_bonus + location["legendary_chance"]
+        legendary_chance = int(legendary_chance * rare_boost * event_bonus)
+        is_legendary = random.randint(1, 100) <= legendary_chance
+
+        if is_legendary:
+            total_weight = sum(f[4] for f in LEGENDARY_FISH)
+            pick = random.uniform(0, total_weight); cumulative = 0
+            chosen = LEGENDARY_FISH[0]
+            for fish in LEGENDARY_FISH:
+                cumulative += fish[4]
+                if pick <= cumulative: chosen = fish; break
+            fish_name, fish_emoji, min_r, max_r, _ = chosen
+            update_legendary_count(user_id)
+            legendary_text = "\n\n💎 <b>ЛЕГЕНДАРНАЯ РЫБА!</b>"
+        else:
+            region = get_chat_region(chat_id)
+            hour = datetime.now().hour
+            time_of_day = "night" if (hour >= 22 or hour < 6) else "day"
+
+            available = []
+            for fish in FISH_LIST:
+                fname, femoji, fmin, fmax, fweight, fregion, ftime = fish
+                if fregion not in ("any", region):
+                    continue
+                if ftime not in ("any", time_of_day):
+                    continue
+                available.append(fish)
+
+            if not available:
+                available = FISH_LIST
+
+            total_weight = sum(f[4] for f in available)
+            pick = random.uniform(0, total_weight); cumulative = 0
+            chosen = available[0]
+            for fish in available:
+                cumulative += fish[4]
+                if pick <= cumulative: chosen = fish; break
+            fish_name = chosen[0]; fish_emoji = chosen[1]
+            legendary_text = ""
+
+        add_fish_to_storage(user_id, fish_name, fish_emoji, 1)
+        xp_gain = random.randint(5, 15)
+        new_xp = xp + xp_gain
+        new_level = level
+        while new_xp >= xp_needed_for_level(new_level):
+            new_xp -= xp_needed_for_level(new_level)
+            new_level += 1
+        update_fishing(user_id, level=new_level, xp=new_xp, total_caught=total_caught + 1)
+        set_fishing_last_fish(user_id)
+        log_fishing(user_id, chat_id, "caught", fish_name, 0)
+        tour = get_active_tournament(chat_id)
+        if tour: update_tournament_score(chat_id, user_id, 1)
+        new_ach = check_fishing_achievements(user_id, chat_id)
+        ach_text = ""
+        if new_ach: ach_text = "\n\n🎖 <b>Новые ачивки:</b>\n" + "\n".join(f"  • {a}" for a in new_ach)
+
+        fish_price = get_fish_price(fish_name) + gear_flat
+        xp_needed = xp_needed_for_level(new_level)
+        bar_len = 10
+        filled = min(bar_len, int((new_xp / xp_needed) * bar_len)) if xp_needed else 0
+        xp_bar = "▰" * filled + "▱" * (bar_len - filled)
+
+        weight = None
+        for f in FISH_LIST:
+            if f[0] == fish_name:
+                weight = f[4]; break
+        if weight is None:
+            rarity_icon = "💎"; rarity_name = "Легендарная"
+        elif weight >= 50:
+            rarity_icon = "⚪"; rarity_name = "Обычная"
+        elif weight >= 15:
+            rarity_icon = "🟢"; rarity_name = "Необычная"
+        elif weight >= 3:
+            rarity_icon = "🔵"; rarity_name = "Редкая"
+        elif weight >= 0.5:
+            rarity_icon = "🟣"; rarity_name = "Эпическая"
+        else:
+            rarity_icon = "🟠"; rarity_name = "Мифическая"
+
+        hour = datetime.now().hour
+        time_icon = "🌙" if (hour >= 22 or hour < 6) else ("🌅" if hour < 11 else ("☀️" if hour < 18 else "🌇"))
+
+        level_up_text = ""
+        if new_level > level:
+            level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>"
+
+        bait_text = "\n🍯 Прикормка активна" if bait_active else ""
+        loc_text = f"\n{location['emoji']} Локация: {location['name']}"
+
+        text = (
+            f"🎣 <b>УЛОВ</b> {time_icon}\n\n"
+            f"{fish_emoji} <b>{fish_name}</b>\n"
+            f"{rarity_icon} Редкость: <i>{rarity_name}</i>\n"
+            f"💵 Цена: <b>{fish_price}</b> 🍬\n"
+            f"✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
+            f"📊 <b>Уровень {new_level}</b>\n"
+            f"<code>{xp_bar}</code> {new_xp}/{xp_needed}\n\n"
+            f"🐟 Всего поймано: <b>{total_caught + 1}</b>\n"
+            f"📦 Продай: <code>.продать</code>"
+            f"{level_up_text}{legendary_text}{bait_text}{loc_text}{event_text}{ach_text}"
+        )
+        await msg.edit_text(text, parse_mode="HTML")
+    else:
+        update_fishing(user_id, total_empty=total_empty + 1)
+        set_fishing_last_fish(user_id)
+        log_fishing(user_id, chat_id, "empty")
+        phrases = [
+            "🐟 Рыба ушла...",
+            "🌊 Ничего не поймал.",
+            "🪝 Пустой крючок...",
+            "💧 Только водоросли.",
+            "🎣 Попробуй ещё раз!",
+            "🦆 Утка утащила наживку!",
+            "🌧 Дождь спугнул рыбу...",
+            "🧦 Поймал старый носок...",
+            "👻 Тень мелькнула и исчезла...",
+            "🌪 Ветер унёс поплавок...",
+        ]
+        phrase = random.choice(phrases)
+        xp_needed = xp_needed_for_level(level)
+        bar_len = 10
+        filled = min(bar_len, int((xp / xp_needed) * bar_len)) if xp_needed else 0
+        xp_bar = "▰" * filled + "▱" * (bar_len - filled)
+        hour = datetime.now().hour
+        time_icon = "🌙" if (hour >= 22 or hour < 6) else ("🌅" if hour < 11 else ("☀️" if hour < 18 else "🌇"))
+        await msg.edit_text(
+            f"🎣 <b>ПУСТО</b> {time_icon}\n\n"
+            f"{phrase}\n\n"
+            f"📊 <b>Уровень {level}</b>\n"
+            f"<code>{xp_bar}</code> {xp}/{xp_needed}\n\n"
+            f"📉 Пустых: <b>{total_empty + 1}</b>",
+            parse_mode="HTML"
+        )
+
+
+@cmd("садок")
+@cmd("моя рыба")
+@cmd("рыбасадок")
+async def fish_storage_cmd(message: types.Message):
+    user_id = message.from_user.id
+    storage = get_fish_storage(user_id)
+    if not storage:
+        return await message.reply("🎣 <b>Садок пуст</b>\n\nПоймай: <code>.рыбалка</code>", parse_mode="HTML", disable_web_page_preview=True)
+    text = "🎒 <b>Твой садок</b>\n\n"
+    total_price = 0; total_count = 0
+    sorted_fish = sorted(storage.items(), key=lambda x: get_fish_price(x[0]), reverse=True)
+    for fish_name, data in sorted_fish:
+        qty = data["quantity"]; emoji = data["emoji"]; price = get_fish_price(fish_name)
+        total_price += price * qty; total_count += qty
+        text += f"{emoji} <b>{fish_name}</b> × <b>{qty}</b> — {price} 🍬/шт\n"
+    text += f"\n💰 <b>Всего:</b> {total_count} рыб на <b>{total_price}</b> 🍬"
+    text += f"\n\n<code>.продать все</code>\n<code>.продать Щука</code>"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("продать")
+async def sell_fish_cmd(message: types.Message):
+    user_id = message.from_user.id
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        return await message.reply("📌 <code>.продать все</code>\n📌 <code>.продать Щука 5</code>", parse_mode="HTML", disable_web_page_preview=True)
+    storage = get_fish_storage(user_id)
+    if not storage:
+        return await message.reply("🎣 Садок пуст", parse_mode="HTML", disable_web_page_preview=True)
+    query = args[1].strip()
+    if query.lower() in ["все", "всё", "all", "*"]:
+        total_price = 0; total_count = 0; sold_list = []
+        for fish_name, data in storage.items():
+            qty = data["quantity"]; price = get_fish_price(fish_name)
+            total_price += price * qty; total_count += qty
+            sold_list.append(f"{data['emoji']} {fish_name} × {qty}")
+            remove_fish_from_storage(user_id, fish_name, qty)
+        add_candies(user_id, total_price, 0)
+        text = f"{em('check', '✅')} <b>Продано!</b>\n\n"
+        for s in sold_list[:20]: text += f"  • {s}\n"
+        if len(sold_list) > 20: text += f"  ... +{len(sold_list)-20} ещё\n"
+        text += f"\n💰 +{total_price} 🍬\n📊 Всего: {total_count} рыб\n💼 Баланс: <b>{get_balance(user_id)}</b> 🍬"
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    parts = query.split()
+    fish_name_query = parts[0]
+    matched_fish = None
+    for fish_name in storage.keys():
+        if fish_name_query.lower() in fish_name.lower() or fish_name.lower() in fish_name_query.lower():
+            matched_fish = fish_name; break
+    if not matched_fish:
+        return await message.reply(f"{em('cross', '❌')} Не найдена.\n<code>.садок</code>", parse_mode="HTML", disable_web_page_preview=True)
+    available = storage[matched_fish]["quantity"]
+    emoji = storage[matched_fish]["emoji"]; price = get_fish_price(matched_fish)
+    if len(parts) >= 2 and parts[1].isdigit():
+        qty = min(int(parts[1]), available)
+        if qty < 1: qty = 1
+    else: qty = available
+    total_price = price * qty
+    remove_fish_from_storage(user_id, matched_fish, qty)
+    add_candies(user_id, total_price, 0)
+    await message.reply(
+        f"{em('check', '✅')} <b>Продано!</b>\n\n{emoji} <b>{matched_fish}</b> × <b>{qty}</b>\n💰 +{total_price} 🍬\n📊 Осталось: <b>{available - qty}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("рыбтоп")
+async def fishing_top_cmd(message: types.Message):
+    top = get_fishing_top(limit=10)
+    if not top:
+        return await message.reply("📭 Никто не рыбачил.", parse_mode="HTML", disable_web_page_preview=True)
+    text = "🏆 <b>Топ рыбаков:</b>\n\n"
+    medals = ["🥇", "🥈", "🥉"]
+    for i, (user_id, caught, level) in enumerate(top, 1):
+        try:
+            user = await bot.get_chat(user_id)
+            name = user_link(user_id, user.first_name, user.username)
+        except: name = f"ID: {user_id}"
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        text += f"{medal} {name} — <b>{caught}</b> 🐟 (ур. {level})\n"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("моя рыбалка")
+@cmd("рыбстата")
+async def fishing_stats_cmd(message: types.Message):
+    user_id = message.from_user.id
+    info = get_fishing(user_id)
+    (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish, inv, legendary) = info
+    xp_needed = xp_needed_for_level(level)
+    bait_active = is_bait_active(bait_until)
+    bait_text = "✅ Активна" if bait_active else "❌ Нет"
+    total = total_caught + total_empty
+    success_rate = int(total_caught / total * 100) if total > 0 else 0
+
+    user_cooldown = get_user_fish_cooldown(user_id)
+    cooldown = format_fishing_cooldown(last_fish, user_cooldown)
+    if cooldown > 0:
+        hours = cooldown // 3600; mins = (cooldown % 3600) // 60
+        parts = []
+        if hours > 0: parts.append(f"{hours} ч.")
+        if mins > 0: parts.append(f"{mins} мин.")
+        cooldown_text = "⏳ " + " ".join(parts)
+    else: cooldown_text = "✅ Готово"
+
+    cd_min = user_cooldown // 60
+    cd_hours = cd_min // 60
+    cd_min = cd_min % 60
+    if cd_hours > 0:
+        cd_full_str = f"{cd_hours} ч. {cd_min} мин."
+    else:
+        cd_full_str = f"{cd_min} мин."
+
+    bar_len = 12
+    filled = min(bar_len, int((xp / xp_needed) * bar_len)) if xp_needed else 0
+    xp_bar = "▰" * filled + "▱" * (bar_len - filled)
+
+    region = get_chat_region(message.chat.id)
+    region_names = {"river": "🏞 Река", "lake": "🌊 Озеро", "sea": "🌊 Море", "ocean": "🌌 Океан"}
+    region_text = region_names.get(region, region)
+
+    location_key = get_chat_location(message.chat.id)
+    location = LOCATIONS.get(location_key, LOCATIONS["pier"])
+
+    if level < 5: lvl_icon = "🟢"
+    elif level < 15: lvl_icon = "🔵"
+    elif level < 30: lvl_icon = "🟣"
+    elif level < 60: lvl_icon = "🟠"
+    else: lvl_icon = "🟡"
+
+    await message.reply(
+        f"🎣 <b>Твоя рыбалка</b>\n\n"
+        f"{lvl_icon} Уровень: <b>{level}</b>\n"
+        f"<code>{xp_bar}</code> {xp}/{xp_needed} XP\n\n"
+        f"📍 Регион: {region_text}\n"
+        f"{location['emoji']} Локация: <b>{location['name']}</b>\n"
+        f"🐟 Поймано: <b>{total_caught}</b>\n"
+        f"📉 Пустых: <b>{total_empty}</b>\n"
+        f"🎯 Успешность: <b>{success_rate}%</b>\n"
+        f"💎 Легендарных: <b>{legendary or 0}</b>\n\n"
+        f"🍯 Прикормка: {bait_text}\n"
+        f"⚙️ Кулдаун: <b>{cd_full_str}</b> (улучшай снасти!)\n"
+        f"⏰ Готовность: {cooldown_text}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip().startswith("+прикормка"))
+async def buy_bait_cmd(message: types.Message):
+    user_id = message.from_user.id
+    info = get_fishing(user_id)
+    if is_bait_active(info[6]):
+        return await message.reply("🍯 Уже активна.", parse_mode="HTML", disable_web_page_preview=True)
+    price = 20
+    if get_balance(user_id) < price:
+        return await message.reply(f"❌ Нужно <b>{price}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (price, user_id))
+        conn.commit()
+    set_fishing_bait(user_id)
+    await message.reply(f"✅ <b>Прикормка куплена!</b>\n🍯 {BAIT_DURATION_HOURS} ч.", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("магазин снастей")
+@cmd("снасти")
+async def fishing_shop_cmd(message: types.Message):
+    user_id = message.from_user.id
+    inv = get_fishing_inventory(user_id)
+
+    text = "🛒 <b>Магазин снастей</b>\n\n"
+
+    for key, gear in FISHING_GEAR.items():
+        cur_level = inv.get(key, 0)
+        if cur_level > 0:
+            next_cost = int(gear["base_price"] * (cur_level + 1) * 0.6) if cur_level < gear["max_level"] else 0
+            if cur_level >= gear["max_level"]:
+                text += (
+                    f"<b>{gear['name']}</b> — <b>УР. {cur_level}/{gear['max_level']} ✅ МАКС</b>\n"
+                    f"   <i>{gear['desc']}</i>\n\n"
                 )
             else:
-                lines.append(
-                    f"🏠 Гражданин чата «{cc_title2}»: "
-                    f"<b>{duration2}</b> (с {date_str2})"
+                text += (
+                    f"<b>{gear['name']}</b> — ур. <b>{cur_level}/{gear['max_level']}</b>\n"
+                    f"   <i>{gear['desc']}</i>\n"
+                    f"   ⬆️ Улучшить: <code>.улучшить {key}</code> ({next_cost} 🍬)\n\n"
                 )
         else:
-            lines.append(
-                f"🏠 Гражданин чата «{cc_title2}»: "
-                f"<b>{duration2}</b> (с {date_str2})"
+            text += (
+                f"<b>{gear['name']}</b> — <b>{gear['base_price']}</b> 🍬\n"
+                f"   <i>{gear['desc']}</i>\n"
+                f"   Купить: <code>.купить {key}</code>\n\n"
             )
 
-    if motto:
-        lines.append(f"💭 Девиз: {motto}")
-
-    about = get_user_about(user_id)
-    if about:
-        lines.append(f"\n📝 <b>О себе:</b>\n{about}")
-
-    if bio:
-        lines.append(f"\n📖 <b>Дополнительно:</b>\n{html_escape_text(str(bio))}")
-
-    return "\n".join(lines)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*купить\s+\S+', m.text.strip(), re.IGNORECASE)
+    and not re.match(r'^\s*[.\/!]?\s*купить\s+вип\b', m.text.strip(), re.IGNORECASE)
+    and not re.match(r'^\s*[.\/!]?\s*купить\s+коины\b', m.text.strip(), re.IGNORECASE))
+async def fishing_buy_cmd(message: types.Message):
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply("📌 <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    query = args[1].lower()
+    gear_key = None
+    for k, g in FISHING_GEAR.items():
+        if query == k or query in g["name"].lower():
+            gear_key = k; break
+
+    if not gear_key:
+        return await message.reply("❌ Снасть не найдена. <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    gear = FISHING_GEAR[gear_key]
+    user_id = message.from_user.id
+    inv = get_fishing_inventory(user_id)
+
+    if inv.get(gear_key, 0) > 0:
+        return await message.reply(f"⚠️ Уже есть <b>{gear['name']}</b>. Улучшить: <code>.улучшить {gear_key}</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    price = gear["base_price"]
+    if get_balance(user_id) < price:
+        return await message.reply(f"❌ Нужно <b>{price}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
+
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (price, user_id))
+        conn.commit()
+    add_to_fishing_inventory(user_id, gear_key, 1)
+    await message.reply(
+        f"{em('check', '✅')} <b>Куплено!</b>\n\n{gear['name']} — ур. 1/{gear['max_level']}\n<i>{gear['desc']}</i>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*улучшить\s+\S+', m.text.strip(), re.IGNORECASE))
+async def upgrade_gear_cmd(message: types.Message):
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply("📌 <code>.улучшить hook</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    query = args[1].lower()
+    gear_key = None
+    for k, g in FISHING_GEAR.items():
+        if query == k or query in g["name"].lower():
+            gear_key = k; break
+
+    if not gear_key:
+        return await message.reply("❌ Снасть не найдена. <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    ok, msg_text, new_level = upgrade_fishing_gear(message.from_user.id, gear_key)
+    if ok:
+        gear = FISHING_GEAR[gear_key]
+        await message.reply(
+            f"✅ <b>{gear['name']} улучшено!</b>\n\n"
+            f"⬆️ Теперь уровень: <b>{new_level}/{gear['max_level']}</b>\n"
+            f"{msg_text}",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    else:
+        await message.reply(f"❌ {msg_text}", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("инвентарь")
+@cmd("инв")
+async def fishing_inventory_cmd(message: types.Message):
+    user_id = message.from_user.id
+    inv = get_fishing_inventory(user_id)
+    text = "🎒 <b>Твой инвентарь</b>\n\n"
+    if not inv:
+        text += "<i>Пусто. <code>.магазин снастей</code></i>\n"
+    else:
+        for key, level in inv.items():
+            gear = FISHING_GEAR.get(key)
+            if not gear: continue
+            if isinstance(level, int) and level > 0:
+                text += f"{gear['name']} — ур. <b>{level}/{gear.get('max_level', 1)}</b>\n"
+                text += f"   <i>{gear['desc']}</i>\n"
+
+    gear_bonus, gear_flat, boat_level, legendary_bonus, rare_bonus, gear_info = get_fishing_gear_bonus(user_id)
+    text += f"\n📊 <b>Бонусы:</b>\n"
+    text += f"• К улову: <b>+{int(gear_bonus*100)}%</b>\n"
+    text += f"• К цене рыбы: <b>+{gear_flat}</b> 🍬\n"
+    if legendary_bonus:
+        text += f"• К шансу легендарки: <b>+{legendary_bonus}%</b>\n"
+    if rare_bonus:
+        text += f"• К шансу редкой: <b>+{rare_bonus}%</b>\n"
+
+    user_cooldown = get_user_fish_cooldown(user_id)
+    cd_min = user_cooldown // 60
+    cd_hours = cd_min // 60
+    cd_min = cd_min % 60
+    if cd_hours > 0:
+        cd_str = f"{cd_hours} ч. {cd_min} мин."
+    else:
+        cd_str = f"{cd_min} мин."
+    text += f"\n⚙️ Твой кулдаун: <b>{cd_str}</b>"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("мои рыбные ачивки")
+@cmd("рыбные ачивки")
+async def fishing_ach_cmd(message: types.Message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT achievement FROM fishing_achievements WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        have = {r[0] for r in c.fetchall()}
+    text = "🎖 <b>Твои ачивки рыбалки</b>\n\n"
+    for key, ach in FISHING_ACHIEVEMENTS.items():
+        mark = "✅" if key in have else "🔒"
+        text += f"{mark} {ach['name']}\n"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("событие")
+@cmd("погода рыбалки")
+async def fishing_event_cmd(message: types.Message):
+    chat_id = message.chat.id
+    event = get_active_event(chat_id)
+    if not event:
+        return await message.reply(
+            "☀️ <b>Сейчас штиль</b>\n\n"
+            "Следующее событие появится в течение <b>1.5 часа</b>.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    ev_key, bonus, expires = event
+    ev_data = FISHING_EVENTS.get(ev_key, {})
+    try:
+        exp_dt = datetime.strptime(expires[:19], "%Y-%m-%d %H:%M:%S")
+        left_seconds = int((exp_dt - datetime.now()).total_seconds())
+        if left_seconds < 0:
+            left_seconds = 0
+        left_min = left_seconds // 60
+        left_hours = left_min // 60
+        left_min = left_min % 60
+        if left_hours > 0:
+            left_str = f"{left_hours} ч. {left_min} мин."
+        else:
+            left_str = f"{left_min} мин."
+    except:
+        left_str = "?"
+
+    text = (
+        f"{ev_data.get('name', ev_key)}\n"
+        f"📈 Бонус: <b>×{bonus}</b>\n"
+        f"⏰ Осталось: <b>{left_str}</b>"
+    )
+    if ev_data.get("rare_boost"):
+        text += f"\n💎 Шанс редких ×{ev_data['rare_boost']}"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("локация")
+@cmd("локации")
+async def location_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    current_key = get_chat_location(message.chat.id)
+    current = LOCATIONS.get(current_key, LOCATIONS["pier"])
+
+    args = message.text.split()
+
+    if len(args) < 2:
+        text = "🌊 <b>Локации рыбалки</b>\n\n"
+        text += f"📍 <b>Сейчас:</b> {current['name']}\n\n"
+
+        for key, loc in LOCATIONS.items():
+            mark = "✅" if key == current_key else "•"
+            vip = " 💎VIP" if loc["vip_required"] else ""
+            text += (
+                f"{mark} {loc['emoji']} <b>{loc['name']}</b>{vip}\n"
+                f"   <i>{loc['desc']}</i>\n"
+                f"   🔓 Мин. ур.: <b>{loc['min_level']}</b> | "
+                f"🟣 Редкая: <b>+{loc['rare_chance']}%</b> | "
+                f"💎 Легендарка: <b>+{loc['legendary_chance']}%</b> | "
+                f"💰 Сокровища: <b>+{loc['treasure_chance']}%</b>\n\n"
+            )
+
+        text += f"📌 Сменить: <code>.локация пирс</code> (и т.д.)"
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+    query = args[1].lower()
+    mapping = {
+        "пирс": "pier", "pier": "pier",
+        "камни": "rocks", "rocks": "rocks", "камень": "rocks",
+        "мыс": "sunset_cape", "закатный": "sunset_cape", "sunset": "sunset_cape", "cape": "sunset_cape",
+        "бездна": "abyss", "abyss": "abyss",
+        "остров": "treasure_island", "island": "treasure_island", "сокровищ": "treasure_island",
+    }
+
+    if query not in mapping:
+        return await message.reply(
+            "❌ Доступные локации: <code>пирс</code>, <code>камни</code>, <code>закатный</code>, <code>бездна</code>, <code>остров</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    new_key = mapping[query]
+    new_loc = LOCATIONS[new_key]
+
+    if not has_permission(message.chat.id, message.from_user.id, 3) and message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
+        return await message.reply(
+            f"❌ Только <b>Мл. Админ (3+)</b> может менять локацию.",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    set_chat_location(message.chat.id, new_key)
+
+    await message.reply(
+        f"✅ <b>Локация изменена!</b>\n\n"
+        f"📍 Теперь: {new_loc['name']}\n"
+        f"   <i>{new_loc['desc']}</i>\n\n"
+        f"🔓 Мин. ур.: <b>{new_loc['min_level']}</b>\n"
+        f"🟣 Редкая: <b>+{new_loc['rare_chance']}%</b>\n"
+        f"💎 Легендарка: <b>+{new_loc['legendary_chance']}%</b>\n"
+        f"💰 Сокровища: <b>+{new_loc['treasure_chance']}%</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("регион")
+@cmd("рыбное место")
+async def region_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+
+    current = get_chat_region(message.chat.id)
+    region_names = {
+        "river": "🏞 Река",
+        "lake":  "🌊 Озеро",
+        "sea":   "🌊 Море",
+        "ocean": "🌌 Океан",
+    }
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.reply(
+            f"🗺 <b>Регион рыбалки</b>\n\n"
+            f"📍 Сейчас: <b>{region_names.get(current, current)}</b>\n\n"
+            f"📌 Сменить (ранг 3+): <code>.регион река|озеро|море|океан</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    if not has_permission(message.chat.id, message.from_user.id, 3):
+        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+
+    sub = args[1].lower()
+    mapping = {
+        "река": "river", "river": "river", "рек": "river",
+        "озеро": "lake", "lake": "lake", "озер": "lake",
+        "море": "sea", "sea": "sea", "мор": "sea",
+        "океан": "ocean", "ocean": "ocean", "оке": "ocean",
+    }
+    if sub not in mapping:
+        return await message.reply(
+            "❌ Допустимые: <code>река</code>, <code>озеро</code>, <code>море</code>, <code>океан</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    new_region = mapping[sub]
+    set_chat_region(message.chat.id, new_region)
+    await message.reply(
+        f"{em('check', '✅')} <b>Регион изменён!</b>\n\n"
+        f"📍 Теперь: <b>{region_names[new_region]}</b>\n"
+        f"👮 {mention(message.from_user)}",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@cmd("турнир")
+async def fishing_tournament_cmd(message: types.Message):
+    args = message.text.split(); chat_id = message.chat.id
+    if len(args) >= 2 and args[1].lower() in ["участвовать", "join"]:
+        tour = get_active_tournament(chat_id)
+        if not tour:
+            return await message.reply("❌ Нет активного турнира.", parse_mode="HTML", disable_web_page_preview=True)
+        join_tournament(chat_id, message.from_user.id)
+        return await message.reply(f"{em('check', '✅')} Ты в турнире!", parse_mode="HTML", disable_web_page_preview=True)
+    if len(args) >= 2 and args[1].lower() in ["стоп", "end"]:
+        is_admin = (message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
+                    or has_agent_rank(message.from_user.id, 1)
+                    or await is_tg_admin(chat_id, message.from_user.id))
+        if not is_admin:
+            return await message.reply(f"{em('cross', '❌')} Только админ.", parse_mode="HTML", disable_web_page_preview=True)
+        winners = end_tournament(chat_id)
+        if not winners:
+            return await message.reply("❌ Турнир не найден или нет участников.", parse_mode="HTML", disable_web_page_preview=True)
+        text = "🏆 <b>ТУРНИР ЗАВЕРШЁН!</b>\n\n"
+        medals = ["🥇", "🥈", "🥉"]
+        for i, (uid, caught, prize) in enumerate(winners):
+            try:
+                u = await bot.get_chat(uid)
+                name = user_link(uid, u.first_name, u.username)
+            except: name = f"ID {uid}"
+            text += f"{medals[i]} {name} — <b>{caught}</b> 🐟 (+{prize} 🍬)\n"
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+    is_admin = (message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
+                or has_agent_rank(message.from_user.id, 1)
+                or await is_tg_admin(chat_id, message.from_user.id))
+    if not is_admin:
+        return await message.reply(f"{em('cross', '❌')} Только админ может запустить турнир.", parse_mode="HTML", disable_web_page_preview=True)
+
+    tour = get_active_tournament(chat_id)
+    if tour:
+        started_by, started_at, expires_at, prize = tour
+        try:
+            exp_dt = _parse_dt(expires_at)
+            left = int((exp_dt - datetime.now()).total_seconds() / 60)
+            if left < 0: left = 0
+        except: left = 0
+        members = get_tournament_members(chat_id, limit=10)
+        text = f"🏆 <b>Турнир идёт</b>\n⏰ Осталось: <b>{left} мин.</b>\n💰 Приз: до <b>100</b> 🍬\n\n"
+        if members:
+            medals = ["🥇", "🥈", "🥉"]
+            for i, (uid, caught) in enumerate(members):
+                try:
+                    u = await bot.get_chat(uid)
+                    name = user_link(uid, u.first_name, u.username)
+                except: name = f"ID {uid}"
+                m = medals[i] if i < 3 else f"{i+1}."
+                text += f"{m} {name} — <b>{caught}</b> 🐟\n"
+        text += f"\n📌 <code>.турнир участвовать</code>"
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+    create_tournament(chat_id, message.from_user.id, prize=100, duration_min=TOURNAMENT_DURATION_MIN)
+    join_tournament(chat_id, message.from_user.id)
+    await message.reply(
+        f"🏆 <b>ТУРНИР ЗАПУЩЕН!</b>\n⏰ {TOURNAMENT_DURATION_MIN} мин.\n"
+        f"💰 Призы: <b>20–100</b> 🍬 (зависит от числа участников)\n"
+        f"📌 <code>.турнир участвовать</code>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["+событие", "+ событие"])
+async def enable_events_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]: return
+    if not await _check_automod_perms(message): return
+    if is_events_enabled(message.chat.id):
+        return await message.reply("ℹ️ Уже включены.", parse_mode="HTML", disable_web_page_preview=True)
+    set_events_enabled(message.chat.id, True)
+    await message.reply(f"{em('check', '✅')} Уведомления о событиях включены!", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["-событие", "- событие"])
+async def disable_events_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]: return
+    if not await _check_automod_perms(message): return
+    if not is_events_enabled(message.chat.id):
+        return await message.reply("ℹ️ Уже выключены.", parse_mode="HTML", disable_web_page_preview=True)
+    set_events_enabled(message.chat.id, False)
+    await message.reply(f"{em('check', '✅')} Уведомления о событиях выключены!", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@cmd("события")
+@cmd("уведомления")
+async def events_status_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]: return
+    enabled = is_events_enabled(message.chat.id)
+    status = "🟢 включены" if enabled else "🔴 выключены"
+    await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+# ===== ЧАСТЬ 11 КОНЕЦ =====# ================= АНКЕТА (КОМАНДЫ) =================
 @cmd("анкета")
 async def anketa_cmd(message: types.Message):
     target = None
@@ -4561,7 +5711,7 @@ async def get_chat_id_cmd(message: types.Message):
     )
 
 
-# ================= ТОП (с собственным фильтром) =================
+# ================= ТОП =================
 @dp.message(lambda m: m.text and re.match(
     r'^\s*[.\/!]?\s*топ(\s+\S+)?\s*$',
     m.text.strip(), re.IGNORECASE
@@ -4836,8 +5986,7 @@ async def command_notify_status_cmd(message: types.Message):
     status = "🟢 включены" if enabled else "🔴 выключены"
     await message.reply(f"🔔 Оповещения: {status}\n\n<code>+команды</code> / <code>-команды</code>", parse_mode="HTML", disable_web_page_preview=True)
 
-
-# ================= МОДЕРАЦИЯ =================
+# ===== ЧАСТЬ 12 КОНЕЦ =====# ================= МОДЕРАЦИЯ =================
 @mod_cmd("бан")
 async def ban_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
@@ -5579,8 +6728,7 @@ async def as_list_cmd(message: types.Message):
         )
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
-
-# ================= АГЕНТЫ =================
+# ===== ЧАСТЬ 13 КОНЕЦ =====# ================= АГЕНТЫ =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+агент"))
 async def add_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
@@ -6583,667 +7731,7 @@ async def successful_payment_handler(message: types.Message):
         parse_mode="HTML", disable_web_page_preview=True
     )
 
-
-# ================= РЫБАЛКА — ПОМОЩЬ =================
-def _fishing_help_text() -> str:
-    return (
-        "🎣 <b>Рыбалка — Mos</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🎯 <b>Основные</b>\n"
-        "• <code>.рыбалка</code> — забросить удочку (КД 2 ч)\n"
-        "• <code>.моя рыбалка</code> — статистика\n"
-        "• <code>.рыбтоп</code> — топ-10 рыбаков\n"
-        "• <code>.событие</code> — событие в чате\n\n"
-        "🎒 <b>Садок и продажа</b>\n"
-        "• <code>.садок</code> — что поймал\n"
-        "• <code>.продать все</code>\n"
-        "• <code>.продать Щука 5</code>\n\n"
-        "🛒 <b>Снасти</b>\n"
-        "• <code>.магазин снастей</code>\n"
-        "• <code>.купить крючок</code> — +5% (500 🍬)\n"
-        "• <code>.купить спиннинг</code> — +10% (1500 🍬)\n"
-        "• <code>.купить лодка</code> — редкая рыба (5000 🍬)\n"
-        "• <code>.купить премиум-удочка</code> — +15% (10000 🍬)\n"
-        "• <code>+прикормка</code> — +15% на 1 ч (20 🍬)\n\n"
-        "🏆 <b>Турнир</b>\n"
-        "• <code>.турнир</code> — запустить (админ)\n"
-        "• <code>.турнир участвовать</code>\n\n"
-        "🎖 <b>Ачивки</b>\n"
-        "• <code>.мои рыбные ачивки</code>\n\n"
-        "🗺 <b>Регионы</b>\n"
-        "🏞 река · 🌊 озеро · 🌊 море · 🌌 океан\n"
-        "Смена: <code>.регион река</code> (ранг 3+)\n\n"
-        "📊 <b>Как работает</b>\n"
-        "• КД между забросами: <b>2 часа</b>\n"
-        "• Шанс улова: <b>55% + 5% × уровень</b>\n"
-        "• XP за рыбу: <b>5–15</b>, за вещь: <b>3–8</b>\n"
-        "• Шанс легендарки: базово <b>3%</b>\n"
-    )
-
-
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*рыбалка\s+(помощь|хелп|help)\s*$',
-    m.text.strip(), re.IGNORECASE
-))
-async def fishing_help_cmd(message: types.Message):
-    await message.reply(
-        _fishing_help_text(),
-        parse_mode="HTML",
-        disable_web_page_preview=True
-    )
-
-
-# ================= РЫБАЛКА — ОСНОВНОЕ =================
-@cmd("рыбалка")
-@cmd("рыба")
-@cmd("рыбачить")
-async def fishing_cmd(message: types.Message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    info = get_fishing(user_id)
-    (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish, inv, legendary) = info
-    cooldown = format_fishing_cooldown(last_fish)
-    if cooldown > 0:
-        hours = cooldown // 3600
-        mins = (cooldown % 3600) // 60
-        secs = cooldown % 60
-        parts = []
-        if hours > 0: parts.append(f"{hours} ч.")
-        if mins > 0: parts.append(f"{mins} мин.")
-        if secs > 0 and hours == 0: parts.append(f"{secs} сек.")
-        time_str = " ".join(parts) if parts else "1 сек."
-
-        progress = 1.0 - (cooldown / FISH_COOLDOWN_SECONDS)
-        progress = max(0.0, min(1.0, progress))
-        bar_len = 12
-        filled = int(progress * bar_len)
-        bar = "▰" * filled + "▱" * (bar_len - filled)
-        percent = int(progress * 100)
-
-        return await message.reply(
-            f"⏳ <b>Удочка не готова</b>\n\n"
-            f"<code>{bar}</code> {percent}%\n\n"
-            f"⏱ Осталось: <b>{time_str}</b>",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-
-    msg = await message.reply("🎣 Забрасываю удочку...")
-    await asyncio.sleep(2)
-    event = get_active_event(chat_id)
-    event_bonus = 1.0; event_text = ""; rare_boost = 1.0
-    if event:
-        ev_key, ev_bonus, ev_exp = event
-        ev_data = FISHING_EVENTS.get(ev_key, {})
-        event_bonus = ev_bonus
-        rare_boost = ev_data.get("rare_boost", 1.0)
-        event_text = f"\n{ev_data.get('name', ev_key)} — бонус ×{event_bonus}"
-
-    chance = 55 + (level - 1) * 5 + 10
-    bait_active = is_bait_active(bait_until)
-    if bait_active: chance += 15
-    gear_bonus, gear_flat, has_boat, has_premium = get_fishing_gear_bonus(user_id)
-    chance = int(chance * (1 + gear_bonus))
-    chance = min(chance, 98)
-    roll = random.randint(1, 100)
-
-    if roll <= chance:
-        is_thing = random.randint(1, 100) <= 20
-        if is_thing:
-            total_weight = sum(t[2] for t in THINGS_LIST)
-            pick = random.uniform(0, total_weight); cumulative = 0
-            chosen = THINGS_LIST[0]
-            for thing in THINGS_LIST:
-                cumulative += thing[2]
-                if pick <= cumulative: chosen = thing; break
-            name, emoji, weight, reward_mult, kind = chosen
-            reward = reward_mult * random.randint(1, 3)
-            add_candies(user_id, reward, 0)
-            xp_gain = random.randint(3, 8)
-            if kind == "gear_bait": set_fishing_bait(user_id)
-            if kind == "gear_lucky": add_to_fishing_inventory(user_id, "premium_rod", 1)
-            new_xp = xp + xp_gain
-            new_level = level
-            while new_xp >= xp_needed_for_level(new_level):
-                new_xp -= xp_needed_for_level(new_level)
-                new_level += 1
-            update_fishing(user_id, level=new_level, xp=new_xp, total_caught=total_caught + 1)
-            set_fishing_last_fish(user_id)
-            log_fishing(user_id, chat_id, "caught", name, reward)
-            level_up_text = ""
-            if new_level > level: level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>"
-            extra = ""
-            if kind == "gear_bait": extra = "\n🍯 Тебе выпала <b>прикормка на 1 час</b>!"
-            if kind == "gear_lucky": extra = "\n🎣 Тебе выпала <b>Премиум-удочка</b>!"
-            await msg.edit_text(
-                f"🎣 <b>УЛОВ</b>\n\n"
-                f"{emoji} <b>{name}</b>\n"
-                f"💰 Награда: <b>+{reward}</b> 🍬\n"
-                f"✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
-                f"📊 Уровень: <b>{new_level}</b> | XP: <b>{new_xp}/{xp_needed_for_level(new_level)}</b>\n"
-                f"🐟 Всего поймано: <b>{total_caught + 1}</b>"
-                f"{level_up_text}{extra}{event_text}",
-                parse_mode="HTML"
-            )
-            return
-
-        legendary_chance = 3
-        if has_boat: legendary_chance += 20
-        if has_premium: legendary_chance += 10
-        legendary_chance = int(legendary_chance * rare_boost * event_bonus)
-        is_legendary = random.randint(1, 100) <= legendary_chance
-
-        if is_legendary:
-            total_weight = sum(f[4] for f in LEGENDARY_FISH)
-            pick = random.uniform(0, total_weight); cumulative = 0
-            chosen = LEGENDARY_FISH[0]
-            for fish in LEGENDARY_FISH:
-                cumulative += fish[4]
-                if pick <= cumulative: chosen = fish; break
-            fish_name, fish_emoji, min_r, max_r, _ = chosen
-            update_legendary_count(user_id)
-            legendary_text = "\n\n💎 <b>ЛЕГЕНДАРНАЯ РЫБА!</b>"
-        else:
-            region = get_chat_region(chat_id)
-            hour = datetime.now().hour
-            time_of_day = "night" if (hour >= 22 or hour < 6) else "day"
-
-            available = []
-            for fish in FISH_LIST:
-                fname, femoji, fmin, fmax, fweight, fregion, ftime = fish
-                if fregion not in ("any", region):
-                    continue
-                if ftime not in ("any", time_of_day):
-                    continue
-                available.append(fish)
-
-            if not available:
-                available = FISH_LIST
-
-            total_weight = sum(f[4] for f in available)
-            pick = random.uniform(0, total_weight); cumulative = 0
-            chosen = available[0]
-            for fish in available:
-                cumulative += fish[4]
-                if pick <= cumulative: chosen = fish; break
-            fish_name = chosen[0]; fish_emoji = chosen[1]
-            legendary_text = ""
-
-        add_fish_to_storage(user_id, fish_name, fish_emoji, 1)
-        xp_gain = random.randint(5, 15)
-        new_xp = xp + xp_gain
-        new_level = level
-        while new_xp >= xp_needed_for_level(new_level):
-            new_xp -= xp_needed_for_level(new_level)
-            new_level += 1
-        update_fishing(user_id, level=new_level, xp=new_xp, total_caught=total_caught + 1)
-        set_fishing_last_fish(user_id)
-        log_fishing(user_id, chat_id, "caught", fish_name, 0)
-        tour = get_active_tournament(chat_id)
-        if tour: update_tournament_score(chat_id, user_id, 1)
-        new_ach = check_fishing_achievements(user_id, chat_id)
-        ach_text = ""
-        if new_ach: ach_text = "\n\n🎖 <b>Новые ачивки:</b>\n" + "\n".join(f"  • {a}" for a in new_ach)
-
-        fish_price = get_fish_price(fish_name)
-        xp_needed = xp_needed_for_level(new_level)
-        bar_len = 10
-        filled = min(bar_len, int((new_xp / xp_needed) * bar_len)) if xp_needed else 0
-        xp_bar = "▰" * filled + "▱" * (bar_len - filled)
-
-        weight = None
-        for f in FISH_LIST:
-            if f[0] == fish_name:
-                weight = f[4]; break
-        if weight is None:
-            rarity_icon = "💎"; rarity_name = "Легендарная"
-        elif weight >= 50:
-            rarity_icon = "⚪"; rarity_name = "Обычная"
-        elif weight >= 15:
-            rarity_icon = "🟢"; rarity_name = "Необычная"
-        elif weight >= 3:
-            rarity_icon = "🔵"; rarity_name = "Редкая"
-        elif weight >= 0.5:
-            rarity_icon = "🟣"; rarity_name = "Эпическая"
-        else:
-            rarity_icon = "🟠"; rarity_name = "Мифическая"
-
-        hour = datetime.now().hour
-        time_icon = "🌙" if (hour >= 22 or hour < 6) else ("🌅" if hour < 11 else ("☀️" if hour < 18 else "🌇"))
-
-        level_up_text = ""
-        if new_level > level:
-            level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>"
-
-        bait_text = "\n🍯 Прикормка активна" if bait_active else ""
-
-        text = (
-            f"🎣 <b>УЛОВ</b> {time_icon}\n\n"
-            f"{fish_emoji} <b>{fish_name}</b>\n"
-            f"{rarity_icon} Редкость: <i>{rarity_name}</i>\n"
-            f"💵 Цена: <b>{fish_price}</b> 🍬\n"
-            f"✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
-            f"📊 <b>Уровень {new_level}</b>\n"
-            f"<code>{xp_bar}</code> {new_xp}/{xp_needed}\n\n"
-            f"🐟 Всего поймано: <b>{total_caught + 1}</b>\n"
-            f"📦 Продай: <code>.продать</code>"
-            f"{level_up_text}{legendary_text}{bait_text}{event_text}{ach_text}"
-        )
-        await msg.edit_text(text, parse_mode="HTML")
-    else:
-        update_fishing(user_id, total_empty=total_empty + 1)
-        set_fishing_last_fish(user_id)
-        log_fishing(user_id, chat_id, "empty")
-        phrases = [
-            "🐟 Рыба ушла...",
-            "🌊 Ничего не поймал.",
-            "🪝 Пустой крючок...",
-            "💧 Только водоросли.",
-            "🎣 Попробуй ещё раз!",
-            "🦆 Утка утащила наживку!",
-            "🌧 Дождь спугнул рыбу...",
-            "🧦 Поймал старый носок...",
-        ]
-        phrase = random.choice(phrases)
-        xp_needed = xp_needed_for_level(level)
-        bar_len = 10
-        filled = min(bar_len, int((xp / xp_needed) * bar_len)) if xp_needed else 0
-        xp_bar = "▰" * filled + "▱" * (bar_len - filled)
-        hour = datetime.now().hour
-        time_icon = "🌙" if (hour >= 22 or hour < 6) else ("🌅" if hour < 11 else ("☀️" if hour < 18 else "🌇"))
-        await msg.edit_text(
-            f"🎣 <b>ПУСТО</b> {time_icon}\n\n"
-            f"{phrase}\n\n"
-            f"📊 <b>Уровень {level}</b>\n"
-            f"<code>{xp_bar}</code> {xp}/{xp_needed}\n\n"
-            f"📉 Пустых: <b>{total_empty + 1}</b>",
-            parse_mode="HTML"
-        )
-
-
-@cmd("садок")
-@cmd("моя рыба")
-@cmd("рыбасадок")
-async def fish_storage_cmd(message: types.Message):
-    user_id = message.from_user.id
-    storage = get_fish_storage(user_id)
-    if not storage:
-        return await message.reply("🎣 <b>Садок пуст</b>\n\nПоймай: <code>.рыбалка</code>", parse_mode="HTML", disable_web_page_preview=True)
-    text = "🎒 <b>Твой садок</b>\n\n"
-    total_price = 0; total_count = 0
-    sorted_fish = sorted(storage.items(), key=lambda x: get_fish_price(x[0]), reverse=True)
-    for fish_name, data in sorted_fish:
-        qty = data["quantity"]; emoji = data["emoji"]; price = get_fish_price(fish_name)
-        total_price += price * qty; total_count += qty
-        text += f"{emoji} <b>{fish_name}</b> × <b>{qty}</b> — {price} 🍬/шт\n"
-    text += f"\n💰 <b>Всего:</b> {total_count} рыб на <b>{total_price}</b> 🍬"
-    text += f"\n\n<code>.продать все</code>\n<code>.продать Щука</code>"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-@cmd("продать")
-async def sell_fish_cmd(message: types.Message):
-    user_id = message.from_user.id
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        return await message.reply("📌 <code>.продать все</code>\n📌 <code>.продать Щука 5</code>", parse_mode="HTML", disable_web_page_preview=True)
-    storage = get_fish_storage(user_id)
-    if not storage:
-        return await message.reply("🎣 Садок пуст", parse_mode="HTML", disable_web_page_preview=True)
-    query = args[1].strip()
-    if query.lower() in ["все", "всё", "all", "*"]:
-        total_price = 0; total_count = 0; sold_list = []
-        for fish_name, data in storage.items():
-            qty = data["quantity"]; price = get_fish_price(fish_name)
-            total_price += price * qty; total_count += qty
-            sold_list.append(f"{data['emoji']} {fish_name} × {qty}")
-            remove_fish_from_storage(user_id, fish_name, qty)
-        add_candies(user_id, total_price, 0)
-        text = f"{em('check', '✅')} <b>Продано!</b>\n\n"
-        for s in sold_list[:20]: text += f"  • {s}\n"
-        if len(sold_list) > 20: text += f"  ... +{len(sold_list)-20} ещё\n"
-        text += f"\n💰 +{total_price} 🍬\n📊 Всего: {total_count} рыб\n💼 Баланс: <b>{get_balance(user_id)}</b> 🍬"
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-    parts = query.split()
-    fish_name_query = parts[0]
-    matched_fish = None
-    for fish_name in storage.keys():
-        if fish_name_query.lower() in fish_name.lower() or fish_name.lower() in fish_name_query.lower():
-            matched_fish = fish_name; break
-    if not matched_fish:
-        return await message.reply(f"{em('cross', '❌')} Не найдена.\n<code>.садок</code>", parse_mode="HTML", disable_web_page_preview=True)
-    available = storage[matched_fish]["quantity"]
-    emoji = storage[matched_fish]["emoji"]; price = get_fish_price(matched_fish)
-    if len(parts) >= 2 and parts[1].isdigit():
-        qty = min(int(parts[1]), available)
-        if qty < 1: qty = 1
-    else: qty = available
-    total_price = price * qty
-    remove_fish_from_storage(user_id, matched_fish, qty)
-    add_candies(user_id, total_price, 0)
-    await message.reply(
-        f"{em('check', '✅')} <b>Продано!</b>\n\n{emoji} <b>{matched_fish}</b> × <b>{qty}</b>\n💰 +{total_price} 🍬\n📊 Осталось: <b>{available - qty}</b>",
-        parse_mode="HTML", disable_web_page_preview=True
-    )
-
-
-@cmd("рыбтоп")
-async def fishing_top_cmd(message: types.Message):
-    top = get_fishing_top(limit=10)
-    if not top:
-        return await message.reply("📭 Никто не рыбачил.", parse_mode="HTML", disable_web_page_preview=True)
-    text = "🏆 <b>Топ рыбаков:</b>\n\n"
-    medals = ["🥇", "🥈", "🥉"]
-    for i, (user_id, caught, level) in enumerate(top, 1):
-        try:
-            user = await bot.get_chat(user_id)
-            name = user_link(user_id, user.first_name, user.username)
-        except: name = f"ID: {user_id}"
-        medal = medals[i-1] if i <= 3 else f"{i}."
-        text += f"{medal} {name} — <b>{caught}</b> 🐟 (ур. {level})\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-@cmd("моя рыбалка")
-@cmd("рыбстата")
-async def fishing_stats_cmd(message: types.Message):
-    info = get_fishing(message.from_user.id)
-    (uid, level, xp, total_caught, total_empty, has_rod, bait_until, last_fish, inv, legendary) = info
-    xp_needed = xp_needed_for_level(level)
-    bait_active = is_bait_active(bait_until)
-    bait_text = "✅ Активна" if bait_active else "❌ Нет"
-    total = total_caught + total_empty
-    success_rate = int(total_caught / total * 100) if total > 0 else 0
-    cooldown = format_fishing_cooldown(last_fish)
-    if cooldown > 0:
-        hours = cooldown // 3600; mins = (cooldown % 3600) // 60
-        parts = []
-        if hours > 0: parts.append(f"{hours} ч.")
-        if mins > 0: parts.append(f"{mins} мин.")
-        cooldown_text = "⏳ " + " ".join(parts)
-    else: cooldown_text = "✅ Готово"
-
-    bar_len = 12
-    filled = min(bar_len, int((xp / xp_needed) * bar_len)) if xp_needed else 0
-    xp_bar = "▰" * filled + "▱" * (bar_len - filled)
-
-    region = get_chat_region(message.chat.id)
-    region_names = {"river": "🏞 Река", "lake": "🌊 Озеро", "sea": "🌊 Море", "ocean": "🌌 Океан"}
-    region_text = region_names.get(region, region)
-
-    if level < 5: lvl_icon = "🟢"
-    elif level < 15: lvl_icon = "🔵"
-    elif level < 30: lvl_icon = "🟣"
-    elif level < 60: lvl_icon = "🟠"
-    else: lvl_icon = "🟡"
-
-    await message.reply(
-        f"🎣 <b>Твоя рыбалка</b>\n\n"
-        f"{lvl_icon} Уровень: <b>{level}</b>\n"
-        f"<code>{xp_bar}</code> {xp}/{xp_needed} XP\n\n"
-        f"📍 Регион: {region_text}\n"
-        f"🐟 Поймано: <b>{total_caught}</b>\n"
-        f"📉 Пустых: <b>{total_empty}</b>\n"
-        f"🎯 Успешность: <b>{success_rate}%</b>\n"
-        f"💎 Легендарных: <b>{legendary or 0}</b>\n\n"
-        f"🍯 Прикормка: {bait_text}\n"
-        f"⏰ Кулдаун: {cooldown_text}",
-        parse_mode="HTML", disable_web_page_preview=True
-    )
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("+прикормка"))
-async def buy_bait_cmd(message: types.Message):
-    user_id = message.from_user.id
-    info = get_fishing(user_id)
-    if is_bait_active(info[6]):
-        return await message.reply("🍯 Уже активна.", parse_mode="HTML", disable_web_page_preview=True)
-    price = 20
-    if get_balance(user_id) < price:
-        return await message.reply(f"❌ Нужно <b>{price}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (price, user_id))
-        conn.commit()
-    set_fishing_bait(user_id)
-    await message.reply(f"✅ <b>Прикормка куплена!</b>\n🍯 {BAIT_DURATION_HOURS} ч.", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@cmd("магазин снастей")
-@cmd("снасти")
-async def fishing_shop_cmd(message: types.Message):
-    text = "🛒 <b>Магазин снастей</b>\n\n"
-    for key, gear in FISHING_GEAR.items():
-        text += f"<b>{gear['name']}</b> — <b>{gear['price']}</b> 🍬\n   <i>{gear['desc']}</i>\n   Купить: <code>.купить {key}</code>\n\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*купить\s+\S+', m.text.strip(), re.IGNORECASE)
-    and not re.match(r'^\s*[.\/!]?\s*купить\s+вип\b', m.text.strip(), re.IGNORECASE)
-    and not re.match(r'^\s*[.\/!]?\s*купить\s+коины\b', m.text.strip(), re.IGNORECASE))
-async def fishing_buy_cmd(message: types.Message):
-    if not await check_command_access(message, "купить"): return
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.reply("📌 <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
-    query = " ".join(args[1:]).lower()
-    gear_key = None
-    for k, g in FISHING_GEAR.items():
-        if query == k or query in g["name"].lower():
-            gear_key = k; break
-    if not gear_key:
-        return await message.reply("❌ Не найдено. <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
-    gear = FISHING_GEAR[gear_key]
-    price = gear["price"]
-    user_id = message.from_user.id
-    if get_balance(user_id) < price:
-        return await message.reply(f"❌ Нужно <b>{price}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
-    inv = get_fishing_inventory(user_id)
-    if inv.get(gear_key, 0) > 0:
-        return await message.reply(f"⚠️ Уже есть <b>{gear['name']}</b>.", parse_mode="HTML", disable_web_page_preview=True)
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (price, user_id))
-        conn.commit()
-    add_to_fishing_inventory(user_id, gear_key, 1)
-    await message.reply(f"{em('check', '✅')} <b>Куплено!</b>\n\n{gear['name']} — {price} 🍬", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@cmd("инвентарь")
-@cmd("инв")
-async def fishing_inventory_cmd(message: types.Message):
-    user_id = message.from_user.id
-    inv = get_fishing_inventory(user_id)
-    text = "🎒 <b>Твой инвентарь</b>\n\n"
-    if not inv:
-        text += "<i>Пусто. <code>.магазин снастей</code></i>\n"
-    else:
-        for key, count in inv.items():
-            gear = FISHING_GEAR.get(key)
-            if not gear: continue
-            cnt = f" (x{count})" if count > 1 else ""
-            text += f"{gear['name']}{cnt}\n   <i>{gear['desc']}</i>\n"
-    gear_bonus, gear_flat, has_boat, has_premium = get_fishing_gear_bonus(user_id)
-    text += f"\n📊 <b>Бонусы:</b>\n• К улову: +{int(gear_bonus*100)}%\n• К награде: +{gear_flat} 🍬\n"
-    if has_boat: text += "• 🚤 Шанс легендарки +20%\n"
-    if has_premium: text += "• 🎣 Премиум: +10% к легендарке\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-@cmd("мои рыбные ачивки")
-@cmd("рыбные ачивки")
-async def fishing_ach_cmd(message: types.Message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT achievement FROM fishing_achievements WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-        have = {r[0] for r in c.fetchall()}
-    text = "🎖 <b>Твои ачивки рыбалки</b>\n\n"
-    for key, ach in FISHING_ACHIEVEMENTS.items():
-        mark = "✅" if key in have else "🔒"
-        text += f"{mark} {ach['name']}\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-@cmd("событие")
-@cmd("погода рыбалки")
-async def fishing_event_cmd(message: types.Message):
-    chat_id = message.chat.id
-    event = get_active_event(chat_id)
-    if not event:
-        return await message.reply("☀️ <b>Сейчас штиль</b>", parse_mode="HTML", disable_web_page_preview=True)
-    ev_key, bonus, expires = event
-    ev_data = FISHING_EVENTS.get(ev_key, {})
-    try:
-        exp_dt = datetime.strptime(expires[:19], "%Y-%m-%d %H:%M:%S")
-        left = int((exp_dt - datetime.now()).total_seconds() / 60)
-    except: left = 0
-    text = f"{ev_data.get('name', ev_key)}\n📈 Бонус: <b>×{bonus}</b>\n⏰ Осталось: <b>{left} мин.</b>"
-    if ev_data.get("rare_boost"): text += f"\n💎 Шанс редких ×{ev_data['rare_boost']}"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-@cmd("регион")
-@cmd("рыбное место")
-async def region_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
-
-    current = get_chat_region(message.chat.id)
-    region_names = {
-        "river": "🏞 Река",
-        "lake":  "🌊 Озеро",
-        "sea":   "🌊 Море",
-        "ocean": "🌌 Океан",
-    }
-
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.reply(
-            f"🗺 <b>Регион рыбалки</b>\n\n"
-            f"📍 Сейчас: <b>{region_names.get(current, current)}</b>\n\n"
-            f"📌 Сменить (ранг 3+): <code>.регион река|озеро|море|океан</code>",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-
-    if not has_permission(message.chat.id, message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
-
-    sub = args[1].lower()
-    mapping = {
-        "река": "river", "river": "river", "рек": "river",
-        "озеро": "lake", "lake": "lake", "озер": "lake",
-        "море": "sea", "sea": "sea", "мор": "sea",
-        "океан": "ocean", "ocean": "ocean", "оке": "ocean",
-    }
-    if sub not in mapping:
-        return await message.reply(
-            "❌ Допустимые: <code>река</code>, <code>озеро</code>, <code>море</code>, <code>океан</code>",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-    new_region = mapping[sub]
-    set_chat_region(message.chat.id, new_region)
-    await message.reply(
-        f"{em('check', '✅')} <b>Регион изменён!</b>\n\n"
-        f"📍 Теперь: <b>{region_names[new_region]}</b>\n"
-        f"👮 {mention(message.from_user)}",
-        parse_mode="HTML", disable_web_page_preview=True
-    )
-
-
-@cmd("турнир")
-async def fishing_tournament_cmd(message: types.Message):
-    args = message.text.split(); chat_id = message.chat.id
-    if len(args) >= 2 and args[1].lower() in ["участвовать", "join"]:
-        tour = get_active_tournament(chat_id)
-        if not tour:
-            return await message.reply("❌ Нет активного турнира.", parse_mode="HTML", disable_web_page_preview=True)
-        join_tournament(chat_id, message.from_user.id)
-        return await message.reply(f"{em('check', '✅')} Ты в турнире!", parse_mode="HTML", disable_web_page_preview=True)
-    if len(args) >= 2 and args[1].lower() in ["стоп", "end"]:
-        is_admin = (message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
-                    or has_agent_rank(message.from_user.id, 1)
-                    or await is_tg_admin(chat_id, message.from_user.id))
-        if not is_admin:
-            return await message.reply(f"{em('cross', '❌')} Только админ.", parse_mode="HTML", disable_web_page_preview=True)
-        winners = end_tournament(chat_id)
-        if not winners:
-            return await message.reply("❌ Турнир не найден или нет участников.", parse_mode="HTML", disable_web_page_preview=True)
-        text = "🏆 <b>ТУРНИР ЗАВЕРШЁН!</b>\n\n"
-        medals = ["🥇", "🥈", "🥉"]
-        for i, (uid, caught, prize) in enumerate(winners):
-            try:
-                u = await bot.get_chat(uid)
-                name = user_link(uid, u.first_name, u.username)
-            except: name = f"ID {uid}"
-            text += f"{medals[i]} {name} — <b>{caught}</b> 🐟 (+{prize} 🍬)\n"
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-    is_admin = (message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
-                or has_agent_rank(message.from_user.id, 1)
-                or await is_tg_admin(chat_id, message.from_user.id))
-    if not is_admin:
-        return await message.reply(f"{em('cross', '❌')} Только админ может запустить турнир.", parse_mode="HTML", disable_web_page_preview=True)
-    tour = get_active_tournament(chat_id)
-    if tour:
-        started_by, started_at, expires_at, prize = tour
-        try:
-            exp_dt = _parse_dt(expires_at)
-            left = int((exp_dt - datetime.now()).total_seconds() / 60)
-            if left < 0: left = 0
-        except: left = 0
-        members = get_tournament_members(chat_id, limit=10)
-        text = f"🏆 <b>Турнир идёт</b>\n⏰ Осталось: <b>{left} мин.</b>\n💰 Приз: до <b>100</b> 🍬\n\n"
-        if members:
-            medals = ["🥇", "🥈", "🥉"]
-            for i, (uid, caught) in enumerate(members):
-                try:
-                    u = await bot.get_chat(uid)
-                    name = user_link(uid, u.first_name, u.username)
-                except: name = f"ID {uid}"
-                m = medals[i] if i < 3 else f"{i+1}."
-                text += f"{m} {name} — <b>{caught}</b> 🐟\n"
-        text += f"\n📌 <code>.турнир участвовать</code>"
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-    create_tournament(chat_id, message.from_user.id, prize=100, duration_min=TOURNAMENT_DURATION_MIN)
-    join_tournament(chat_id, message.from_user.id)
-    await message.reply(
-        f"🏆 <b>ТУРНИР ЗАПУЩЕН!</b>\n⏰ {TOURNAMENT_DURATION_MIN} мин.\n"
-        f"💰 Призы: <b>20–100</b> 🍬 (зависит от числа участников)\n"
-        f"📌 <code>.турнир участвовать</code>",
-        parse_mode="HTML", disable_web_page_preview=True
-    )
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip() in ["+событие", "+ событие"])
-async def enable_events_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]: return
-    if not await _check_automod_perms(message): return
-    if is_events_enabled(message.chat.id):
-        return await message.reply("ℹ️ Уже включены.", parse_mode="HTML", disable_web_page_preview=True)
-    set_events_enabled(message.chat.id, True)
-    await message.reply(f"{em('check', '✅')} Уведомления о событиях включены!", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@dp.message(lambda m: m.text and m.text.lower().strip() in ["-событие", "- событие"])
-async def disable_events_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]: return
-    if not await _check_automod_perms(message): return
-    if not is_events_enabled(message.chat.id):
-        return await message.reply("ℹ️ Уже выключены.", parse_mode="HTML", disable_web_page_preview=True)
-    set_events_enabled(message.chat.id, False)
-    await message.reply(f"{em('check', '✅')} Уведомления о событиях выключены!", parse_mode="HTML", disable_web_page_preview=True)
-
-
-@cmd("события")
-@cmd("уведомления")
-async def events_status_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]: return
-    enabled = is_events_enabled(message.chat.id)
-    status = "🟢 включены" if enabled else "🔴 выключены"
-    await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True)
-
-
-# ================= МРП =================
+# ===== ЧАСТЬ 14 КОНЕЦ =====# ================= МРП =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+мрп\b', m.text.strip(), re.IGNORECASE))
 async def create_rp_cmd(message: types.Message):
     if not get_vip(message.from_user.id):
@@ -7781,13 +8269,13 @@ async def show_motto_cmd(message: types.Message):
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+анкета", "+ анкета"])
-async def show_profile_cmd(message: types.Message):
+async def show_profile_flag_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "is_hidden", 0)
     await message.reply("✅ Анкета открыта.", parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-анкета", "- анкета"])
-async def hide_profile_cmd(message: types.Message):
+async def hide_profile_flag_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "is_hidden", 1)
     await message.reply("✅ Анкета скрыта.", parse_mode="HTML", disable_web_page_preview=True)
 
@@ -8016,8 +8504,7 @@ async def get_note_cmd(message: types.Message):
     try: await message.reply(note[2], parse_mode="HTML", disable_web_page_preview=True)
     except: await message.reply(note[2], disable_web_page_preview=True)
 
-
-# ================= СЕТКА =================
+# ===== ЧАСТЬ 15 КОНЕЦ =====# ================= СЕТКА =================
 @cmd("создать сетку")
 async def create_grid_cmd(message: types.Message):
     if message.chat.type != "private":
@@ -8073,7 +8560,6 @@ async def list_grid_chats(message: types.Message):
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= +ЧАТ / -ЧАТ =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+чат\b', m.text.strip(), re.IGNORECASE))
 async def open_chat_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
@@ -8144,7 +8630,7 @@ async def close_chat_cmd(message: types.Message):
     await message.reply(f"{em('cross', '❌')} <b>Чат закрыт</b> для общения!\n👮 {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= СЕТКА — ЕДИНЫЙ РОУТЕР =================
+# ================= СЕТКА — РОУТЕР =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*сетка\b', m.text.strip(), re.IGNORECASE))
 async def grid_command_router(message: types.Message):
     if message.chat.type == "private":
@@ -9233,7 +9719,6 @@ async def auto_unban_loop():
                 try:
                     await bot.unban_chat_member(chat_id, user_id)
                     clear_chat_ban(chat_id, user_id)
-
                     try:
                         await bot.restrict_chat_member(
                             chat_id, user_id,
@@ -9247,20 +9732,17 @@ async def auto_unban_loop():
                             )
                         )
                     except: pass
-
                     try:
                         user = await bot.get_chat(user_id)
                         user_mention = user_link(user_id, user.first_name, user.username)
                     except:
                         user_mention = f"<code>{user_id}</code>"
-
                     try:
                         chat = await bot.get_chat(chat_id)
                         if chat.type not in ["group", "supergroup"]:
                             continue
                     except:
                         continue
-
                     try:
                         await bot.send_message(
                             chat_id,
@@ -9279,20 +9761,17 @@ async def auto_unban_loop():
             for chat_id, user_id, reason in expired_mutes:
                 try:
                     clear_chat_mute(chat_id, user_id)
-
                     try:
                         user = await bot.get_chat(user_id)
                         user_mention = user_link(user_id, user.first_name, user.username)
                     except:
                         user_mention = f"<code>{user_id}</code>"
-
                     try:
                         chat = await bot.get_chat(chat_id)
                         if chat.type not in ["group", "supergroup"]:
                             continue
                     except:
                         continue
-
                     try:
                         await bot.send_message(
                             chat_id,
@@ -9335,31 +9814,51 @@ async def auto_backup_loop():
 
 
 async def auto_fishing_events_loop():
+    """Раз в 1.5 часа проверяет и обновляет события в чатах. Не спамит."""
     while True:
         try:
-            await asyncio.sleep(1800)
+            await asyncio.sleep(5400)
+
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
                 c.execute("SELECT DISTINCT chat_id FROM messages_stats WHERE date >= ? AND chat_id < 0",
                     ((datetime.now().date() - timedelta(days=3)).isoformat(),))
                 chats = [r[0] for r in c.fetchall()]
+
             for chat_id in chats:
-                if chat_id >= 0: continue
-                if not is_events_enabled(chat_id): continue
+                if chat_id >= 0:
+                    continue
+                if not is_events_enabled(chat_id):
+                    continue
                 try:
                     chat = await bot.get_chat(chat_id)
-                    if chat.type not in ["group", "supergroup"]: continue
-                except: continue
-                if random.randint(1, 100) <= 30:
+                    if chat.type not in ["group", "supergroup"]:
+                        continue
+                except:
+                    continue
+
+                current_event = get_active_event(chat_id)
+                if current_event:
+                    continue
+
+                if random.randint(1, 100) <= 40:
                     ev_key = random.choice(list(FISHING_EVENTS.keys()))
                     ev = FISHING_EVENTS[ev_key]
-                    set_event(chat_id, ev_key, ev["bonus"], ev["duration"])
+                    set_event(chat_id, ev_key, ev["bonus"], 90)
                     try:
-                        await bot.send_message(chat_id, f"🌦 <b>Событие!</b>\n\n{ev['name']}\n📈 ×{ev['bonus']}\n⏰ {ev['duration']} мин.", parse_mode="HTML")
-                    except: pass
+                        await bot.send_message(
+                            chat_id,
+                            f"🌦 <b>Новое событие на рыбалке!</b>\n\n"
+                            f"{ev['name']}\n"
+                            f"📈 Бонус: ×{ev['bonus']}\n"
+                            f"⏰ Длительность: <b>1 ч 30 мин</b>",
+                            parse_mode="HTML",
+                            disable_web_page_preview=True
+                        )
+                    except:
+                        pass
         except Exception as e:
-            pass
-        await asyncio.sleep(60)
+            print(f"❌ auto_fishing_events_loop: {e}")
 
 
 async def auto_tournament_end_loop():
