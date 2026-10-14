@@ -8643,7 +8643,8 @@ async def fishing_inventory_cmd(message: types.Message):
 
     user_cooldown = get_user_fish_cooldown(user_id)
     cd_min = user_cooldown // 60
-    cd_hours = cd_min // 60    cd_min = cd_min % 60
+       cd_hours = cd_min // 60
+    cd_min = cd_min % 60
     if cd_hours > 0:
         cd_str = f"{cd_hours} ч. {cd_min} мин."
     else:
