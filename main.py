@@ -3833,6 +3833,308 @@ def get_vip_days_left(user_id):
 def get_vip_emoji(user_id):
     v = get_vip(user_id)
     if v and v[1]: return v[1]
+      
+      # ================= СЕТКА — БД =================
+def create_grid(name, creator_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO grids (name, creator_id) VALUES (?, ?)", (name, creator_id))
+            conn.commit()
+            return c.lastrowid
+        except sqlite3.IntegrityError:
+            return None
+
+
+def get_grid_by_name(name):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        if name.isdigit():
+            c.execute("SELECT id, name FROM grids WHERE id = ?", (int(name),))
+        else:
+            c.execute("SELECT id, name FROM grids WHERE LOWER(name) = LOWER(?)", (name,))
+        return c.fetchone()
+
+
+def add_chat_to_grid(grid_id, chat_id, hidden=0, description=""):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO grid_chats (grid_id, chat_id, hidden, description) VALUES (?, ?, ?, ?)",
+                  (grid_id, chat_id, hidden, description))
+        conn.commit()
+
+
+def get_grid_chats(grid_id, include_hidden=False):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        if include_hidden:
+            c.execute("SELECT chat_id, hidden, description FROM grid_chats WHERE grid_id = ?", (grid_id,))
+        else:
+            c.execute("SELECT chat_id, hidden, description FROM grid_chats WHERE grid_id = ? AND hidden = 0", (grid_id,))
+        return c.fetchall()
+
+
+def get_chat_grid(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT grid_id FROM grid_chats WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        return r[0] if r else None
+
+
+def is_grid_moderator(grid_id, user_id, min_rank=1):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT creator_id FROM grids WHERE id = ?", (grid_id,))
+        creator = c.fetchone()
+        if creator and creator[0] == user_id: return True
+        if user_id == OWNER_ID or is_coowner(user_id): return True
+        c.execute("SELECT rank, is_admin FROM grid_moderators WHERE grid_id = ? AND user_id = ?", (grid_id, user_id))
+        r = c.fetchone()
+        if not r: return False
+        if r[1] == 1: return True
+        return r[0] >= min_rank
+
+
+def add_grid_moderator(grid_id, user_id, rank=1, is_admin=0):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO grid_moderators (grid_id, user_id, rank, is_admin) VALUES (?, ?, ?, ?)",
+                  (grid_id, user_id, rank, is_admin))
+        conn.commit()
+
+
+def remove_grid_moderator(grid_id, user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM grid_moderators WHERE grid_id = ? AND user_id = ?", (grid_id, user_id))
+        conn.commit()
+
+
+def set_rank_in_grid_chats(grid_id: int, user_id: int, rank: int, added_by: int) -> int:
+    ok = 0
+    for chat_id, hidden, desc in get_grid_chats(grid_id, include_hidden=True):
+        try:
+            if rank <= 0: remove_rank(chat_id, user_id)
+            else: set_rank(chat_id, user_id, rank, added_by)
+            ok += 1
+        except Exception as e:
+            print(f"❌ set_rank_in_grid_chats {chat_id}: {e}")
+    return ok
+
+
+# ================= ЗАМЕТКИ — БД =================
+def add_note(chat_id, name, text, created_by):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO notes (chat_id, name, text, created_by) VALUES (?, ?, ?, ?)", (chat_id, name, text, created_by))
+            conn.commit()
+            return c.lastrowid
+        except sqlite3.IntegrityError:
+            return None
+
+
+def get_note_by_name(chat_id, name):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, name, text FROM notes WHERE chat_id = ? AND LOWER(name) = LOWER(?)", (chat_id, name))
+        return c.fetchone()
+
+
+def get_note_by_number(chat_id, number):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, name, text FROM notes WHERE chat_id = ? ORDER BY id ASC LIMIT 1 OFFSET ?", (chat_id, number - 1))
+        return c.fetchone()
+
+
+def get_all_notes(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, name FROM notes WHERE chat_id = ? ORDER BY id ASC", (chat_id,))
+        return c.fetchall()
+
+
+def delete_note(chat_id, note_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM notes WHERE chat_id = ? AND id = ?", (chat_id, note_id))
+        conn.commit()
+
+
+# ================= БРАКИ — БД =================
+def get_marriage(chat_id, user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT id, user1_id, user2_id, user1_name, user2_name, married_at, status, divorced_at, in_top, extra_days
+            FROM marriages WHERE chat_id = ? AND (user1_id = ? OR user2_id = ?) AND status = 'active'""",
+            (chat_id, user_id, user_id))
+        return c.fetchone()
+
+
+def get_marriage_by_users(chat_id, user1_id, user2_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT id, user1_id, user2_id, user1_name, user2_name, married_at, status, divorced_at, in_top, extra_days
+            FROM marriages WHERE chat_id = ? AND ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?)) AND status = 'active'""",
+            (chat_id, user1_id, user2_id, user2_id, user1_id))
+        return c.fetchone()
+
+
+def get_divorced_marriage(chat_id, user_id):
+    three_days_ago = (datetime.now() - timedelta(days=3)).isoformat()
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT id, user1_id, user2_id, user1_name, user2_name, divorced_at
+            FROM marriages WHERE chat_id = ? AND (user1_id = ? OR user2_id = ?) 
+            AND status = 'divorced' AND divorced_at >= ? ORDER BY divorced_at DESC LIMIT 1""",
+            (chat_id, user_id, user_id, three_days_ago))
+        return c.fetchone()
+
+
+def create_marriage(chat_id, u1_id, u1_name, u2_id, u2_name):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO marriages (chat_id, user1_id, user2_id, user1_name, user2_name) VALUES (?, ?, ?, ?, ?)",
+                      (chat_id, u1_id, u2_id, u1_name, u2_name))
+            conn.commit()
+            return c.lastrowid
+        except sqlite3.IntegrityError:
+            return None
+
+
+def restore_marriage(marriage_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE marriages SET status = 'active', divorced_at = NULL WHERE id = ?", (marriage_id,))
+        conn.commit()
+
+
+def divorce_marriage(chat_id, user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE marriages SET status = 'divorced', divorced_at = CURRENT_TIMESTAMP WHERE chat_id = ? AND (user1_id = ? OR user2_id = ?) AND status = 'active'",
+                  (chat_id, user_id, user_id))
+        conn.commit()
+
+
+def get_all_marriages(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT user1_id, user1_name, user2_id, user2_name, married_at, extra_days FROM marriages WHERE chat_id = ? AND status = 'active' ORDER BY married_at ASC",
+                  (chat_id,))
+        return c.fetchall()
+
+
+def reset_all_marriages(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM marriages WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+        return c.rowcount
+
+
+def get_top_marriages(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT user1_id, user1_name, user2_id, user2_name, married_at, extra_days FROM marriages WHERE chat_id = ? AND status = 'active' AND in_top = 1 ORDER BY married_at ASC",
+                  (chat_id,))
+        return c.fetchall()
+
+
+def set_marriage_top_status(chat_id, user_id, in_top):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE marriages SET in_top = ? WHERE chat_id = ? AND (user1_id = ? OR user2_id = ?) AND status = 'active'",
+                  (1 if in_top else 0, chat_id, user_id, user_id))
+        conn.commit()
+        return c.rowcount > 0
+
+
+def get_marriage_settings(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT prolong_price, divorce_mode FROM marriage_settings WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        if not r:
+            c.execute("INSERT INTO marriage_settings (chat_id) VALUES (?)", (chat_id,))
+            conn.commit()
+            return (50, 'выключить')
+        return r
+
+
+def set_marriage_price(chat_id, price):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO marriage_settings (chat_id, prolong_price) VALUES (?, ?)", (chat_id, price))
+        conn.commit()
+
+
+def set_divorce_mode(chat_id, mode):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE marriage_settings SET divorce_mode = ? WHERE chat_id = ?", (mode, chat_id))
+        conn.commit()
+
+
+def add_marriage_days(chat_id, user_id, days):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE marriages SET extra_days = extra_days + ? WHERE chat_id = ? AND (user1_id = ? OR user2_id = ?) AND status = 'active'",
+                  (days, chat_id, user_id, user_id))
+        conn.commit()
+
+
+def get_marriage_extra_days(chat_id, user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT extra_days FROM marriages WHERE chat_id = ? AND (user1_id = ? OR user2_id = ?) AND status = 'active'",
+                  (chat_id, user_id, user_id))
+        r = c.fetchone()
+        return r[0] if r else 0
+
+
+def add_proposal(chat_id, from_id, to_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM proposals WHERE chat_id = ? AND from_id = ?", (chat_id, from_id))
+        c.execute("INSERT INTO proposals (chat_id, from_id, to_id) VALUES (?, ?, ?)", (chat_id, from_id, to_id))
+        conn.commit()
+
+
+def get_proposal(chat_id, from_id, to_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id FROM proposals WHERE chat_id = ? AND from_id = ? AND to_id = ?", (chat_id, from_id, to_id))
+        r = c.fetchone()
+        return r[0] if r else None
+
+
+def remove_proposal(chat_id, from_id, to_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM proposals WHERE chat_id = ? AND from_id = ? AND to_id = ?", (chat_id, from_id, to_id))
+        conn.commit()
+
+
+def format_marriage_duration(married_at_str, extra_days=0):
+    try: married_at = datetime.strptime(married_at_str[:19], "%Y-%m-%d %H:%M:%S")
+    except:
+        try: married_at = datetime.strptime(married_at_str[:10], "%Y-%m-%d")
+        except: return "неизвестно"
+    days = (datetime.now() - married_at).days + (extra_days or 0)
+    if days < 0: days = 0
+    years = days // 365
+    months = (days % 365) // 30
+    remaining_days = (days % 365) % 30
+    parts = []
+    if years > 0: parts.append(f"{years} г.")
+    if months > 0: parts.append(f"{months} мес.")
+    if remaining_days > 0 or not parts: parts.append(f"{remaining_days} дн.")
+    return " ".join(parts)
+  
     return ""# ================= ПОГОДА =================
 def get_weather(city: str):
     try:
