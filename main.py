@@ -10893,7 +10893,140 @@ async def import_db_cmd(message: types.Message):
         if os.path.exists(temp_path):
             try: os.remove(temp_path)
             except: pass
-        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
+        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")
+
+# ================= РП ХЕНДЛЕР =================
+@dp.message(lambda m: m.text and not m.text.startswith(('.', '+', '-', '!', '/'))
+    and not m.text.lower().strip().startswith("брак")
+    and not m.text.lower().strip().startswith("сетка")
+    and not m.text.lower().strip().startswith("заметка")
+    and not m.text.lower().strip().startswith("заметки")
+    and not m.text.lower().strip().startswith("мой ")
+    and not m.text.lower().strip().startswith("моя ")
+    and not m.text.lower().strip().startswith("твоя ")
+    and not m.text.lower().strip().startswith("твой ")
+    and not m.text.lower().strip().startswith("мойдр")
+    and not m.text.lower().strip().startswith("мойпол")
+    and not m.text.lower().strip().startswith("мойгород"))
+async def standard_rp_handler(message: types.Message):
+    if not message.text: return
+    txt = message.text.strip()
+    if not txt: return
+    txt_lower = txt.lower()
+
+    # ===== 1. Пользовательские РП =====
+    rp_emoji = None
+    rp_template = None
+    matched_name = None
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?", (message.chat.id, txt_lower))
+        row = c.fetchone()
+        if row:
+            rp_emoji, rp_template = row
+            matched_name = txt_lower
+        else:
+            first = txt_lower.split()[0] if txt_lower.split() else ""
+            if first and first != txt_lower:
+                c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?", (message.chat.id, first))
+                row = c.fetchone()
+                if row:
+                    rp_emoji, rp_template = row
+                    matched_name = first
+        if not rp_template:
+            c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (txt_lower,))
+            row = c.fetchone()
+            if row:
+                rp_emoji, rp_template = row
+                matched_name = txt_lower
+            else:
+                first = txt_lower.split()[0] if txt_lower.split() else ""
+                if first and first != txt_lower:
+                    c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (first,))
+                    row = c.fetchone()
+                    if row:
+                        rp_emoji, rp_template = row
+                        matched_name = first
+
+    if rp_template:
+        actor = message.from_user
+        target = None
+        reply_to_id = None
+        if message.reply_to_message and message.reply_to_message.from_user:
+            target = message.reply_to_message.from_user
+            reply_to_id = message.reply_to_message.message_id
+        else:
+            rest = txt[len(matched_name):].strip() if matched_name else ""
+            for w in rest.split():
+                clean = w.strip().rstrip('.,;:!?')
+                if clean.startswith('@'):
+                    try: target = await bot.get_chat(clean); break
+                    except: pass
+                if clean.isdigit() and len(clean) >= 6:
+                    try: target = await bot.get_chat(int(clean)); break
+                    except: pass
+        if target and not target.is_bot and target.id != actor.id:
+            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(target))
+        else:
+            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(actor))
+            target = None
+        if target is None:
+            reply_to_id = None
+        kwargs = {"reply_to_message_id": reply_to_id} if reply_to_id else {}
+        await message.reply(f"{rp_emoji} {out}", parse_mode="HTML", disable_web_page_preview=True, **kwargs)
+        return
+
+    # ===== 2. Стандартные РП =====
+    rp_data = None
+    rp_name = None
+
+    if txt_lower in STANDARD_RP:
+        rp_name = txt_lower
+        rp_data = STANDARD_RP[txt_lower]
+    else:
+        for name in sorted(STANDARD_RP.keys(), key=len, reverse=True):
+            if txt_lower.startswith(name):
+                rest = txt_lower[len(name):]
+                if not rest or rest[0] == ' ':
+                    rp_name = name
+                    rp_data = STANDARD_RP[name]
+                    break
+
+    if not rp_data:
+        return
+
+    actor = message.from_user
+    target = None
+    reply_to_id = None
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target = message.reply_to_message.from_user
+        reply_to_id = message.reply_to_message.message_id
+    else:
+        rest_text = txt[len(rp_name):].strip()
+        if rest_text:
+            try:
+                target_arg = rest_text.split()[0]
+                clean = target_arg.strip().rstrip('.,;:!?')
+                if clean.startswith('@'):
+                    target = await bot.get_chat(clean)
+                elif clean.isdigit() and len(clean) >= 6:
+                    target = await bot.get_chat(int(clean))
+            except:
+                target = None
+
+    if not target or target.id == actor.id or target.is_bot:
+        return await message.reply(
+            f"{rp_data['emoji']} {rp_data['self_text'].format(actor=mention(actor), target=mention(actor))}",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    kwargs = {"reply_to_message_id": reply_to_id} if reply_to_id else {}
+    await message.reply(
+        f"{rp_data['emoji']} {rp_data['text'].format(actor=mention(actor), target=mention(target))}",
+        parse_mode="HTML", disable_web_page_preview=True, **kwargs
+    )      
+# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot: return
