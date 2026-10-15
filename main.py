@@ -11025,7 +11025,7 @@ async def standard_rp_handler(message: types.Message):
     await message.reply(
         f"{rp_data['emoji']} {rp_data['text'].format(actor=mention(actor), target=mention(target))}",
         parse_mode="HTML", disable_web_page_preview=True, **kwargs
-    )      
+    )
 # ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
