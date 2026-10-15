@@ -41,23 +41,68 @@ dp = Dispatcher()
 
 
 # ================= ХЕЛПЕРЫ ИМЁН =================
-def _match_command(message: types.Message, name_lower: str) -> bool:
-    if not message.text: return False
-    txt = message.text.strip()
-    if not txt: return False
-    if txt[0] in ".!/+": txt = txt[1:].lstrip()
-    if not txt: return False
-    txt_lower = txt.lower()
-    words_needed = name_lower.split()
-    words_have = txt_lower.split()
-    if len(words_have) < len(words_needed): return False
-    return words_have[:len(words_needed)] == words_needed
+def _match_command(message: types.Message, name_lower: str,
+                   allow_args: bool = False,
+                   args_pattern: str = None,
+                   require_prefix: bool = False) -> bool:
+    """
+    Строгая проверка команды:
+    - Команда должна быть в ПЕРВОЙ строке.
+    - После команды — либо конец строки, либо аргументы на новой строке.
+    - allow_args=True + args_pattern — разрешить валидные аргументы в той же строке.
+    - require_prefix=True — обязателен префикс (. ! / + -).
+    """
+    if not message.text:
+        return False
+    txt = message.text
+    if not txt:
+        return False
+
+    txt_stripped = txt.lstrip()
+    if not txt_stripped:
+        return False
+
+    had_prefix = txt_stripped[0] in ".!/+-"
+    if had_prefix:
+        txt_stripped = txt_stripped[1:].lstrip()
+    if not txt_stripped:
+        return False
+
+    if require_prefix and not had_prefix:
+        return False
+
+    first_line = txt_stripped.split("\n", 1)[0].strip()
+    if not first_line:
+        return False
+
+    first_line_lower = first_line.lower()
+    name_lower_clean = name_lower.lower().strip()
+    words_needed = name_lower_clean.split()
+    words_have = first_line_lower.split()
+
+    if len(words_have) < len(words_needed):
+        return False
+    if words_have[:len(words_needed)] != words_needed:
+        return False
+
+    tail = words_have[len(words_needed):]
+    if not tail:
+        return True
+
+    if not allow_args:
+        return False
+
+    if args_pattern:
+        rest_text = " ".join(tail)
+        return bool(re.match(args_pattern, rest_text, re.IGNORECASE))
+
+    return True
 
 
-def cmd(name: str):
+def cmd(name: str, allow_args: bool = False, args_pattern: str = None, require_prefix: bool = False):
     name_lower = name.lower().strip()
     def decorator(func):
-        @dp.message(lambda m: _match_command(m, name_lower))
+        @dp.message(lambda m: _match_command(m, name_lower, allow_args, args_pattern, require_prefix))
         async def handler(message: types.Message):
             try:
                 if not await check_command_access(message, name_lower): return
@@ -69,10 +114,10 @@ def cmd(name: str):
     return decorator
 
 
-def mod_cmd(name: str):
+def mod_cmd(name: str, allow_args: bool = False, args_pattern: str = None, require_prefix: bool = True):
     name_lower = name.lower().strip()
     def decorator(func):
-        @dp.message(lambda m: _match_command(m, name_lower))
+        @dp.message(lambda m: _match_command(m, name_lower, allow_args, args_pattern, require_prefix))
         async def handler(message: types.Message):
             try:
                 if not await check_command_access(message, name_lower):
@@ -96,6 +141,14 @@ def mod_cmd(name: str):
                 except: pass
         return handler
     return decorator
+
+
+# ================= ХЕЛПЕРЫ ОТВЕТА =================
+def _reply_kwargs(message: types.Message) -> dict:
+    """Если команда была реплаем — бот тоже отвечает реплаем."""
+    if message.reply_to_message:
+        return {"reply_to_message_id": message.reply_to_message.message_id}
+    return {}
 
 
 # ================= ЭМОДЗИ =================
@@ -1080,6 +1133,16 @@ def is_in_antispam(user_id):
         return c.fetchone() is not None
 
 
+def log_antispam_action(user_id, action, reason, admin_id, removed_by=None):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO antispam_history (user_id, action, reason, admin_id) VALUES (?, ?, ?, ?)",
+            (user_id, action, reason, removed_by if removed_by is not None else admin_id)
+        )
+        conn.commit()
+
+
 def add_user_to_antispam(user_id: int, reason: str, added_by: int):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -1089,12 +1152,34 @@ def add_user_to_antispam(user_id: int, reason: str, added_by: int):
     log_antispam_action(user_id, "add", reason, added_by)
 
 
-def remove_user_from_antispam(user_id: int) -> bool:
+def remove_user_from_antispam(user_id: int, removed_by: int = 0) -> bool:
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
+        c.execute("SELECT reason, added_by, added_at FROM antispam WHERE user_id = ?", (user_id,))
+        row = c.fetchone()
         c.execute("DELETE FROM antispam WHERE user_id = ?", (user_id,))
         conn.commit()
-        return c.rowcount > 0
+    if row:
+        reason, added_by, added_at = row
+        log_antispam_action(user_id, "remove", reason or "", removed_by, removed_by=removed_by)
+        return True
+    return False
+
+
+def get_antispam_info(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT reason, added_by, added_at FROM antispam WHERE user_id = ?", (user_id,))
+        return c.fetchone()
+
+
+def get_antispam_history(user_id, limit=10):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT action, reason, admin_id, created_at 
+                     FROM antispam_history WHERE user_id = ? 
+                     ORDER BY created_at DESC LIMIT ?""", (user_id, limit))
+        return c.fetchall()
 
 
 def is_ignored(chat_id, user_id):
@@ -1123,21 +1208,6 @@ def set_antispam_enabled(chat_id, enabled):
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO chat_antispam_settings (chat_id, antispam_enabled) VALUES (?, ?)", (chat_id, 1 if enabled else 0))
         conn.commit()
-
-
-def log_antispam_action(user_id, action, reason, admin_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT INTO antispam_history (user_id, action, reason, admin_id) VALUES (?, ?, ?, ?)",
-                  (user_id, action, reason, admin_id))
-        conn.commit()
-
-
-def get_antispam_info(user_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT reason, added_by, added_at FROM antispam WHERE user_id = ?", (user_id,))
-        return c.fetchone()
 
 
 # ================= ДОП. ХЕЛПЕРЫ =================
@@ -2119,8 +2189,37 @@ def reset_greeting(chat_id):
 def format_greeting(text, user, chat):
     chat_title = html_escape_text(chat.title or "чат")
     first_name = html_escape_text(user.first_name or "Пользователь")
-    return (text.replace("{name}", first_name).replace("{first_name}", first_name)
-        .replace("{chat}", chat_title).replace("{rules}", "правила").replace("{link}", SUPPORT_CHAT_LINK))
+
+    username = getattr(user, "username", None)
+    user_id = getattr(user, "id", 0)
+    if username:
+        nick_link = f'<a href="https://t.me/{username}">{first_name}</a>'
+    else:
+        nick_link = f'<a href="tg://user?id={user_id}">{first_name}</a>'
+
+    has_nick_placeholder = "{ник}" in text
+    no_nick = "{без_ника}" in text
+
+    first_line = text.split("\n", 1)[0]
+    first_line_has_nick = ("{ник}" in first_line or "{имя}" in first_line
+                           or "{юзер}" in first_line or "{name}" in first_line)
+
+    result = text
+    result = result.replace("{без_ника}", "")
+    result = result.replace("{ник}", nick_link)
+    result = result.replace("{имя}", first_name)
+    result = result.replace("{юзер}", f"@{username}" if username else first_name)
+    result = result.replace("{чат}", chat_title)
+    result = result.replace("{айди}", str(user_id))
+    result = result.replace("{name}", first_name).replace("{first_name}", first_name)
+    result = result.replace("{chat}", chat_title)
+    result = result.replace("{rules}", "правила")
+    result = result.replace("{link}", SUPPORT_CHAT_LINK)
+
+    if has_nick_placeholder or no_nick or first_line_has_nick:
+        return result
+
+    return f"{nick_link}\n\n{result}"
 
 
 # ================= АВТОУДАЛЕНИЕ ПРИВЕТСТВИЙ =================
@@ -3917,10 +4016,10 @@ def _ping_status(ping_ms: int) -> str:
     return "🔴"
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*мос\s*$', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*мос\s*$', m.text.strip(), re.IGNORECASE))
 async def mos_cmd(message: types.Message):
     t0 = datetime.now()
-    sent = await message.reply("🏓 <b>Мос на месте!</b>\n⏳ <i>измеряю пинг...</i>", parse_mode="HTML")
+    sent = await message.reply("🏓 <b>Мос на месте!</b>\n⏳ <i>измеряю пинг...</i>", parse_mode="HTML", **_reply_kwargs(message))
     response_ping = int((datetime.now() - t0).total_seconds() * 1000)
 
     tg_ping, api_ping = await _measure_ping()
@@ -3935,7 +4034,7 @@ async def mos_cmd(message: types.Message):
     try:
         await sent.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
     except:
-        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= /START =================
@@ -3989,7 +4088,7 @@ async def start_cmd(message: types.Message):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить бота в чат", url=add_url)],
-        [InlineKeyboardButton(text="🍬 Купить ириски", callback_data="buy_candies_menu")],
+        [InlineKeyboardButton(text="🍬 Купить mos-конфетки", callback_data="buy_candies_menu")],
         [
             InlineKeyboardButton(text="🆘 Поддержка", url=SUPPORT_CHAT_LINK),
             InlineKeyboardButton(text="📢 Канал", url=SUPPORT_CHANNEL_LINK)
@@ -4004,7 +4103,7 @@ async def start_cmd(message: types.Message):
 async def buy_candies_menu(callback: types.CallbackQuery):
     price = get_stars_per_candy(callback.message.chat.id)
     await callback.message.answer(
-        f"🍬 <b>Купить ириски за ⭐ Stars</b>\n\n"
+        f"🍬 <b>Купить mos-конфетки за ⭐ Stars</b>\n\n"
         f"💰 Курс: <b>{price} ⭐ = 1 🍬</b>\n\n"
         f"📌 Напишите:\n"
         f"<code>.купитьириски 10</code> → {price * 10} ⭐",
@@ -4014,19 +4113,19 @@ async def buy_candies_menu(callback: types.CallbackQuery):
 
 
 # ================= ЛС =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*лс\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*лс\b', m.text.strip(), re.IGNORECASE))
 async def bot_dm_cmd(message: types.Message):
     try:
         me = await bot.get_me()
         bot_username = me.username
     except:
-        return await message.reply("❌ Ошибка.", disable_web_page_preview=True)
+        return await message.reply("❌ Ошибка.", disable_web_page_preview=True, **_reply_kwargs(message))
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="📩 Написать в ЛС", url=f"https://t.me/{bot_username}")
     ]])
     await message.reply(
         f"📩 <b>Личные сообщения Mos</b>\n\n👉 <a href='https://t.me/{bot_username}'>@{bot_username}</a>",
-        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb, **_reply_kwargs(message)
     )
 
 
@@ -4039,7 +4138,7 @@ async def commands_link_cmd(message: types.Message):
     ]])
     await message.reply(
         f"📖 <b>Все команды бота Mos</b>\n\n🔗 <a href='{TELETYPE_URL}'>Mos-command</a>",
-        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb, **_reply_kwargs(message)
     )
 
 
@@ -4075,12 +4174,15 @@ async def help_cmd(message: types.Message):
         f"{em('sos', '🆘')} <b>Поддержка:</b> <a href=\"{SUPPORT_CHAT_LINK}\">Перейти</a>\n"
         f"📢 <b>Канал:</b> <a href=\"{SUPPORT_CHANNEL_LINK}\">Перейти</a>"
     )
-    await message.reply(help_text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(help_text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("пинг")
 async def ping_cmd(message: types.Message):
-    await message.reply(f"{em('ping', '🏓')} Понг!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(
+        f"{em('ping', '🏓')} Понг!",
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
+    )
 
 
 @cmd("инфобот")
@@ -4088,7 +4190,7 @@ async def bot_info_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
         return
     start = datetime.now()
-    sent = await message.reply("🏓 Считаю...")
+    sent = await message.reply("🏓 Считаю...", **_reply_kwargs(message))
     ping_ms = int((datetime.now() - start).total_seconds() * 1000)
     try: await sent.delete()
     except: pass
@@ -4123,7 +4225,7 @@ async def bot_info_cmd(message: types.Message):
         f"🛡 Агентов: <b>{total_agents}</b>\n"
         f"🚫 В антиспаме: <b>{total_antispam}</b>"
     )
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("инфо")
@@ -4148,20 +4250,20 @@ async def info_cmd(message: types.Message):
         f"{em('key', '🔑')} {link_text} | Код: <code>{code}</code>\n"
         f"{em('calendar', '🗓')} {datetime.now().strftime('%d.%m.%Y')}\n\n"
         f"{em('stats', '📊')} Сегодня: {today_count} | Всего: {all_count}",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
 # ================= ПОГОДА (КОМАНДА) =================
-@cmd("погода")
+@cmd("погода", allow_args=True, args_pattern=r"^.+$")
 async def weather_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        return await message.reply("🌤 <b>Погода</b>\n\n📌 Напиши: <code>.погода Москва</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("🌤 <b>Погода</b>\n\n📌 Напиши: <code>.погода Москва</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     city = args[1].strip()
     if not city:
-        return await message.reply("❌ Укажи город.", parse_mode="HTML", disable_web_page_preview=True)
-    msg = await message.reply(f"🌍 Ищу погоду в <b>{city}</b>...", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Укажи город.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    msg = await message.reply(f"🌍 Ищу погоду в <b>{city}</b>...", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     weather = get_weather(city)
     if not weather:
         return await msg.edit_text(f"{em('cross', '❌')} Город <b>{city}</b> не найден.", parse_mode="HTML")
@@ -4176,31 +4278,31 @@ async def weather_cmd(message: types.Message):
         f"💨 Ветер: <b>{weather['wind']} м/с</b>"
     )
     try: await msg.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
-    except: await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    except: await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= ПЕРЕВОДЧИК =================
 @dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*(перевод|translate)\s+\S+',
+    r'^\s*[.\/!+-]?\s*(перевод|translate)\s+\S+',
     m.text.strip(), re.IGNORECASE
 ))
 async def translate_cmd(message: types.Message):
     txt = message.text.strip()
-    body = re.sub(r'^[.\/!]?\s*(перевод|translate)\s+', '', txt, count=1, flags=re.IGNORECASE).strip()
+    body = re.sub(r'^[.\/!+-]?\s*(перевод|translate)\s+', '', txt, count=1, flags=re.IGNORECASE).strip()
     if not body:
         return await message.reply(
             "🌐 <b>Переводчик</b>\n\n"
             "📌 <code>.перевод en Привет мир</code>\n"
             "📌 <code>.перевод ru Hello world</code>\n\n"
             "🌍 Коды: <code>en, ru, de, fr, es, it, uk, pl, tr, zh, ja, ko, ar</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     parts = body.split(maxsplit=1)
     if len(parts) < 2:
         return await message.reply(
             "📌 Формат: <code>.перевод en текст</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     lang = parts[0].lower().strip()
@@ -4210,7 +4312,7 @@ async def translate_cmd(message: types.Message):
         lang = "ru"
         text_to_translate = body[:1500]
 
-    msg = await message.reply("🌐 Перевожу...")
+    msg = await message.reply("🌐 Перевожу...", **_reply_kwargs(message))
 
     try:
         url = "https://translate.googleapis.com/translate_a/single"
@@ -4251,7 +4353,7 @@ async def translate_cmd(message: types.Message):
         try:
             await msg.edit_text(out, parse_mode="HTML", disable_web_page_preview=True)
         except Exception:
-            await message.reply(out, parse_mode="HTML", disable_web_page_preview=True)
+            await message.reply(out, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     except asyncio.TimeoutError:
         await msg.edit_text(f"{em('cross', '❌')} Таймаут. Попробуй позже.", parse_mode="HTML")
@@ -4262,12 +4364,12 @@ async def translate_cmd(message: types.Message):
 
 # ================= КАЛЬКУЛЯТОР =================
 @dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*(калькулятор|кальк|calc)\s+(.+)$',
+    r'^\s*[.\/!+-]?\s*(калькулятор|кальк|calc)\s+(.+)$',
     m.text.strip(), re.IGNORECASE
 ))
 async def calc_cmd(message: types.Message):
     txt = message.text.strip()
-    expr = re.sub(r'^[.\/!]?\s*(калькулятор|кальк|calc)\s+', '', txt, count=1, flags=re.IGNORECASE).strip()
+    expr = re.sub(r'^[.\/!+-]?\s*(калькулятор|кальк|calc)\s+', '', txt, count=1, flags=re.IGNORECASE).strip()
 
     if not expr:
         return await message.reply(
@@ -4276,7 +4378,7 @@ async def calc_cmd(message: types.Message):
             "📌 <code>.кальк (5+3)/2</code>\n"
             "📌 <code>.кальк sqrt(16)</code>\n\n"
             "<i>Поддержка: + - * / ** % sqrt() abs() round() sin() cos() tan() log() log10()</i>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     safe_expr = expr.replace(",", ".").replace("^", "**")
@@ -4286,13 +4388,13 @@ async def calc_cmd(message: types.Message):
     if not allowed and not math_funcs_used:
         return await message.reply(
             f"{em('cross', '❌')} Недопустимые символы.\nРазрешено: цифры, + - * / ( ) . ^ % и функции sqrt/abs/round/sin/cos/tan/log",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     dangerous = ["__", "import", "exec", "eval", "open", "os.", "sys.", "subprocess", "lambda"]
     for bad in dangerous:
         if bad in safe_expr.lower():
-            return await message.reply(f"{em('cross', '❌')} Запрещено.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Запрещено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     try:
         import math
@@ -4312,25 +4414,25 @@ async def calc_cmd(message: types.Message):
             f"🧮 <b>Калькулятор</b>\n\n"
             f"📝 Пример: <code>{html_escape_text(expr)}</code>\n"
             f"✅ Ответ: <b>{html_escape_text(result_str)}</b>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     except ZeroDivisionError:
-        await message.reply(f"{em('cross', '❌')} Деление на ноль.", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"{em('cross', '❌')} Деление на ноль.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
         await message.reply(
             f"{em('cross', '❌')} Не смог посчитать.\n<code>{html_escape_text(str(e))}</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
 
 # ================= КУРСЫ ВАЛЮТ =================
 @dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*курс(\s+\S+)?\s*$',
+    r'^\s*[.\/!+-]?\s*курс(\s+\S+)?\s*$',
     m.text.strip(), re.IGNORECASE
 ))
 async def currency_cmd(message: types.Message):
     args = message.text.split()
-    msg = await message.reply("💱 Загружаю курсы...")
+    msg = await message.reply("💱 Загружаю курсы...", **_reply_kwargs(message))
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -4405,7 +4507,7 @@ async def currency_cmd(message: types.Message):
 
 # ================= КРИПТА =================
 @dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*(крипта|крипт|crypto)\s+\S+',
+    r'^\s*[.\/!+-]?\s*(крипта|крипт|crypto)\s+\S+',
     m.text.strip(), re.IGNORECASE
 ))
 async def crypto_cmd(message: types.Message):
@@ -4417,13 +4519,13 @@ async def crypto_cmd(message: types.Message):
             "📌 <code>.крипта eth</code>\n"
             "📌 <code>.крипта btc usd</code>\n\n"
             "<i>Популярные: btc, eth, ton, sol, xrp, doge, bnb, ada, dot, matic</i>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     coin = args[1].lower()
     currency = args[2].lower() if len(args) >= 3 else "usd"
 
-    msg = await message.reply("💎 Загружаю...")
+    msg = await message.reply("💎 Загружаю...", **_reply_kwargs(message))
 
     coin_map = {
         "btc": "bitcoin", "bitcoin": "bitcoin",
@@ -4501,7 +4603,7 @@ async def crypto_cmd(message: types.Message):
 
 # ================= ВНУТРЕННИЙ КУРС =================
 @dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*(курс коинов|курс ирисок|биржа)\s*$',
+    r'^\s*[.\/!+-]?\s*(курс коинов|курс ирисок|биржа)\s*$',
     m.text.strip(), re.IGNORECASE
 ))
 async def internal_rates_cmd(message: types.Message):
@@ -4511,21 +4613,21 @@ async def internal_rates_cmd(message: types.Message):
         "🪙 1 🍬 = <b>100</b> i¢\n"
         "🍬 100 i¢ = <b>1</b> 🍬\n\n"
         f"🏦 Счёт этого чата: <b>{chat_coins}</b> i¢\n"
-        f"💰 В ирисках: ≈ <b>{chat_coins // 100}</b> 🍬\n\n"
+        f"💰 В mos-конфетках: ≈ <b>{chat_coins // 100}</b> 🍬\n\n"
         "📌 Обмен: <code>.купить коины 10</code> — 10 🍬 → 1000 i¢\n"
         "📌 Взнос: <code>.бкоин 100</code> — 100 i¢ в счёт чата"
     )
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= WIKIPEDIA =================
 @dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*(вики|wiki)\s+\S+',
+    r'^\s*[.\/!+-]?\s*(вики|wiki)\s+\S+',
     m.text.strip(), re.IGNORECASE
 ))
 async def wiki_cmd(message: types.Message):
     txt = message.text.strip()
-    body = re.sub(r'^[.\/!]?\s*(вики|wiki)\s+', '', txt, count=1, flags=re.IGNORECASE).strip()
+    body = re.sub(r'^[.\/!+-]?\s*(вики|wiki)\s+', '', txt, count=1, flags=re.IGNORECASE).strip()
     if not body:
         return await message.reply(
             "📖 <b>Википедия</b>\n\n"
@@ -4534,7 +4636,7 @@ async def wiki_cmd(message: types.Message):
             "📌 <code>.вики ру Эйнштейн</code>\n"
             "📌 <code>.вики en Moscow</code>\n\n"
             "<i>Языки: ру (по умолчанию), en, de, fr, es, it, uk, pl, tr, ja, zh</i>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     parts = body.split(maxsplit=1)
@@ -4545,9 +4647,9 @@ async def wiki_cmd(message: types.Message):
         query = parts[1].strip()
 
     if not query:
-        return await message.reply("❌ Пустой запрос.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Пустой запрос.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
-    msg = await message.reply(f"🔎 Ищу в Википедии: <b>{html_escape_text(query)}</b>...", parse_mode="HTML", disable_web_page_preview=True)
+    msg = await message.reply(f"🔎 Ищу в Википедии: <b>{html_escape_text(query)}</b>...", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     try:
         search_url = f"https://{lang}.wikipedia.org/w/api.php"
@@ -4626,7 +4728,7 @@ async def wiki_cmd(message: types.Message):
                 ]])
                 try: await msg.delete()
                 except: pass
-                await message.reply_photo(photo=thumbnail, caption=out, parse_mode="HTML", reply_markup=kb)
+                await message.reply_photo(photo=thumbnail, caption=out, parse_mode="HTML", reply_markup=kb, **_reply_kwargs(message))
                 return
             except Exception:
                 pass
@@ -4636,7 +4738,7 @@ async def wiki_cmd(message: types.Message):
         except Exception:
             try: await msg.delete()
             except: pass
-            await message.reply(out, parse_mode="HTML", disable_web_page_preview=False)
+            await message.reply(out, parse_mode="HTML", disable_web_page_preview=False, **_reply_kwargs(message))
 
     except asyncio.TimeoutError:
         await msg.edit_text(f"{em('cross', '❌')} Таймаут. Попробуй позже.", parse_mode="HTML")
@@ -4648,23 +4750,23 @@ async def wiki_cmd(message: types.Message):
 
 
 # ================= КОМАНДЫ ПРАЗДНИКОВ =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*(праздники|праздник|holidays)\s*$', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*(праздники|праздник|holidays)\s*$', m.text.strip(), re.IGNORECASE))
 async def holidays_cmd(message: types.Message):
     text = get_all_holidays_text()
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*(праздники|праздник)\s+(\d{1,2})[.\-](\d{1,2})\.?(\d{4})?\s*$', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*(праздники|праздник)\s+(\d{1,2})[.\-](\d{1,2})\.?(\d{4})?\s*$', m.text.strip(), re.IGNORECASE))
 async def holidays_date_cmd(message: types.Message):
-    m = re.match(r'^\s*[.\/!]?\s*(праздники|праздник)\s+(\d{1,2})[.\-](\d{1,2})\.?(\d{4})?\s*$', message.text.strip(), re.IGNORECASE)
+    m = re.match(r'^\s*[.\/!+-]?\s*(праздники|праздник)\s+(\d{1,2})[.\-](\d{1,2})\.?(\d{4})?\s*$', message.text.strip(), re.IGNORECASE)
     day, month = int(m.group(2)), int(m.group(3))
     year = int(m.group(4)) if m.group(4) else (datetime.now(timezone.utc) + timedelta(hours=3)).year
     try:
         date_obj = datetime(year, month, day)
     except ValueError:
-        return await message.reply(f"{em('cross', '❌')} Неверная дата.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Неверная дата.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = get_all_holidays_text(date_obj)
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 def is_holidays_enabled(chat_id) -> bool:
@@ -4686,7 +4788,7 @@ def set_holidays_enabled(chat_id, enabled: bool):
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+праздники", "+ праздники", "+праздник", "+ праздник"])
 async def enable_holidays_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     user_id = message.from_user.id
     is_creator = False
     try:
@@ -4696,11 +4798,11 @@ async def enable_holidays_cmd(message: types.Message):
     if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
     if not is_creator and not has_permission(message.chat.id, user_id, 3):
         if not await is_tg_admin(message.chat.id, user_id):
-            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if is_holidays_enabled(message.chat.id):
-        return await message.reply("ℹ️ Уже включено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Уже включено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_holidays_enabled(message.chat.id, True)
-    await message.reply(f"{em('check', '✅')} <b>Праздники включены!</b>\n\n🥳 Автопост в <b>00:00 МСК</b>.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} <b>Праздники включены!</b>\n\n🥳 Автопост в <b>00:00 МСК</b>.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-праздники", "- праздники", "-праздник", "- праздник"])
@@ -4715,18 +4817,18 @@ async def disable_holidays_cmd(message: types.Message):
     if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
     if not is_creator and not has_permission(message.chat.id, user_id, 3):
         if not await is_tg_admin(message.chat.id, user_id):
-            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not is_holidays_enabled(message.chat.id):
-        return await message.reply("ℹ️ Уже выключено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Уже выключено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_holidays_enabled(message.chat.id, False)
-    await message.reply(f"{em('check', '✅')} Праздники выключены.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Праздники выключены.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*праздник\s+добавить\s+(\d{1,2})[.\-](\d{1,2})\s*\|\s*(.+?)\s*\|\s*(\S+)\s*$', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*праздник\s+добавить\s+(\d{1,2})[.\-](\d{1,2})\s*\|\s*(.+?)\s*\|\s*(\S+)\s*$', m.text.strip(), re.IGNORECASE))
 async def add_holiday_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Только владелец/совладелец/агент 3+.", parse_mode="HTML", disable_web_page_preview=True)
-    m = re.match(r'^\s*[.\/!]?\s*праздник\s+добавить\s+(\d{1,2})[.\-](\d{1,2})\s*\|\s*(.+?)\s*\|\s*(\S+)\s*$', message.text.strip(), re.IGNORECASE)
+        return await message.reply(f"{em('cross', '❌')} Только владелец/совладелец/агент 3+.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    m = re.match(r'^\s*[.\/!+-]?\s*праздник\s+добавить\s+(\d{1,2})[.\-](\d{1,2})\s*\|\s*(.+?)\s*\|\s*(\S+)\s*$', message.text.strip(), re.IGNORECASE)
     day, month = int(m.group(1)), int(m.group(2))
     name = m.group(3).strip()
     category = m.group(4).strip().lower()
@@ -4739,49 +4841,49 @@ async def add_holiday_cmd(message: types.Message):
         "церковные": "church", "церковный": "church", "church": "church",
     }
     if category not in cat_map:
-        return await message.reply("❌ Категория не найдена. Допустимые: <code>глобальные народные праздники профессиональные забавные церковные</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Категория не найдена. Допустимые: <code>глобальные народные праздники профессиональные забавные церковные</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     date_mm_dd = f"{month:02d}-{day:02d}"
     if add_holiday(date_mm_dd, name, cat_map[category], message.from_user.id):
-        await message.reply(f"{em('check', '✅')} Праздник добавлен!", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"{em('check', '✅')} Праздник добавлен!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     else:
-        await message.reply(f"{em('cross', '❌')} Уже есть.", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"{em('cross', '❌')} Уже есть.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*праздник\s+удалить\s+\d+\s*$', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*праздник\s+удалить\s+\d+\s*$', m.text.strip(), re.IGNORECASE))
 async def remove_holiday_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        return await message.reply(f"{em('cross', '❌')} Только владелец/совладелец.", parse_mode="HTML", disable_web_page_preview=True)
-    m = re.match(r'^\s*[.\/!]?\s*праздник\s+удалить\s+(\d+)\s*$', message.text.strip(), re.IGNORECASE)
+        return await message.reply(f"{em('cross', '❌')} Только владелец/совладелец.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    m = re.match(r'^\s*[.\/!+-]?\s*праздник\s+удалить\s+(\d+)\s*$', message.text.strip(), re.IGNORECASE)
     if remove_holiday(int(m.group(1))):
-        await message.reply(f"{em('check', '✅')} Удалён.", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"{em('check', '✅')} Удалён.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     else:
-        await message.reply(f"{em('cross', '❌')} Не найден.", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"{em('cross', '❌')} Не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*праздник\s+список\s*$', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*праздник\s+список\s*$', m.text.strip(), re.IGNORECASE))
 async def list_holidays_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Только для агентов.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Только для агентов.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT id, date, name, category FROM holidays ORDER BY date ASC, id ASC LIMIT 100")
         rows = c.fetchall()
     if not rows:
-        return await message.reply("📭 Пусто.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 Пусто.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"📋 <b>Праздники в базе</b> (всего: {get_all_holidays_count()}):\n\n"
     for hid, date_mm_dd, name, cat in rows:
         text += f"<code>#{hid}</code> {date_mm_dd} [{cat}] {name}\n"
-    await message.reply(text[:4000], parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text[:4000], parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-# ================= АВТОУДАЛЕНИЕ ПРИВЕТСТВИЙ (КОМАНДЫ) =================
+# ================= АВТОУДАЛЕНИЕ ПРИВЕТСТВИЙ =================
 @dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*\+?\s*автоудаление\s+приветствий\b',
+    r'^\s*[.\/!+-]?\s*\+?\s*автоудаление\s+приветствий\b',
     m.text.strip(), re.IGNORECASE
 ))
 async def set_greeting_autodelete_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     user_id = message.from_user.id; chat_id = message.chat.id
     is_creator = False
     try:
@@ -4791,9 +4893,9 @@ async def set_greeting_autodelete_cmd(message: types.Message):
     if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
     if not is_creator and not has_permission(chat_id, user_id, 3):
         if not await is_tg_admin(chat_id, user_id):
-            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
-    args = re.sub(r'^[.\/!]?\s*\+?\s*автоудаление\s+приветствий\s*',
+    args = re.sub(r'^[.\/!+-]?\s*\+?\s*автоудаление\s+приветствий\s*',
                   '', message.text.strip(), count=1, flags=re.IGNORECASE).strip()
 
     if not args:
@@ -4803,13 +4905,13 @@ async def set_greeting_autodelete_cmd(message: types.Message):
                 f"🧹 <b>Автоудаление приветствий</b>: <b>{_humanize_seconds(current)}</b>\n\n"
                 f"📌 Изменить: <code>+Автоудаление приветствий 30с</code>\n"
                 f"📌 Отключить: <code>-Автоудаление приветствий</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
         return await message.reply(
             "🧹 <b>Автоудаление приветствий</b>: 🔴 выключено\n\n"
             "📌 Включить: <code>+Автоудаление приветствий 30с</code>\n"
             "⏱ Максимальный срок: <b>1 день</b>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     seconds, human = parse_autodelete_duration(args)
@@ -4817,16 +4919,16 @@ async def set_greeting_autodelete_cmd(message: types.Message):
         return await message.reply(
             "❌ Не понял срок.\nПримеры: <code>30с</code>, <code>5 мин</code>, <code>2 часа</code>, <code>1 день</code>\n"
             "⏱ Максимум: <b>1 день</b>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     if seconds == 0:
         set_greeting_autodelete(chat_id, 0)
-        return await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     set_greeting_autodelete(chat_id, seconds)
     await message.reply(
         f"{em('check', '✅')} <b>Автоудаление приветствий включено!</b>\n\n⏱ Удаление через <b>{human}</b>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -4843,14 +4945,14 @@ async def disable_greeting_autodelete_cmd(message: types.Message):
     if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
     if not is_creator and not has_permission(chat_id, user_id, 3):
         if not await is_tg_admin(chat_id, user_id):
-            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if get_greeting_autodelete(chat_id) == 0:
-        return await message.reply("ℹ️ Уже выключено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Уже выключено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_greeting_autodelete(chat_id, 0)
-    await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*срок\s+приветствия\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*срок\s+приветствия\b', m.text.strip(), re.IGNORECASE))
 async def greeting_autodelete_alias_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return
@@ -4863,32 +4965,32 @@ async def greeting_autodelete_alias_cmd(message: types.Message):
     if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
     if not is_creator and not has_permission(chat_id, user_id, 3):
         if not await is_tg_admin(chat_id, user_id):
-            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
-    args = re.sub(r'^[.\/!]?\s*срок\s+приветствия\s*',
+    args = re.sub(r'^[.\/!+-]?\s*срок\s+приветствия\s*',
                   '', message.text.strip(), count=1, flags=re.IGNORECASE).strip()
 
     if not args:
         current = get_greeting_autodelete(chat_id)
         if current > 0:
-            return await message.reply(f"🧹 Автоудаление приветствий: <b>{_humanize_seconds(current)}</b>", parse_mode="HTML", disable_web_page_preview=True)
-        return await message.reply("🧹 Автоудаление приветствий: 🔴 выключено\n\n📌 <code>/срок приветствия 30с</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"🧹 Автоудаление приветствий: <b>{_humanize_seconds(current)}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+        return await message.reply("🧹 Автоудаление приветствий: 🔴 выключено\n\n📌 <code>/срок приветствия 30с</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     seconds, human = parse_autodelete_duration(args)
     if seconds is False:
-        return await message.reply("❌ Не понял срок. Примеры: <code>30с</code>, <code>5 мин</code>, <code>1 час</code>, <code>1 день</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Не понял срок. Примеры: <code>30с</code>, <code>5 мин</code>, <code>1 час</code>, <code>1 день</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if seconds == 0:
         set_greeting_autodelete(chat_id, 0)
-        return await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_greeting_autodelete(chat_id, seconds)
-    await message.reply(f"{em('check', '✅')} Автоудаление приветствий: <b>{human}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Автоудаление приветствий: <b>{human}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-# ================= КОРОТКО ПРО (КОМАНДЫ) =================
+# ================= КОРОТКО ПРО =================
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+коротко про", "+короткопро"])
 async def enable_short_about_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     user_id = message.from_user.id; chat_id = message.chat.id
     is_creator = False
     try:
@@ -4898,14 +5000,14 @@ async def enable_short_about_cmd(message: types.Message):
     if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
     if not is_creator and not has_permission(chat_id, user_id, 3):
         if not await is_tg_admin(chat_id, user_id):
-            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if is_short_about_enabled(chat_id):
-        return await message.reply("ℹ️ Уже включено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Уже включено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_short_about_enabled(chat_id, True)
     await message.reply(
         f"{em('check', '✅')} <b>Карточка «Коротко про» включена!</b>\n\n"
         f"📇 Будет отправляться после приветствия нового участника.",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -4922,64 +5024,68 @@ async def disable_short_about_cmd(message: types.Message):
     if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
     if not is_creator and not has_permission(chat_id, user_id, 3):
         if not await is_tg_admin(chat_id, user_id):
-            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not is_short_about_enabled(chat_id):
-        return await message.reply("ℹ️ Уже выключено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Уже выключено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_short_about_enabled(chat_id, False)
-    await message.reply(f"{em('cross', '❌')} Карточка «Коротко про» выключена.", parse_mode="HTML", disable_web_page_preview=True)# ================= МОЙ ПОЛ / ДР / ГОРОД =================
-@dp.message(lambda m: m.text and re.match(r'^мой\s+пол\s+\S+', m.text.strip(), re.IGNORECASE))
+    await message.reply(f"{em('cross', '❌')} Карточка «Коротко про» выключена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))# ================= МОЙ ПОЛ / ДР / ГОРОД =================
+@dp.message(lambda m: m.text and re.match(r'^\s*!?\s*мой\s+пол(\s+[МЖмж]|\s+(Мужской|Женский|Другой))?\s*$', m.text.strip(), re.IGNORECASE))
 async def set_gender_cmd(message: types.Message):
     parts = message.text.strip().split(maxsplit=2)
     if len(parts) < 3:
-        return await message.reply("📌 <code>мой пол М</code> или <code>мой пол Ж</code>", parse_mode="HTML")
+        return await message.reply(
+            "📌 <code>мой пол М</code> или <code>мой пол Ж</code>",
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
+        )
     v = parts[2].strip().lower()
     if v in ["м", "муж", "мужской"]: v = "Мужской"
     elif v in ["ж", "жен", "женский"]: v = "Женский"
     else: v = "Другой"
     update_user_profile(message.from_user.id, "gender", v)
-    await message.reply(f"✅ Пол: <b>{v}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"✅ Пол: <b>{v}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip() == "-мой пол")
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["-мой пол", ".мой пол", "/мой пол"])
 async def remove_gender_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "gender", None)
-    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^мой\s+др\s+\S+', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*!?\s*мой\s+др\s+(\d{1,2}[.\-]\d{1,2}[.\-]\d{2,4})(\s+(год|месяц|день))?\s*$', m.text.strip(), re.IGNORECASE))
 async def set_birth_cmd(message: types.Message):
     parts = message.text.strip().split()
     if len(parts) < 3:
-        return await message.reply("📌 <code>мой др 01.01.2000</code>", parse_mode="HTML")
+        return await message.reply("📌 <code>мой др 01.01.2000</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     date = parts[2].strip()
     vis = parts[3].lower() if len(parts) >= 4 else "месяц"
     update_user_profile(message.from_user.id, "birth_date", date)
     update_user_profile(message.from_user.id, "birth_visibility", vis)
-    await message.reply(f"✅ ДР: <b>{date}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"✅ ДР: <b>{date}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip() == "-мой др")
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["-мой др", ".мой др", "/мой др"])
 async def remove_birth_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "birth_date", None)
-    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("!мой город"))
+@dp.message(lambda m: m.text and re.match(r'^\s*!?\s*мой\s+город(\s+.+)?\s*$', m.text.strip(), re.IGNORECASE))
 async def set_city_cmd(message: types.Message):
     args = message.text.split(maxsplit=2)
-    if len(args) < 3: return
+    if len(args) < 3:
+        return await message.reply("📌 <code>мой город Москва</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     update_user_profile(message.from_user.id, "city", args[2].strip()[:50])
-    await message.reply(f"✅ Город: <b>{args[2].strip()[:50]}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"✅ Город: <b>{args[2].strip()[:50]}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip() == "-мой город")
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["-мой город", ".мой город", "/мой город"])
 async def remove_city_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "city", None)
-    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= АНКЕТА (КОМАНДЫ) =================
-@cmd("анкета")
+@cmd("анкета", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def anketa_cmd(message: types.Message):
     target = None
     if message.reply_to_message and message.reply_to_message.from_user:
@@ -5010,7 +5116,7 @@ async def anketa_cmd(message: types.Message):
                     return await message.reply(
                         f"{em('cross', '❌')} Пользователь <code>{arg}</code> не найден.\n"
                         f"📌 Формат: <code>.анкета</code>, <code>.анкета @user</code>, <code>.анкета 123456789</code>",
-                        parse_mode="HTML", disable_web_page_preview=True
+                        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
                     )
     if not target:
         target = message.from_user
@@ -5028,16 +5134,17 @@ async def anketa_cmd(message: types.Message):
             await message.reply_photo(
                 photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
                 caption=text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                **_reply_kwargs(message)
             )
             return
         except Exception:
             pass
 
     try:
-        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception:
-        await message.reply(text, disable_web_page_preview=True)
+        await message.reply(text, disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("моя анкета")
@@ -5056,19 +5163,20 @@ async def my_anketa_cmd(message: types.Message):
             await message.reply_photo(
                 photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
                 caption=text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                **_reply_kwargs(message)
             )
             return
         except Exception:
             pass
 
     try:
-        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception:
-        await message.reply(text, disable_web_page_preview=True)
+        await message.reply(text, disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("твоя анкета")
+@cmd("твоя анкета", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def your_anketa_cmd(message: types.Message):
     target = None
     if message.reply_to_message:
@@ -5098,7 +5206,7 @@ async def your_anketa_cmd(message: types.Message):
                 else:
                     return await message.reply(
                         f"{em('cross', '❌')} Пользователь <code>{arg}</code> не найден.",
-                        parse_mode="HTML", disable_web_page_preview=True
+                        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
                     )
     if not target:
         return await message.reply(
@@ -5106,7 +5214,7 @@ async def your_anketa_cmd(message: types.Message):
             "• Ответь на сообщение: <code>.твоя анкета</code>\n"
             "• Или: <code>.твоя анкета @user</code>\n"
             "• Или: <code>.твоя анкета 123456789</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     text = await _build_anketa_text(target, message.chat.id, viewer_id=message.from_user.id)
 
@@ -5121,16 +5229,17 @@ async def your_anketa_cmd(message: types.Message):
             await message.reply_photo(
                 photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
                 caption=text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                **_reply_kwargs(message)
             )
             return
         except Exception:
             pass
 
     try:
-        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception:
-        await message.reply(text, disable_web_page_preview=True)
+        await message.reply(text, disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+био"))
@@ -5141,24 +5250,24 @@ async def set_bio_cmd(message: types.Message):
         idx = message.text.lower().find("+био")
         raw = message.text[idx + len("+био"):].strip()
         if not raw:
-            return await message.reply("📌 <code>+био Твой текст</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📌 <code>+био Твой текст</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         update_user_profile(message.from_user.id, "bio", html_escape_text(raw[:300]))
-        return await message.reply("✅ Био сохранено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("✅ Био сохранено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     raw_html = _extract_html_after(message, nl_idx + 1)[:300]
     if not raw_html:
-        return await message.reply("❌ Пусто.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Пусто.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     update_user_profile(message.from_user.id, "bio", raw_html)
-    await message.reply("✅ Био сохранено.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Био сохранено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-био")
 async def remove_bio_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "bio", None)
-    await message.reply("✅ Био удалено.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Био удалено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= ПРОФИЛЬ =================
-@cmd("профиль")
+@cmd("профиль", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def profile_cmd(message: types.Message):
     target = None
     arg_raw = None
@@ -5176,7 +5285,7 @@ async def profile_cmd(message: types.Message):
             except Exception:
                 return await message.reply(
                     f"{em('cross', '❌')} Пользователь <code>{arg_raw}</code> не найден.",
-                    parse_mode="HTML", disable_web_page_preview=True
+                    parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
                 )
     if not target:
         target = message.from_user
@@ -5290,20 +5399,21 @@ async def profile_cmd(message: types.Message):
             await message.reply_photo(
                 photo=types.BufferedInputFile(chart_buf.getvalue(), filename="profile.png"),
                 caption=text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                **_reply_kwargs(message)
             )
         except Exception:
-            await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+            await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     else:
-        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("мойид")
 async def myid_cmd(message: types.Message):
-    await message.reply(f"{em('id', '🆔')} Ваш ID: <code>{message.from_user.id}</code>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('id', '🆔')} Ваш ID: <code>{message.from_user.id}</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("ид")
+@cmd("ид", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def get_id_cmd(message: types.Message):
     target = None
     if message.reply_to_message: target = message.reply_to_message.from_user
@@ -5320,15 +5430,15 @@ async def get_id_cmd(message: types.Message):
                         c.execute("SELECT first_name, username FROM users WHERE user_id = ?", (user_id,))
                         r = c.fetchone()
                         if r:
-                            return await message.reply(f"{em('id', '🆔')} ID: <code>{user_id}</code>\n📛 {r[0]}", parse_mode="HTML", disable_web_page_preview=True)
-                    return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML", disable_web_page_preview=True)
+                            return await message.reply(f"{em('id', '🆔')} ID: <code>{user_id}</code>\n📛 {r[0]}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+                    return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
             elif arg.startswith('@'):
                 try: target = await bot.get_chat(arg)
-                except: return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML", disable_web_page_preview=True)
+                except: return await message.reply(f"{em('cross', '❌')} Не найден", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not target: target = message.from_user
     await message.reply(
         f"{em('id', '🆔')} <b>Информация</b>\n\n👤 Имя: {mention(target)}\n🆔 ID: <code>{target.id}</code>\n👤 Username: @{target.username if target.username else '—'}",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -5338,25 +5448,25 @@ async def get_chat_id_cmd(message: types.Message):
         fwd = message.reply_to_message.forward_from_chat
         return await message.reply(
             f"{em('id', '🆔')} <b>ID пересланного чата</b>\n\n📛 <b>{fwd.title or 'Без названия'}</b>\n🆔 <code>{fwd.id}</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     await message.reply(
         f"{em('id', '🆔')} <b>Информация о чате</b>\n\n📛 <b>{message.chat.title or 'Личный чат'}</b>\n🆔 <code>{message.chat.id}</code>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
 # ================= ТОП =================
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*топ(\s+\S+)?\s*$',
-    m.text.strip(), re.IGNORECASE
-))
+@cmd("топ", allow_args=True,
+     args_pattern=r"^(24ч|24h|день|сутки|д|today|day|неделя|неделю|нед|н|7д|7d|week|месяц|мес|м|30д|30d|month|вся|всё|все|all|\*)$")
 async def top_cmd(message: types.Message):
     try:
         if message.chat.type not in ["group", "supergroup"]:
-            return await message.reply("📊 Топ работает только в группах.", parse_mode="HTML")
+            return await message.reply("📊 Топ работает только в группах.", parse_mode="HTML", **_reply_kwargs(message))
 
-        args = message.text.split()
+        args = message.text.strip().split()
+        if args and args[0] and args[0][0] in ".!/+-":
+            args[0] = args[0][1:]
 
         period = "24h"
         period_name = "за последние 24 часа"
@@ -5373,16 +5483,6 @@ async def top_cmd(message: types.Message):
                 period, period_name, period_icon = "30d", "за месяц", "🗓"
             elif p in ["вся", "всё", "все", "всё время", "all", "*"]:
                 period, period_name, period_icon = "all", "за всё время", "🏆"
-            else:
-                return await message.reply(
-                    "📊 <b>Как пользоваться топом</b>\n\n"
-                    "• <code>.топ</code> — за 24 часа\n"
-                    "• <code>.топ неделя</code> — за 7 дней\n"
-                    "• <code>.топ месяц</code> — за 30 дней\n"
-                    "• <code>.топ вся</code> — за всё время\n\n"
-                    "🕐 Статистика <b>24/7</b>: окно скользящее, не сбрасывается в полночь.",
-                    parse_mode="HTML", disable_web_page_preview=True
-                )
 
         top_users = get_top_users(message.chat.id, period, limit=10)
 
@@ -5395,7 +5495,7 @@ async def top_cmd(message: types.Message):
         if not top_users:
             return await message.reply(
                 header + "📭 <i>Пока нет данных за этот период.</i>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
 
         total_msgs = sum(cnt or 0 for _, cnt in top_users)
@@ -5421,23 +5521,23 @@ async def top_cmd(message: types.Message):
             text += f"    <code>{bar}</code> <b>{count}</b>\n\n"
 
         text += (
-            f"━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━━\n"
             f"📈 Всего сообщений: <b>{total_msgs}</b>\n"
             f"👥 Участников: <b>{len(top_users)}</b>\n"
             f"🕐 Живая статистика <b>24/7</b>"
         )
 
-        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
         print(f"❌ top_cmd ошибка: {traceback.format_exc()}")
         try:
-            await message.reply(f"❌ Ошибка топа: <code>{type(e).__name__}: {e}</code>", parse_mode="HTML")
+            await message.reply(f"❌ Ошибка топа: <code>{type(e).__name__}: {e}</code>", parse_mode="HTML", **_reply_kwargs(message))
         except: pass
 
 
 # ================= КТО НЕ ПИСАЛ =================
-@cmd("кто не писал")
-@cmd("неактивные")
+@cmd("кто не писал", allow_args=True, args_pattern=r"^\d+$")
+@cmd("неактивные", allow_args=True, args_pattern=r"^\d+$")
 async def inactive_users_cmd(message: types.Message):
     chat_id = message.chat.id
     args = message.text.split()
@@ -5451,10 +5551,10 @@ async def inactive_users_cmd(message: types.Message):
     except: pass
     if not is_creator and not has_permission(chat_id, message.from_user.id, 2):
         if not await is_tg_admin(chat_id, message.from_user.id):
-            return await message.reply(f"{em('cross', '❌')} Нужен Ст. Модератор (2+) или ТГ-админ.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен Ст. Модератор (2+) или ТГ-админ.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     inactive = get_inactive_users(chat_id, days=days, limit=30)
     if not inactive:
-        return await message.reply(f"{em('check', '✅')} <b>Все активны!</b>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} <b>Все активны!</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"💤 <b>Не писали {days}+ дней</b> ({len(inactive)}):\n\n"
     for i, (user_id, last_date) in enumerate(inactive, 1):
         try:
@@ -5473,7 +5573,7 @@ async def inactive_users_cmd(message: types.Message):
         else: time_str = f"{days_ago // 365} г."
         text += f"{i}. {name_display} — <i>{time_str} назад</i>\n"
     text += f"\n📌 Показаны первые 30."
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= ОБНОВИТЬ ЧАТ =================
@@ -5481,7 +5581,7 @@ async def inactive_users_cmd(message: types.Message):
 @cmd("обновитьчат")
 async def refresh_chat_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     is_creator = False
     try:
         member = await bot.get_chat_member(message.chat.id, message.from_user.id)
@@ -5489,8 +5589,8 @@ async def refresh_chat_cmd(message: types.Message):
     except: pass
     if not is_creator and not has_permission(message.chat.id, message.from_user.id, 3):
         if not await is_tg_admin(message.chat.id, message.from_user.id):
-            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3).", parse_mode="HTML", disable_web_page_preview=True)
-    status_msg = await message.reply("🔄 Обновляю...")
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    status_msg = await message.reply("🔄 Обновляю...", **_reply_kwargs(message))
     try:
         chat = await bot.get_chat(message.chat.id)
         title = chat.title or "Без названия"
@@ -5520,10 +5620,10 @@ async def refresh_chat_cmd(message: types.Message):
 
 
 # ================= ДК =================
-@cmd("дк")
+@cmd("дк", allow_args=True, args_pattern=r"^.+$")
 async def dk_main_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     chat_id = message.chat.id
     is_creator = False
     try:
@@ -5532,32 +5632,32 @@ async def dk_main_cmd(message: types.Message):
     except: pass
     if message.from_user.id == OWNER_ID or is_coowner(message.from_user.id): is_creator = True
     if not is_creator and not has_permission(chat_id, message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3).", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     args = message.text.split(maxsplit=2)
     if len(args) < 2: return await _show_dk_list(message)
     if args[1].lower() in ["сброс", "reset"]:
         reset_command_access(chat_id)
-        return await message.reply(f"{em('check', '✅')} Все ДК сброшены.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Все ДК сброшены.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if len(args) < 3:
         return await message.reply(
             "📌 <b>Формат:</b>\n<code>.дк бан 3</code>\n<code>.дк бан все</code>\n"
             "<code>.дк бан выкл</code>\n<code>.дк бан создатель</code>\n<code>.дк сброс</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     cmd_name = args[1].lower().strip()
     value = args[2].lower().strip()
     if cmd_name not in DEFAULT_ACCESS:
-        return await message.reply(f"{em('cross', '❌')} Команда <code>{cmd_name}</code> не найдена.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Команда <code>{cmd_name}</code> не найдена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if value in ["все", "all", "0"]: new_rank = 0
     elif value in ["выкл", "off", "отключить", "-1"]: new_rank = -1
     elif value in ["создатель", "creator", "владелецчата", "-2"]: new_rank = -2
     elif value.isdigit() and 0 <= int(value) <= 5: new_rank = int(value)
     else:
-        return await message.reply("❌ Допустимые: <code>все</code>, <code>0-5</code>, <code>выкл</code>, <code>создатель</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Допустимые: <code>все</code>, <code>0-5</code>, <code>выкл</code>, <code>создатель</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not is_creator:
         actor_rank = get_rank(chat_id, message.from_user.id)
         if new_rank > actor_rank and new_rank not in (-1, -2):
-            return await message.reply(f"{em('cross', '❌')} Нельзя выше своего.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нельзя выше своего.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_command_access(chat_id, cmd_name, new_rank)
     level_names = {
         -2: "👑 Только создатель",
@@ -5571,7 +5671,7 @@ async def dk_main_cmd(message: types.Message):
     }
     return await message.reply(
         f"{em('check', '✅')} ДК обновлён\n📌 <code>{cmd_name}</code>\n🔒 {level_names.get(new_rank, str(new_rank))}",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -5601,7 +5701,7 @@ async def _show_dk_list(message: types.Message):
         if len(cmds) > 15: text += f"  ... +{len(cmds)-15} ещё\n"
         text += "\n"
     text += "<code>.дк бан 3</code> | <code>.дк бан все</code> | <code>.дк сброс</code>"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+команды", "+ команды", "+оповещения", "+ оповещения"])
@@ -5614,11 +5714,11 @@ async def enable_command_notify_cmd(message: types.Message):
     except: pass
     if message.from_user.id == OWNER_ID or is_coowner(message.from_user.id): is_creator = True
     if not is_creator and not has_permission(message.chat.id, message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3).", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if is_command_notify_enabled(message.chat.id):
-        return await message.reply(f"ℹ️ Уже включены.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"ℹ️ Уже включены.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_command_notify_enabled(message.chat.id, True)
-    await message.reply(f"{em('check', '✅')} Оповещения включены!\n📌 Отключить: <code>-команды</code>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Оповещения включены!\n📌 Отключить: <code>-команды</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-команды", "- команды", "-оповещения", "- оповещения"])
@@ -5631,11 +5731,11 @@ async def disable_command_notify_cmd(message: types.Message):
     except: pass
     if message.from_user.id == OWNER_ID or is_coowner(message.from_user.id): is_creator = True
     if not is_creator and not has_permission(message.chat.id, message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3).", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not is_command_notify_enabled(message.chat.id):
-        return await message.reply(f"ℹ️ Уже выключены.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"ℹ️ Уже выключены.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_command_notify_enabled(message.chat.id, False)
-    await message.reply(f"{em('check', '✅')} Оповещения выключены!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Оповещения выключены!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("оповещения")
@@ -5644,14 +5744,14 @@ async def command_notify_status_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     enabled = is_command_notify_enabled(message.chat.id)
     status = "🟢 включены" if enabled else "🔴 выключены"
-    await message.reply(f"🔔 Оповещения: {status}\n\n<code>+команды</code> / <code>-команды</code>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"🔔 Оповещения: {status}\n\n<code>+команды</code> / <code>-команды</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= МОДЕРАЦИЯ =================
-@mod_cmd("бан")
+@mod_cmd("бан", allow_args=True)
 async def ban_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     args = message.text.split()
     duration_seconds = None; duration_text = "навсегда"
     if len(args) >= 3 and args[1].isdigit():
@@ -5664,13 +5764,13 @@ async def ban_cmd(message: types.Message):
             elif unit in ['неделя', 'недели', 'недель', 'н']: duration_seconds, duration_text = amount * 604800, f"{amount} нед."
             elif unit in ['месяц', 'месяца', 'месяцев']: duration_seconds, duration_text = amount * 30 * 86400, f"{amount} мес."
     if duration_seconds and duration_seconds > 366 * 86400:
-        return await message.reply(f"{em('cross', '❌')} Максимум 366 дней.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Максимум 366 дней.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if get_rank(message.chat.id, target.id) >= get_rank(message.chat.id, message.from_user.id):
         if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     reason = None
     parts = message.text.split('\n', 1)
     if len(parts) > 1:
@@ -5696,18 +5796,18 @@ async def ban_cmd(message: types.Message):
             reason=reason,
             extra=extra,
         )
-        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        await message.reply(mod_error_text("Ошибка бана", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(mod_error_text("Ошибка бана", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@mod_cmd("разбан")
+@mod_cmd("разбан", allow_args=True)
 async def unban_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try: await bot.unban_chat_member(message.chat.id, target.id)
     except: pass
     try:
@@ -5722,13 +5822,13 @@ async def unban_cmd(message: types.Message):
         target_mention=mention(target),
         moderator_mention=mention(message.from_user),
     )
-    await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@mod_cmd("мут")
+@mod_cmd("мут", allow_args=True)
 async def mute_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     args = message.text.split()
     duration_seconds = 1800; duration_text = "30 мин."
     if len(args) >= 3 and args[1].isdigit():
@@ -5739,13 +5839,13 @@ async def mute_cmd(message: types.Message):
             elif unit in ['час', 'часа', 'часов', 'ч']: duration_seconds, duration_text = amount * 3600, f"{amount} ч."
             elif unit in ['день', 'дня', 'дней', 'д']: duration_seconds, duration_text = amount * 86400, f"{amount} дн."
     if duration_seconds > 366 * 86400:
-        return await message.reply(f"{em('cross', '❌')} Максимум 366 дней.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Максимум 366 дней.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if get_rank(message.chat.id, target.id) >= get_rank(message.chat.id, message.from_user.id):
         if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     reason = None
     parts = message.text.split('\n', 1)
     if len(parts) > 1:
@@ -5766,18 +5866,18 @@ async def mute_cmd(message: types.Message):
             duration=duration_text,
             reason=reason,
         )
-        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        await message.reply(mod_error_text("Ошибка мута", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(mod_error_text("Ошибка мута", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@mod_cmd("размут")
+@mod_cmd("размут", allow_args=True)
 async def unmute_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         await bot.restrict_chat_member(message.chat.id, target.id, permissions=types.ChatPermissions(
             can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True))
@@ -5788,21 +5888,21 @@ async def unmute_cmd(message: types.Message):
             target_mention=mention(target),
             moderator_mention=mention(message.from_user),
         )
-        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        await message.reply(mod_error_text("Ошибка размута", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(mod_error_text("Ошибка размута", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@mod_cmd("кик")
+@mod_cmd("кик", allow_args=True)
 async def kick_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Не могу найти юзера.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if get_rank(message.chat.id, target.id) >= get_rank(message.chat.id, message.from_user.id):
         if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         await bot.ban_chat_member(message.chat.id, target.id)
         await bot.unban_chat_member(message.chat.id, target.id)
@@ -5812,9 +5912,9 @@ async def kick_cmd(message: types.Message):
             target_mention=mention(target),
             moderator_mention=mention(message.from_user),
         )
-        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        await message.reply(mod_error_text("Ошибка кика", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(mod_error_text("Ошибка кика", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("-смс"))
@@ -5843,14 +5943,14 @@ async def delete_message_cmd(message: types.Message):
 
 
 # ================= ПИН =================
-@cmd("пин")
-@cmd("закрепить")
+@cmd("пин", allow_args=True, args_pattern=r"^(тихо|silent|s|тих)$")
+@cmd("закрепить", allow_args=True, args_pattern=r"^(тихо|silent|s|тих)$")
 async def pin_message_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
         if not await is_tg_admin(message.chat.id, message.from_user.id):
-            return await message.reply(f"{em('cross', '❌')} Нет прав.", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нет прав.", disable_web_page_preview=True, **_reply_kwargs(message))
     if not message.reply_to_message:
-        return await message.reply("📌 Ответьте на сообщение.", disable_web_page_preview=True)
+        return await message.reply("📌 Ответьте на сообщение.", disable_web_page_preview=True, **_reply_kwargs(message))
     args = message.text.split()
     silent = len(args) >= 2 and args[1].lower() in ["тихо", "silent", "s", "тих"]
     try:
@@ -5858,7 +5958,7 @@ async def pin_message_cmd(message: types.Message):
         try: await message.delete()
         except: pass
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} {e}", disable_web_page_preview=True)
+        await message.reply(f"{em('cross', '❌')} {e}", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("анпин")
@@ -5871,14 +5971,14 @@ async def unpin_message_cmd(message: types.Message):
             await bot.unpin_chat_message(chat_id=message.chat.id, message_id=message.reply_to_message.message_id)
         else:
             await bot.unpin_all_chat_messages(chat_id=message.chat.id)
-        await message.reply(f"{em('check', '✅')} Готово.", disable_web_page_preview=True)
+        await message.reply(f"{em('check', '✅')} Готово.", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} {e}", disable_web_page_preview=True)
+        await message.reply(f"{em('cross', '❌')} {e}", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= НАСТРОЙКИ ВАРНОВ =================
 @dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*варн\s+(лимит|исход|наказание|настройки|статус|инфо|settings)\b',
+    r'^\s*[.\/!+-]?\s*варн\s+(лимит|исход|наказание|настройки|статус|инфо|settings)\b',
     m.text.strip(), re.IGNORECASE))
 async def warn_settings_cmd(message: types.Message):
     chat_id = message.chat.id
@@ -5901,7 +6001,7 @@ async def warn_settings_cmd(message: types.Message):
     if not is_allowed:
         return await message.reply(
             f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ или агент.",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     args = message.text.split(maxsplit=2)
@@ -5915,15 +6015,15 @@ async def warn_settings_cmd(message: types.Message):
             return await message.reply(
                 f"📌 <b>Формат:</b> <code>.варн лимит 5</code>\n"
                 f"📊 Сейчас: <b>{limit}</b>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
         new_limit = int(args[2].strip())
         if new_limit < 1 or new_limit > 20:
-            return await message.reply("❌ Лимит от <b>1</b> до <b>20</b>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("❌ Лимит от <b>1</b> до <b>20</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         set_warn_setting(chat_id, "warn_limit", new_limit)
         return await message.reply(
             f"{em('check', '✅')} <b>Лимит варнов:</b> <b>{new_limit}</b>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     if sub in ["исход", "наказание"]:
@@ -5941,7 +6041,7 @@ async def warn_settings_cmd(message: types.Message):
                 f"<code>.варн исход мут навсегда</code>\n"
                 f"<code>.варн исход бан навсегда</code>\n"
                 f"<code>.варн исход кик</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
 
         action_raw = rest[2].lower().strip()
@@ -5952,14 +6052,14 @@ async def warn_settings_cmd(message: types.Message):
             set_warn_setting(chat_id, "duration_seconds", 0)
             return await message.reply(
                 f"{em('check', '✅')} Исход варнов: <b>👢 Кик</b>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
 
         action_map = {"мут": "mute", "mute": "mute", "бан": "ban", "ban": "ban"}
         if action_raw not in action_map:
             return await message.reply(
                 "❌ Действие: <code>мут</code>, <code>бан</code> или <code>кик</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
 
         if len(rest) < 4:
@@ -5967,7 +6067,7 @@ async def warn_settings_cmd(message: types.Message):
                 "📌 Укажи время или <code>навсегда</code>:\n"
                 "<code>.варн исход мут 30 минут</code>\n"
                 "<code>.варн исход бан навсегда</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
 
         action_db = action_map[action_raw]
@@ -5978,7 +6078,7 @@ async def warn_settings_cmd(message: types.Message):
             return await message.reply(
                 "❌ Не понял время.\n"
                 "Примеры: <code>30 минут</code>, <code>1 час</code>, <code>2 дня</code>, <code>1 неделя</code>, <code>навсегда</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
 
         set_warn_setting(chat_id, "action", action_db)
@@ -5991,7 +6091,7 @@ async def warn_settings_cmd(message: types.Message):
         action_name = "🔇 Мут" if action_db == "mute" else "🚫 Бан"
         return await message.reply(
             f"{em('check', '✅')} Исход варнов: <b>{action_name}</b> на <b>{text}</b>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     if sub in ["настройки", "статус", "инфо", "settings"]:
@@ -6009,23 +6109,23 @@ async def warn_settings_cmd(message: types.Message):
             f"📌 <code>.варн исход мут 30 минут</code>\n"
             f"📌 <code>.варн исход бан навсегда</code>\n"
             f"📌 <code>.варн исход кик</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
 
 # ================= ВАРНЫ =================
-@mod_cmd("варн")
+@mod_cmd("варн", allow_args=True)
 async def warn_cmd(message: types.Message):
     actor_id = message.from_user.id
     actor_rank = get_rank(message.chat.id, actor_id)
     if actor_rank < 1:
-        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ответьте или укажите @user / ID", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target_rank = get_rank(message.chat.id, target.id)
     if actor_rank < 5 and target_rank >= actor_rank:
-        return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     reason = None
     parts = message.text.split('\n', 1)
@@ -6046,7 +6146,7 @@ async def warn_cmd(message: types.Message):
         first_msg += f"💬 Причина: <i>{reason}</i>\n"
     first_msg += f"👮 От: {mention(message.from_user)}"
 
-    await message.reply(first_msg, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(first_msg, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if warns_count >= warn_limit:
         try:
@@ -6092,36 +6192,36 @@ async def warn_cmd(message: types.Message):
 
             clear_warns(target.id, message.chat.id)
 
-            await message.reply(punishment, parse_mode="HTML", disable_web_page_preview=True)
+            await message.reply(punishment, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
         except Exception as e:
             print(f"⚠️ варн-исход ошибка: {e}")
 
 
-@mod_cmd("варны")
+@mod_cmd("варны", allow_args=True)
 async def warns_list_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 1):
-        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT id, reason, warned_at FROM warns WHERE user_id = ? AND chat_id = ? ORDER BY warned_at DESC", (target.id, message.chat.id))
         warns = c.fetchall()
     warn_limit, _, _, _ = get_warn_settings(message.chat.id)
     if not warns:
-        return await message.reply(f"{em('check', '✅')} Нет варнов.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Нет варнов.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"{em('pencil', '✏️')} <b>Варны {mention(target)}:</b> ({len(warns)}/{warn_limit})\n\n"
     for i, (_, reason, warned_at) in enumerate(warns, 1):
         text += f"{i}. {reason}\n   {em('calendar', '🗓')} {warned_at[:10]}\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@mod_cmd("снятьварн")
+@mod_cmd("снятьварн", allow_args=True)
 async def unwarn_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 2):
-        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target: return
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -6130,19 +6230,19 @@ async def unwarn_cmd(message: types.Message):
                   (target.id, message.chat.id))
         conn.commit()
     warn_limit, _, _, _ = get_warn_settings(message.chat.id)
-    await message.reply(f"{em('check', '✅')} Варн снят. Осталось: {count_warns(target.id, message.chat.id)}/{warn_limit}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Варн снят. Осталось: {count_warns(target.id, message.chat.id)}/{warn_limit}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@mod_cmd("сбросварнов")
+@mod_cmd("сбросварнов", allow_args=True)
 async def clear_warns_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target: return
     count = count_warns(target.id, message.chat.id)
     clear_warns(target.id, message.chat.id)
-    await message.reply(f"♻️ Сброшено варнов: {count}", parse_mode="HTML", disable_web_page_preview=True)# ================= НАКАЗАНИЯ / БАНЫ =================
-@cmd("наказания")
+    await message.reply(f"♻️ Сброшено варнов: {count}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))# ================= НАКАЗАНИЯ / БАНЫ =================
+@cmd("наказания", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def show_punishments(message: types.Message):
     chat_id = message.chat.id
     actor_id = message.from_user.id
@@ -6157,12 +6257,12 @@ async def show_punishments(message: types.Message):
     if not is_allowed:
         return await message.reply(
             f"{em('cross', '❌')} Нужен <b>Ст. Модератор (2+)</b>, ТГ-админ или агент Mos.",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     user_id = target.id
     blocks = []
     try:
@@ -6176,33 +6276,23 @@ async def show_punishments(message: types.Message):
         info = get_antispam_info(user_id)
         if info:
             reason, added_by, added_at = info
-            if added_by and added_by != 0:
-                try:
-                    u = await bot.get_chat(added_by)
-                    who = user_link(added_by, u.first_name, u.username)
-                except:
-                    who = f"<code>{added_by}</code>"
-            else:
-                who = "<i>автоматически</i>"
             blocks.append(
                 f"{em('shield', '🛡')} <b>В антиспаме MOS</b>\n"
-                f"📝 Причина: <i>{reason}</i>\n"
-                f"👮 Добавил: {who}\n"
-                f"🗓 Когда: <b>{_fmt_added_dt(added_at)}</b>"
+                f"📝 Причина: <i>{reason}</i>"
             )
     if not blocks:
-        return await message.reply(f"{em('check', '✅')} {mention(target)} чист.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} {mention(target)} чист.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"{em('calendar', '🗓')} <b>Наказания {mention(target)}</b>\n\n" + "\n\n".join(blocks)
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*баны\b', m.text.strip(), re.IGNORECASE))
+@cmd("баны", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def show_bans(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 1):
         return
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     user_id = target.id
     name = user_link(user_id, target.first_name, target.username)
     bans = get_all_user_bans(user_id)
@@ -6233,8 +6323,48 @@ async def show_bans(message: types.Message):
                 f"👮 Добавил: {who}\n"
                 f"🗓 Когда: <b>{_fmt_added_dt(added_at)}</b>\n\n"
             )
+
+        history = get_antispam_history(user_id, limit=10)
+        if history:
+            text += f"📜 <b>История антиспама:</b>\n"
+            for h_action, h_reason, h_admin, h_at in history:
+                if h_action == "add":
+                    icon = "➕"
+                    label = "Добавлен"
+                else:
+                    icon = "➖"
+                    label = "Снят"
+                if h_admin and h_admin != 0:
+                    try:
+                        u2 = await bot.get_chat(h_admin)
+                        h_who = user_link(h_admin, u2.first_name, u2.username)
+                    except:
+                        h_who = f"<code>{h_admin}</code>"
+                else:
+                    h_who = "<i>авто</i>"
+                text += f"{icon} {label}: {h_who} — <b>{_fmt_added_dt(h_at)}</b>\n"
+                if h_reason:
+                    text += f"    📝 <i>{h_reason}</i>\n"
+            text += "\n"
+
     elif was_antispam_ever:
-        text += f"☢️ <b>Ранее в антиспаме</b> (уже снят)\n\n"
+        text += f"☢️ <b>Ранее в антиспаме</b> (уже снят)\n"
+        history = get_antispam_history(user_id, limit=10)
+        if history:
+            text += f"\n📜 <b>История антиспама:</b>\n"
+            for h_action, h_reason, h_admin, h_at in history:
+                icon = "➕" if h_action == "add" else "➖"
+                label = "Добавлен" if h_action == "add" else "Снят"
+                if h_admin and h_admin != 0:
+                    try:
+                        u2 = await bot.get_chat(h_admin)
+                        h_who = user_link(h_admin, u2.first_name, u2.username)
+                    except:
+                        h_who = f"<code>{h_admin}</code>"
+                else:
+                    h_who = "<i>авто</i>"
+                text += f"{icon} {label}: {h_who} — <b>{_fmt_added_dt(h_at)}</b>\n"
+            text += "\n"
     else:
         text += f"{em('check', '✅')} <b>Не в антиспаме</b>\n\n"
 
@@ -6282,7 +6412,7 @@ async def show_bans(message: types.Message):
             f"   {em('calendar', '🗓')} {_fmt_added_dt(banned_at)}{until_str}\n\n"
         )
 
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= +АС / -АС =================
@@ -6295,7 +6425,7 @@ async def _check_as_perms(message) -> bool:
 
 async def _parse_as_command(message):
     txt = message.text.strip()
-    body = re.sub(r'^[.\/!]?\s*\+ас\b', '', txt, flags=re.IGNORECASE).strip()
+    body = re.sub(r'^[.\/!+-]?\s*\+ас\b', '', txt, flags=re.IGNORECASE).strip()
 
     mode = "as"
     if re.match(r'^кик\s+игнор\b', body, re.IGNORECASE):
@@ -6347,7 +6477,7 @@ def _as_nick_link(target) -> str:
     return f'<a href="tg://user?id={target.id}">{name}</a>'
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+ас(?:\s|$)', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+ас(?:\s|$)', m.text.strip(), re.IGNORECASE))
 async def as_command_handler(message: types.Message):
     try:
         if not await _check_as_perms(message): return
@@ -6360,12 +6490,12 @@ async def as_command_handler(message: types.Message):
                 "• <code>+ас кик [@user | ID] причина</code> — антиспам + кик\n"
                 "• <code>+ас кик игнор [@user | ID] причина</code> — всё вместе\n"
                 "💡 Можно ответом на сообщение юзера.",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
         if target.id == OWNER_ID or is_coowner(target.id):
-            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if getattr(target, "is_bot", False):
-            return await message.reply(f"{em('cross', '❌')} Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
         register_user(target.id, target.first_name, getattr(target, "username", "") or "")
         actor_id = message.from_user.id
@@ -6451,21 +6581,21 @@ async def as_command_handler(message: types.Message):
             if not kicked_chats:
                 lines.append("\n⚠️ Не удалось кикнуть ни из одного чата (проверь права бота)")
 
-        await message.reply("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     except Exception as e:
         print(f"❌ +АС ошибка: {traceback.format_exc()}")
         try:
-            await message.reply(f"❌ Ошибка +ас: <code>{type(e).__name__}: {e}</code>", parse_mode="HTML")
+            await message.reply(f"❌ Ошибка +ас: <code>{type(e).__name__}: {e}</code>", parse_mode="HTML", **_reply_kwargs(message))
         except: pass
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-ас(\s|$)', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*-ас(\s|$)', m.text.strip(), re.IGNORECASE))
 async def as_remove_handler(message: types.Message):
     try:
         if not await _check_as_perms(message): return
 
-        body = re.sub(r'^[.\/!]?\s*-ас\b', '', message.text.strip(), flags=re.IGNORECASE).strip()
+        body = re.sub(r'^[.\/!+-]?\s*-ас\b', '', message.text.strip(), flags=re.IGNORECASE).strip()
         mode = "as"
         if re.match(r'^игнор\b', body, re.IGNORECASE):
             mode = "as_ignore"
@@ -6500,24 +6630,24 @@ async def as_remove_handler(message: types.Message):
                 "• <code>-ас игнор</code> — снять с игнора\n"
                 "• <code>-ас @user</code>\n"
                 "• <code>-ас 123456789</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
 
         actor_id = message.from_user.id
         was_in_antispam = is_in_antispam(target.id)
 
         if mode == "as":
-            removed = remove_user_from_antispam(target.id)
+            removed = remove_user_from_antispam(target.id, removed_by=actor_id)
             if not was_in_antispam:
                 return await message.reply(
                     f"ℹ️ {mention(target)} не был(а) в антиспаме.",
-                    parse_mode="HTML", disable_web_page_preview=True
+                    parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
                 )
             await message.reply(
                 f"✅ <b>Снят с антиспама</b>\n\n"
                 f"👤 Пользователь: {mention(target)}\n"
                 f"👮 Агент: {mention(message.from_user)}",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
         elif mode == "as_ignore":
             remove_bot_ignore(target.id)
@@ -6525,24 +6655,24 @@ async def as_remove_handler(message: types.Message):
                 c = conn.cursor()
                 c.execute("DELETE FROM ignore_list WHERE user_id = ?", (target.id,))
                 conn.commit()
-            remove_user_from_antispam(target.id)
+            remove_user_from_antispam(target.id, removed_by=actor_id)
             await message.reply(
                 f"✅ <b>Снят с антиспама и игнора</b>\n\n"
                 f"👤 Пользователь: {mention(target)}\n"
                 f"👮 Агент: {mention(message.from_user)}",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
     except Exception as e:
         print(f"❌ -АС ошибка: {traceback.format_exc()}")
         try:
-            await message.reply(f"❌ Ошибка -ас: <code>{type(e).__name__}: {e}</code>", parse_mode="HTML")
+            await message.reply(f"❌ Ошибка -ас: <code>{type(e).__name__}: {e}</code>", parse_mode="HTML", **_reply_kwargs(message))
         except: pass
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+антиспам", "+ антиспам"])
 async def enable_antispam_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     user_id = message.from_user.id
     chat_id = message.chat.id
     is_creator = False
@@ -6557,22 +6687,22 @@ async def enable_antispam_cmd(message: types.Message):
         if not await is_tg_admin(chat_id, user_id):
             return await message.reply(
                 f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ, агент или создатель чата.",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
     if is_antispam_enabled(chat_id):
-        return await message.reply("ℹ️ Антиспам уже включён в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Антиспам уже включён в этом чате.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_antispam_enabled(chat_id, True)
     await message.reply(
         f"{em('check', '✅')} <b>Антиспам включён!</b>\n\n"
         f"☢️ Теперь при входе в чат пользователей из антиспама — они будут <b>автоматически выкидываться</b>.",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-антиспам", "- антиспам"])
 async def disable_antispam_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     user_id = message.from_user.id
     chat_id = message.chat.id
     is_creator = False
@@ -6587,10 +6717,10 @@ async def disable_antispam_cmd(message: types.Message):
         if not await is_tg_admin(chat_id, user_id):
             return await message.reply(
                 f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ, агент или создатель чата.",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
     if not is_antispam_enabled(chat_id):
-        return await message.reply("ℹ️ Антиспам уже выключен в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Антиспам уже выключен в этом чате.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     set_antispam_enabled(chat_id, False)
 
@@ -6613,7 +6743,7 @@ async def disable_antispam_cmd(message: types.Message):
         f"{em('cross', '❌')} <b>Антиспам выключен!</b>\n\n"
         f"👥 Теперь пользователи из антиспама <b>могут заходить</b> в чат (бот не будет их выкидывать)."
         + (f"\n\n♻️ Снято АС-банов: <b>{unban_count}</b>" if unban_count > 0 else ""),
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -6621,14 +6751,14 @@ async def disable_antispam_cmd(message: types.Message):
 @cmd("ас статус")
 async def antispam_status_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     enabled = is_antispam_enabled(message.chat.id)
     status = "🟢 включён" if enabled else "🔴 выключен"
     await message.reply(
         f"☢️ <b>Антиспам</b> в этом чате: {status}\n\n"
         f"📌 Включить: <code>+антиспам</code>\n"
         f"📌 Выключить: <code>-антиспам</code>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -6641,7 +6771,7 @@ async def as_list_cmd(message: types.Message):
         c.execute("SELECT user_id, reason, added_by, added_at FROM antispam ORDER BY added_at DESC LIMIT 50")
         rows = c.fetchall()
     if not rows:
-        return await message.reply("📭 Антиспам пуст.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 Антиспам пуст.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"☢️ <b>Антиспам</b> ({len(rows)}):\n\n"
     for i, (uid, reason, added_by, added_at) in enumerate(rows, 1):
         try:
@@ -6663,7 +6793,7 @@ async def as_list_cmd(message: types.Message):
             f"    👮 {who}\n"
             f"    🗓 {_fmt_added_dt(added_at)}\n\n"
         )
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= АГЕНТЫ =================
@@ -6704,7 +6834,7 @@ async def add_agent_cmd(message: types.Message):
                     return await message.reply(
                         f"{em('cross', '❌')} <b>Слишком короткий ID.</b>\n"
                         f"📌 Формат: <code>+агент @user 2</code> или ответом на сообщение",
-                        parse_mode="HTML", disable_web_page_preview=True
+                        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
                     )
                 target = await bot.get_chat(int(target_arg))
         except Exception:
@@ -6732,13 +6862,13 @@ async def add_agent_cmd(message: types.Message):
             "• Или: <code>+агент @user 2</code>\n"
             "• Или: <code>+агент 123456789 2</code>\n\n"
             "🔢 Ранг: <b>1-4</b> (по умолчанию 1)",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     if target.id == OWNER_ID: return
 
     if rank not in [1, 2, 3, 4]:
-        return await message.reply(f"{em('cross', '❌')} Ранг 1-4.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ранг 1-4.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     register_user(target.id, target.first_name, getattr(target, "username", "") or "")
     set_agent_rank(target.id, rank, actor_id)
@@ -6754,7 +6884,7 @@ async def add_agent_cmd(message: types.Message):
         )
     except Exception as e:
         print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
-    await message.reply(f"{em('check', '✅')} {mention(target)} теперь <b>{rank_name}</b>!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} {mention(target)} теперь <b>{rank_name}</b>!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("-агент"))
@@ -6796,10 +6926,10 @@ async def remove_agent_cmd(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True
         )
     except: pass
-    await message.reply(f"{em('cross', '❌')} {mention(target)} не агент.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('cross', '❌')} {mention(target)} не агент.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*агенты\b', m.text.strip(), re.IGNORECASE))
+@cmd("агенты")
 async def list_agents_cmd(message: types.Message):
     user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
@@ -6820,7 +6950,7 @@ async def list_agents_cmd(message: types.Message):
         visible_rows = [(uid, rank) for uid, rank in rows if uid not in hidden_agents]
 
     if not visible_rows:
-        return await message.reply("📭 Нет агентов.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 Нет агентов.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     text = f"{em('shield', '🛡')} <b>Агенты Mos:</b>\n\n"
     for uid, rank in visible_rows:
@@ -6832,7 +6962,7 @@ async def list_agents_cmd(message: types.Message):
         if (user_id == OWNER_ID or is_coowner(user_id)) and uid in hidden_agents:
             hidden_mark = " 🙈"
         text += f"{AGENT_RANKS.get(rank, '🛡 Агент')} — {name}{hidden_mark}\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-помощь")
@@ -6844,7 +6974,7 @@ async def hide_from_help_cmd(message: types.Message):
         c = conn.cursor()
         c.execute("INSERT OR IGNORE INTO hidden_agents (user_id) VALUES (?)", (user_id,))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} Вы скрыты.\n↩️ <code>+помощь</code>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Вы скрыты.\n↩️ <code>+помощь</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "+помощь")
@@ -6856,11 +6986,11 @@ async def show_in_help_cmd(message: types.Message):
         c = conn.cursor()
         c.execute("DELETE FROM hidden_agents WHERE user_id = ?", (user_id,))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} Вы в списке.\n🙈 <code>-помощь</code>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Вы в списке.\n🙈 <code>-помощь</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= СОВЛАДЕЛЕЦ =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+совладелец\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+совладелец\b', m.text.strip(), re.IGNORECASE))
 async def add_coowner_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID:
         return
@@ -6873,14 +7003,14 @@ async def add_coowner_cmd(message: types.Message):
             "• Ответь на сообщение юзера: <code>+совладелец</code>\n"
             "• Или по ID: <code>+совладелец 123456789</code>\n"
             "• Или по юзернейму: <code>+совладелец @username</code>" + hint,
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     if target.id == OWNER_ID:
-        return await message.reply(f"{em('cross', '❌')} Владелец и так владелец.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Владелец и так владелец.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if getattr(target, "is_bot", False):
-        return await message.reply(f"{em('cross', '❌')} Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if is_coowner(target.id):
-        return await message.reply(f"ℹ️ {mention(target)} уже совладелец.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"ℹ️ {mention(target)} уже совладелец.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     register_user(target.id, target.first_name, getattr(target, "username", "") or "")
     add_coowner(target.id, message.from_user.id)
     try:
@@ -6897,11 +7027,11 @@ async def add_coowner_cmd(message: types.Message):
         print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
     await message.reply(
         f"{em('check', '✅')} <b>Назначен совладелец!</b>\n\n👤 {mention(target)}\n⚜️ Теперь у него <b>все права владельца бота</b>.",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-совладелец\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*-совладелец\b', m.text.strip(), re.IGNORECASE))
 async def remove_coowner_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID:
         return
@@ -6911,12 +7041,12 @@ async def remove_coowner_cmd(message: types.Message):
         hint = f"\n\n⚠️ Не удалось найти: <code>{args[1]}</code>" if len(args) >= 2 else ""
         return await message.reply(
             "📌 <b>Формат:</b>\n• <code>-совладелец</code> ответом\n• <code>-совладелец ID</code>\n• <code>-совладелец @username</code>" + hint,
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     if target.id == OWNER_ID:
-        return await message.reply(f"{em('cross', '❌')} Владельца снять нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Владельца снять нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not remove_coowner(target.id):
-        return await message.reply(f"ℹ️ {mention(target)} не является совладельцем.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"ℹ️ {mention(target)} не является совладельцем.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         await bot.send_message(
             target.id,
@@ -6925,7 +7055,7 @@ async def remove_coowner_cmd(message: types.Message):
         )
     except Exception as e:
         print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
-    await message.reply(f"{em('check', '✅')} {mention(target)} больше не совладелец.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} {mention(target)} больше не совладелец.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("совладельцы")
@@ -6934,7 +7064,7 @@ async def list_coowners_cmd(message: types.Message):
         return
     rows = get_coowners()
     if not rows:
-        return await message.reply("📭 Нет совладельцев.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 Нет совладельцев.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = "⚜️ <b>Совладельцы бота:</b>\n\n"
     for i, (uid, added_at) in enumerate(rows, 1):
         try:
@@ -6942,11 +7072,11 @@ async def list_coowners_cmd(message: types.Message):
             name = user_link(uid, u.first_name, u.username)
         except: name = f"<code>{uid}</code>"
         text += f"{i}. {name} — <i>{_fmt_added_dt(added_at)}</i>\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= ПОВЫСИТЬ / ПОНИЗИТЬ =================
-@cmd("повысить")
+@cmd("повысить", allow_args=True)
 async def promote_cmd(message: types.Message):
     chat_id = message.chat.id
     actor_id = message.from_user.id
@@ -6960,17 +7090,17 @@ async def promote_cmd(message: types.Message):
     actor_rank = get_rank(chat_id, actor_id)
 
     if not is_creator and actor_rank < 3:
-        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply("📌 <code>.повысить @user 3</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.повысить @user 3</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if target.id == actor_id:
         return await message.reply(
             f"{em('cross', '❌')} <b>Нельзя повышать себя.</b>\n"
             f"👤 Пусть это сделает создатель чата.",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     current_rank = get_rank(chat_id, target.id)
@@ -6981,13 +7111,13 @@ async def promote_cmd(message: types.Message):
     if new_rank > 5: new_rank = 5
 
     if not is_creator and new_rank >= actor_rank:
-        return await message.reply(f"{em('cross', '❌')} Нельзя ≥ твоего.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нельзя ≥ твоего.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     set_rank(chat_id, target.id, new_rank, actor_id)
-    await message.reply(f"🏆 {mention(target)}: {rank_display(chat_id, new_rank)}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"🏆 {mention(target)}: {rank_display(chat_id, new_rank)}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("понизить")
+@cmd("понизить", allow_args=True)
 async def demote_cmd(message: types.Message):
     chat_id = message.chat.id
     actor_id = message.from_user.id
@@ -7001,14 +7131,14 @@ async def demote_cmd(message: types.Message):
     actor_rank = get_rank(chat_id, actor_id)
 
     if not is_creator and actor_rank < 3:
-        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply("📌 <code>.понизить @user 1</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.понизить @user 1</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if target.id == actor_id:
-        return await message.reply(f"{em('cross', '❌')} <b>Нельзя понижать себя.</b>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} <b>Нельзя понижать себя.</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     current_rank = get_rank(chat_id, target.id)
     args = message.text.split()
@@ -7018,17 +7148,17 @@ async def demote_cmd(message: types.Message):
     if new_rank < 0: new_rank = 0
 
     if not is_creator and new_rank >= actor_rank:
-        return await message.reply(f"{em('cross', '❌')} Нельзя ≥ твоего.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нельзя ≥ твоего.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if new_rank == 0:
         remove_rank(chat_id, target.id)
-        return await message.reply(f"📉 {mention(target)} разжалован.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"📉 {mention(target)} разжалован.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_rank(chat_id, target.id, new_rank, actor_id)
-    await message.reply(f"📉 {mention(target)}: {rank_display(chat_id, new_rank)}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"📉 {mention(target)}: {rank_display(chat_id, new_rank)}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("разжаловать")
-@cmd("снять")
+@cmd("разжаловать", allow_args=True)
+@cmd("снять", allow_args=True)
 async def demote_all_cmd(message: types.Message):
     chat_id = message.chat.id
     actor_id = message.from_user.id
@@ -7042,17 +7172,17 @@ async def demote_all_cmd(message: types.Message):
     actor_rank = get_rank(chat_id, actor_id)
 
     if not is_creator and actor_rank < 3:
-        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     target, _ = await resolve_target(message)
     if not target:
         return
 
     if target.id == actor_id:
-        return await message.reply(f"{em('cross', '❌')} Себе нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Себе нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     remove_rank(chat_id, target.id)
-    await message.reply(f"{em('cross', '❌')} {mention(target)} разжалован.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('cross', '❌')} {mention(target)} разжалован.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("админы")
@@ -7064,7 +7194,7 @@ async def list_admins_cmd(message: types.Message):
     if not admins:
         return await message.reply(
             "📭 <b>Нет модераторов</b>\n\nНазначить: <code>.повысить @user 1</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     admins_sorted = sorted(admins, key=lambda x: (-x[1], x[0]))
@@ -7106,17 +7236,17 @@ async def list_admins_cmd(message: types.Message):
 
             text += f"{counter}. {agent_icon}{name}{vip_str}\n"
 
-    await message.reply(text.strip(), parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text.strip(), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= МОДЕРАТОРЫ (НАЗВАНИЯ) =================
-@cmd("модераторы")
-@cmd("названия")
-@cmd("названия рангов")
+@cmd("модераторы", allow_args=True)
+@cmd("названия", allow_args=True)
+@cmd("названия рангов", allow_args=True)
 async def moderator_titles_cmd(message: types.Message):
     chat_id = message.chat.id
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     is_creator = False
     try:
@@ -7127,7 +7257,7 @@ async def moderator_titles_cmd(message: types.Message):
     if not is_creator and not has_permission(chat_id, message.from_user.id, 4) \
             and message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
         return await message.reply(f"{em('cross', '❌')} Нужен <b>Ст. Админ (4+)</b> или создатель.",
-                                   parse_mode="HTML", disable_web_page_preview=True)
+                                   parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     args = message.text.split(maxsplit=2)
     sub = args[1].lower().strip() if len(args) >= 2 else ""
@@ -7136,7 +7266,7 @@ async def moderator_titles_cmd(message: types.Message):
         titles = get_all_moderator_titles(chat_id)
         current_header = get_moderators_header(chat_id)
         text = "🏷 <b>Названия модераторов</b>\n\n"
-        text += f"📌 <b>Заголовок</b>: <code>{html_escape_text(current_header)}</code>\n\n"
+        text += f"📌 <b>Заголовок</b>: {current_header}\n\n"
         text += "<i>Шаблон ранга: </i><code>и=...;р=...;д=...;т=...;мн=...</code>\n\n"
         for rank in range(6):
             t = titles[rank]
@@ -7150,52 +7280,55 @@ async def moderator_titles_cmd(message: types.Message):
             "<code>.модераторы заголовок ⭐️ Вайберы этой беседы</code>\n\n"
             "📌 <b>Сброс:</b> <code>.модераторы сброс</code>"
         )
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if sub in ["сброс", "reset"]:
         reset_moderator_titles(chat_id)
         reset_moderators_header(chat_id)
         return await message.reply(f"{em('check', '✅')} Названия и заголовок сброшены к стандартным.",
-                                   parse_mode="HTML", disable_web_page_preview=True)
+                                   parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if sub in ["заголовок", "header"]:
-        if len(args) < 3:
+        full_html = entities_to_html(message)
+        m = re.match(r'^\s*[.\/!+-]?\s*модераторы\s+заголовок\s+(.+)$', full_html, re.IGNORECASE | re.DOTALL)
+        if not m:
             current = get_moderators_header(chat_id)
             return await message.reply(
-                f"📌 <b>Текущий заголовок:</b>\n<code>{html_escape_text(current)}</code>\n\n"
+                f"📌 <b>Текущий заголовок:</b>\n{current}\n\n"
                 f"📌 <b>Установить:</b>\n<code>.модераторы заголовок ⭐️ Вайберы этой беседы</code>\n\n"
                 f"📌 <b>Сбросить:</b>\n<code>.модераторы заголовок сброс</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
-        new_header = args[2].strip()
-        if new_header.lower() in ["сброс", "reset"]:
+        new_header = m.group(1).strip()
+        if re.sub(r'<[^>]+>', '', new_header).strip().lower() in ["сброс", "reset"]:
             reset_moderators_header(chat_id)
             return await message.reply(
                 f"{em('check', '✅')} Заголовок сброшен к стандартному:\n<code>{DEFAULT_MODERATORS_HEADER}</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
-        set_moderators_header(chat_id, new_header)
+        set_moderators_header(chat_id, new_header[:128])
         return await message.reply(
-            f"{em('check', '✅')} <b>Заголовок обновлён!</b>\n\n<code>{html_escape_text(new_header)}</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            f"{em('check', '✅')} <b>Заголовок обновлён!</b>\n\n{new_header}",
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     if not sub.isdigit() or int(sub) not in range(6):
-        return await message.reply("❌ Укажи ранг от 0 до 5.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Укажи ранг от 0 до 5.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     rank = int(sub)
-    if len(args) < 3:
+    full_html = entities_to_html(message)
+    m = re.match(r'^\s*[.\/!+-]?\s*модераторы\s+(\d)\s+(.+)$', full_html, re.IGNORECASE | re.DOTALL)
+    if not m:
         return await message.reply(
             f"📌 <code>.модераторы {rank} и=...;р=...;д=...;т=...;мн=...</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
-
-    template = args[2]
+    template = m.group(2).strip()
     parsed = parse_title_template(template)
     if not parsed:
         return await message.reply(
             "❌ Не удалось распарсить шаблон.\nПример: <code>и=Власть;р=Власти;д=Власти;т=Властью;мн=Власти</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     for case, value in parsed.items():
@@ -7207,37 +7340,37 @@ async def moderator_titles_cmd(message: types.Message):
         f"{em('check', '✅')} <b>Название для ранга {rank} обновлено!</b>\n\n"
         f"{RANK_ICONS.get(rank, '👤')} <b>{t['nom']}</b>\n"
         f"и={t['nom']} | р={t['gen']} | д={t['dat']} | т={t['ins']} | мн={t['plu']}",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
 # ================= УХОЖУ В ОТСТАВКУ =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*ухожу\s+в\s+отставку\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*ухожу\s+в\s+отставку\b', m.text.strip(), re.IGNORECASE))
 async def resign_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     user_id = message.from_user.id
     chat_id = message.chat.id
     if user_id == OWNER_ID or is_coowner(user_id):
-        return await message.reply(f"{em('cross', '❌')} Владелец/совладелец бота не может уйти в отставку.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Владелец/совладелец бота не может уйти в отставку.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status == "creator":
             return await message.reply(
                 f"{em('cross', '❌')} Создатель чата не может уйти в отставку.",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
     except: pass
     current_rank = get_rank(chat_id, user_id)
     if current_rank == 0:
-        return await message.reply("ℹ️ Вы и так не имеете ранга в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Вы и так не имеете ранга в этом чате.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     remove_rank(chat_id, user_id)
     try: unmark_bot_promoted(user_id, chat_id)
     except: pass
     rank_name = rank_display(chat_id, current_rank)
     await message.reply(
         f"{em('check', '✅')} <b>Вы ушли в отставку</b>\n\n👤 {mention(message.from_user)}\n📉 Было: <b>{rank_name}</b>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -7246,10 +7379,10 @@ async def restore_creator_cmd(message: types.Message):
     try:
         member = await bot.get_chat_member(message.chat.id, message.from_user.id)
         if member.status != "creator":
-            return await message.reply(f"{em('cross', '❌')} Только создатель.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Только создатель.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except: return
     set_rank(message.chat.id, message.from_user.id, 5, message.from_user.id)
-    await message.reply(f"{em('check', '✅')} Вы владелец чата!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Вы владелец чата!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+админ"))
@@ -7261,9 +7394,9 @@ async def grant_admin_cmd(message: types.Message):
     try:
         await bot.promote_chat_member(chat_id=message.chat.id, user_id=target.id, rights=full_admin_rights())
         mark_bot_promoted(target.id, message.chat.id, message.from_user.id)
-        await message.reply(f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b>!", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b>!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)# ================= АВТОМОД =================
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))# ================= АВТОМОД =================
 def _fmt_time(minutes):
     if minutes >= 1440: return f"{minutes // 1440} дн."
     if minutes >= 60: return f"{minutes // 60} ч."
@@ -7292,7 +7425,7 @@ async def _check_automod_perms(message):
     if await is_tg_admin(chat_id, user_id):
         return True
 
-    await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     return False
 
 
@@ -7314,7 +7447,7 @@ async def automod_status_cmd(message: types.Message):
         f"🔠 Антикапс: {st(s['anticaps'])} | {act('anticaps')}\n\n"
         f"🎨 Антистикер: {st(s['antisticker'])} | {act('antisticker')}"
     )
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+антимат", "+ антимат"])
@@ -7322,7 +7455,7 @@ async def enable_antimat_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     set_automod_setting(message.chat.id, "antimat", 1)
-    await message.reply(f"{em('check', '✅')} Антимат вкл", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Антимат вкл", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-антимат", "- антимат"])
@@ -7330,7 +7463,7 @@ async def disable_antimat_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     set_automod_setting(message.chat.id, "antimat", 0)
-    await message.reply(f"{em('check', '✅')} Антимат выкл", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Антимат выкл", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+антифлуд", "+ антифлуд"])
@@ -7338,7 +7471,7 @@ async def enable_antiflood_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     set_automod_setting(message.chat.id, "antiflood", 1)
-    await message.reply(f"{em('check', '✅')} Антифлуд вкл", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Антифлуд вкл", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-антифлуд", "- антифлуд"])
@@ -7346,7 +7479,7 @@ async def disable_antiflood_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     set_automod_setting(message.chat.id, "antiflood", 0)
-    await message.reply(f"{em('check', '✅')} Антифлуд выкл", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Антифлуд выкл", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+антикапс", "+ антикапс"])
@@ -7354,7 +7487,7 @@ async def enable_anticaps_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     set_automod_setting(message.chat.id, "anticaps", 1)
-    await message.reply(f"{em('check', '✅')} Антикапс вкл", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Антикапс вкл", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-антикапс", "- антикапс"])
@@ -7362,7 +7495,7 @@ async def disable_anticaps_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     set_automod_setting(message.chat.id, "anticaps", 0)
-    await message.reply(f"{em('check', '✅')} Антикапс выкл", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Антикапс выкл", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+антисticker", "+ антисticker"])
@@ -7370,7 +7503,7 @@ async def enable_antisticker_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     set_automod_setting(message.chat.id, "antisticker", 1)
-    await message.reply(f"{em('check', '✅')} Антистикер вкл", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Антистикер вкл", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-антисticker", "- антисticker"])
@@ -7378,7 +7511,7 @@ async def disable_antisticker_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     set_automod_setting(message.chat.id, "antisticker", 0)
-    await message.reply(f"{em('check', '✅')} Антистикер выкл", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Антистикер выкл", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 async def _set_automod_action(message, rule):
@@ -7388,24 +7521,24 @@ async def _set_automod_action(message, rule):
     s = get_automod_settings(message.chat.id)
     cur = s[f"{rule}_action"]
     if len(args) < 2:
-        return await message.reply(f"🎯 Действие <b>{rule}</b>: {ACTION_NAMES.get(cur, cur)}\n<code>.{rule}действие мут/варн/бан</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"🎯 Действие <b>{rule}</b>: {ACTION_NAMES.get(cur, cur)}\n<code>.{rule}действие мут/варн/бан</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     action = args[1].lower()
     mapping = {"удалить": "delete", "delete": "delete", "мут": "mute", "mute": "mute", "варн": "warn", "warn": "warn", "бан": "ban", "ban": "ban"}
     if action not in mapping: return
     set_automod_setting(message.chat.id, f"{rule}_action", mapping[action])
-    await message.reply(f"{em('check', '✅')} <b>{rule}</b>: {ACTION_NAMES[mapping[action]]}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} <b>{rule}</b>: {ACTION_NAMES[mapping[action]]}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("антиматдействие")
+@cmd("антиматдействие", allow_args=True)
 async def am_action_cmd(message): await _set_automod_action(message, "antimat")
 
-@cmd("антифлуддействие")
+@cmd("антифлуддействие", allow_args=True)
 async def afl_action_cmd(message): await _set_automod_action(message, "antiflood")
 
-@cmd("антикапсдействие")
+@cmd("антикапсдействие", allow_args=True)
 async def ac_action_cmd(message): await _set_automod_action(message, "anticaps")
 
-@cmd("антисtickerдействие")
+@cmd("антисtickerдействие", allow_args=True)
 async def ast_action_cmd(message): await _set_automod_action(message, "antisticker")
 
 
@@ -7416,29 +7549,29 @@ async def _set_automod_time(message, rule, kind):
     s = get_automod_settings(message.chat.id)
     field = f"{rule}_{kind}"
     if len(args) < 2 or not args[1].isdigit():
-        return await message.reply(f"⏱ {_fmt_time(s[field])}\n<code>.{rule}{kind} 60</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"⏱ {_fmt_time(s[field])}\n<code>.{rule}{kind} 60</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     minutes = int(args[1])
     if minutes < 1 or minutes > 525600: return
     set_automod_setting(message.chat.id, field, minutes)
-    await message.reply(f"{em('check', '✅')} {rule} {kind}: <b>{_fmt_time(minutes)}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} {rule} {kind}: <b>{_fmt_time(minutes)}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("антиматмут")
+@cmd("антиматмут", allow_args=True)
 async def am_mute_cmd(message): await _set_automod_time(message, "antimat", "mute")
 
-@cmd("антиматбан")
+@cmd("антиматбан", allow_args=True)
 async def am_ban_cmd(message): await _set_automod_time(message, "antimat", "ban")
 
-@cmd("антифлудмут")
+@cmd("антифлудмут", allow_args=True)
 async def afl_mute_cmd(message): await _set_automod_time(message, "antiflood", "mute")
 
-@cmd("антифлудбан")
+@cmd("антифлудбан", allow_args=True)
 async def afl_ban_cmd(message): await _set_automod_time(message, "antiflood", "ban")
 
-@cmd("антикапсмут")
+@cmd("антикапсмут", allow_args=True)
 async def ac_mute_cmd(message): await _set_automod_time(message, "anticaps", "mute")
 
-@cmd("антисtickermut")
+@cmd("антисtickermut", allow_args=True)
 async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker", "mute")
 
 
@@ -7448,13 +7581,13 @@ async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker",
 async def list_achievements_cmd(message: types.Message):
     all_ach = get_all_achievements()
     if not all_ach:
-        return await message.reply("📭 Нет ачивок.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 Нет ачивок.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = "🎖 <b>Все ачивки:</b>\n\n"
     for aid, name, emoji, desc in all_ach:
         text += f"{emoji} <b>{name}</b>"
         if desc: text += f" — <i>{desc}</i>"
         text += "\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("мои ачивки")
@@ -7463,7 +7596,7 @@ async def my_achievements_cmd(message: types.Message):
     if not ach:
         return await message.reply(
             "📭 <b>У тебя пока нет ачивок.</b>\n\nИх выдают <b>агенты Mos</b> за активность, помощь и заслуги.",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     text = f"🎖 <b>Твои ачивки</b> ({len(ach)}):\n\n"
     for aid, name, emoji, desc, given_at, chat_id in ach:
@@ -7476,10 +7609,10 @@ async def my_achievements_cmd(message: types.Message):
         if desc: text += f" — <i>{desc}</i>"
         text += f"\n   🏠 {chat_title}\n   📅 {_fmt_added_dt(given_at)}\n"
     text += f"\n🔒 Скрыть от других: <code>-ачивки</code>"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("твои ачивки")
+@cmd("твои ачивки", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def your_achievements_cmd(message: types.Message):
     target = None
     if message.reply_to_message:
@@ -7491,14 +7624,14 @@ async def your_achievements_cmd(message: types.Message):
                 if args[1].startswith('@'): target = await bot.get_chat(args[1])
                 elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
             except:
-                return await message.reply(f"{em('cross', '❌')} Не найден.", parse_mode="HTML", disable_web_page_preview=True)
+                return await message.reply(f"{em('cross', '❌')} Не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not target:
         return await message.reply(
             "📌 <b>Формат:</b>\n"
             "• Ответь на сообщение юзера: <code>.твои ачивки</code>\n"
             "• Или: <code>.твои ачивки @user</code>\n"
             "• Или: <code>.твои ачивки 123456789</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     viewer_id = message.from_user.id
@@ -7509,14 +7642,14 @@ async def your_achievements_cmd(message: types.Message):
         return await message.reply(
             f"🔒 {mention(target)} <b>скрыл(а) свои ачивки</b>.\n\n"
             f"<i>Он(а) может открыть их командой <code>+ачивки</code>.</i>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     ach = get_user_achievements_all_chats(target.id)
     if not ach:
         return await message.reply(
             f"📭 У {mention(target)} пока нет ачивок.",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     text = f"🎖 <b>Ачивки {mention(target)}</b> ({len(ach)}):\n\n"
@@ -7529,20 +7662,20 @@ async def your_achievements_cmd(message: types.Message):
         text += f"{emoji} <b>{name}</b>"
         if desc: text += f" — <i>{desc}</i>"
         text += f"\n   🏠 {chat_title}\n   📅 {_fmt_added_dt(given_at)}\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-ачивки")
 async def hide_achievements_cmd(message: types.Message):
     user_id = message.from_user.id
     if are_achievements_hidden(user_id):
-        return await message.reply("ℹ️ Твои ачивки уже скрыты.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Твои ачивки уже скрыты.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     hide_achievements(user_id)
     await message.reply(
         f"{em('check', '✅')} <b>Твои ачивки теперь скрыты.</b>\n\n"
         f"👁 Их видят только <b>агенты</b> и владелец.\n"
         f"↩️ Вернуть: <code>+ачивки</code>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -7550,23 +7683,23 @@ async def hide_achievements_cmd(message: types.Message):
 async def show_achievements_cmd(message: types.Message):
     user_id = message.from_user.id
     if not are_achievements_hidden(user_id):
-        return await message.reply("ℹ️ Твои ачивки и так видны всем.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Твои ачивки и так видны всем.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     show_achievements(user_id)
     await message.reply(
         f"{em('check', '✅')} <b>Твои ачивки снова видны всем.</b>\n\n"
         f"🙈 Скрыть: <code>-ачивки</code>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*выдать\s+ачивку\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*выдать\s+ачивку\b', m.text.strip(), re.IGNORECASE))
 async def give_achievement_cmd(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
         return await message.reply(
             f"{em('cross', '❌')} Только <b>агенты Mos</b> могут выдавать ачивки.",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     target = None
     if message.reply_to_message:
@@ -7583,25 +7716,25 @@ async def give_achievement_cmd(message: types.Message):
     if not target:
         return await message.reply(
             "📌 <b>Формат:</b>\n<code>.выдать ачивку @user Название</code>\nили ответом на сообщение:\n<code>.выдать ачивку Название</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
-    raw = re.sub(r'^[.\/!]?\s*выдать\s+ачивку\s*', '', message.text.strip(), flags=re.IGNORECASE).strip()
+    raw = re.sub(r'^[.\/!+-]?\s*выдать\s+ачивку\s*', '', message.text.strip(), flags=re.IGNORECASE).strip()
     if message.reply_to_message:
         ach_name = raw
     else:
         parts = raw.split(maxsplit=1)
         ach_name = parts[1] if len(parts) > 1 else ""
-    ach_name = ach_name.strip()
+    ach_name = re.sub(r'<[^>]+>', '', ach_name).strip()
     if not ach_name:
-        return await message.reply(f"{em('cross', '❌')} Укажи название ачивки.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Укажи название ачивки.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     ach = get_achievement_by_name(ach_name)
     if not ach:
-        return await message.reply(f"{em('cross', '❌')} Ачивка <b>{ach_name}</b> не найдена.\n📌 Список: <code>.ачивки</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ачивка <b>{ach_name}</b> не найдена.\n📌 Список: <code>.ачивки</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     ach_id, name, emoji, desc = ach
     if give_achievement(target.id, chat_id, ach_id, user_id):
         await message.reply(
             f"{em('check', '✅')} <b>Выдано!</b>\n\n👤 {mention(target)}\n{emoji} <b>{name}</b>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
         try:
             await bot.send_message(
@@ -7611,60 +7744,70 @@ async def give_achievement_cmd(message: types.Message):
             )
         except: pass
     else:
-        await message.reply(f"{em('cross', '❌')} У {mention(target)} уже есть эта ачивка в этом чате.", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"{em('cross', '❌')} У {mention(target)} уже есть эта ачивка в этом чате.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*снять\s+ачивку\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*снять\s+ачивку\b', m.text.strip(), re.IGNORECASE))
 async def remove_achievement_cmd(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
-        return await message.reply(f"{em('cross', '❌')} Только <b>агенты Mos</b>.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Только <b>агенты Mos</b>.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target = None
     if message.reply_to_message:
         target = message.reply_to_message.from_user
     if not target:
-        return await message.reply("📌 Ответь на сообщение юзера.", parse_mode="HTML", disable_web_page_preview=True)
-    raw = re.sub(r'^[.\/!]?\s*снять\s+ачивку\s*', '', message.text.strip(), flags=re.IGNORECASE).strip()
+        return await message.reply("📌 Ответь на сообщение юзера.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    raw = re.sub(r'^[.\/!+-]?\s*снять\s+ачивку\s*', '', message.text.strip(), flags=re.IGNORECASE).strip()
     if not raw:
-        return await message.reply("📌 <code>.снять ачивку Название</code>", parse_mode="HTML", disable_web_page_preview=True)
-    ach = get_achievement_by_name(raw)
+        return await message.reply("📌 <code>.снять ачивку Название</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    ach = get_achievement_by_name(re.sub(r'<[^>]+>', '', raw).strip())
     if not ach:
-        return await message.reply(f"{em('cross', '❌')} Ачивка не найдена.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ачивка не найдена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     remove_achievement(target.id, chat_id, ach[0])
-    await message.reply(f"🗑 Снята ачивка <b>{ach[1]}</b> с {mention(target)} (в этом чате).", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"🗑 Снята ачивка <b>{ach[1]}</b> с {mention(target)} (в этом чате).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*создать\s+ачивку\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*создать\s+ачивку\b', m.text.strip(), re.IGNORECASE))
 async def create_achievement_cmd(message: types.Message):
     user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
-        return await message.reply(f"{em('cross', '❌')} Только <b>агенты Mos</b>.", parse_mode="HTML", disable_web_page_preview=True)
-    raw = re.sub(r'^[.\/!]?\s*создать\s+ачивку\s*', '', message.text.strip(), flags=re.IGNORECASE).strip()
+        return await message.reply(f"{em('cross', '❌')} Только <b>агенты Mos</b>.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+
+    full_html = entities_to_html(message)
+    raw = re.sub(r'^[.\/!+-]?\s*создать\s+ачивку\s*', '', full_html, count=1, flags=re.IGNORECASE).strip()
+
     parts = [p.strip() for p in raw.split("|")]
     if len(parts) < 1 or not parts[0]:
         return await message.reply(
             "📌 <b>Формат:</b>\n<code>.создать ачивку Название | 🏅 | Описание</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
-    name = parts[0][:60]
-    emoji = parts[1] if len(parts) > 1 and parts[1] else "🏅"
-    desc = parts[2] if len(parts) > 2 else ""
-    new_id = create_achievement(name, emoji, desc)
+    name_html = parts[0][:120]
+    emoji_html = parts[1] if len(parts) > 1 and parts[1] else "🏅"
+    desc_html = parts[2] if len(parts) > 2 else ""
+
+    name_clean = re.sub(r'<[^>]+>', '', name_html).strip()[:60]
+    if not name_clean:
+        return await message.reply("❌ Пустое название.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+
+    new_id = create_achievement(name_clean, emoji_html, desc_html)
     if not new_id:
-        return await message.reply(f"{em('cross', '❌')} Ачивка с таким именем уже есть.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ачивка с таким именем уже есть.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+
     await message.reply(
-        f"{em('check', '✅')} Ачивка создана!\n\n{emoji} <b>{name}</b>\n" + (f"<i>{desc}</i>\n" if desc else "") +
-        f"\n📌 Выдать: <code>.выдать ачивку @user {name}</code>",
-        parse_mode="HTML", disable_web_page_preview=True
+        f"{em('check', '✅')} Ачивка создана!\n\n{emoji_html} <b>{name_clean}</b>\n"
+        + (f"<i>{desc_html}</i>\n" if desc_html else "")
+        + f"\n📌 Выдать: <code>.выдать ачивку @user {name_clean}</code>",
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
 # ================= ПОПОЛНИТЬ =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*пополнить\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*пополнить\b', m.text.strip(), re.IGNORECASE))
 async def add_candies_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Только владелец, совладелец или агент 3+.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Только владелец, совладелец или агент 3+.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target = None; amount = None
     if message.reply_to_message:
         target = message.reply_to_message.from_user
@@ -7679,28 +7822,28 @@ async def add_candies_cmd(message: types.Message):
                 if args[1].startswith("@"): target = await bot.get_chat(args[1])
                 elif args[1].lstrip("-").isdigit(): target = await bot.get_chat(int(args[1]))
             except:
-                return await message.reply(f"{em('cross', '❌')} Пользователь не найден.", parse_mode="HTML", disable_web_page_preview=True)
+                return await message.reply(f"{em('cross', '❌')} Пользователь не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
             if args[2].lstrip("-").isdigit(): amount = int(args[2])
         elif len(args) == 2 and args[1].lstrip("-").isdigit():
             target = message.from_user
             amount = int(args[1])
     if not target:
-        return await message.reply("📌 <code>.пополнить @user 100</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.пополнить @user 100</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if amount is None or amount == 0:
-        return await message.reply("❌ Укажи сумму.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Укажи сумму.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if abs(amount) > 1000000:
-        return await message.reply("❌ Максимум 1 000 000 за раз.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Максимум 1 000 000 за раз.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     add_candies(target.id, amount, message.from_user.id)
     new_balance = get_balance(target.id)
     sign = "+" if amount > 0 else ""
     await message.reply(
-        f"{em('check', '✅')} <b>Пополнено!</b>\n\n👤 {mention(target)}\n💰 <b>{sign}{amount}</b> 🍬\n💼 Баланс: <b>{new_balance}</b> 🍬",
-        parse_mode="HTML", disable_web_page_preview=True
+        f"{em('check', '✅')} <b>Пополнено!</b>\n\n👤 {mention(target)}\n💰 <b>{sign}{amount}</b> 🍬 mos-конфеток\n💼 Баланс: <b>{new_balance}</b> 🍬",
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
 # ================= ИРИСКИ =================
-@cmd("мешок")
+@cmd("мешок", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def my_candies_cmd(message: types.Message):
     if message.reply_to_message: target = message.reply_to_message.from_user
     else:
@@ -7712,8 +7855,8 @@ async def my_candies_cmd(message: types.Message):
             except: target = message.from_user
         else: target = message.from_user
     await message.reply(
-        f"🎒 <b>Мешок {mention(target)}</b>\n\n🍬 Ириски: <b>{get_balance(target.id)}</b>\n☢️ Коины: <b>{get_coins(target.id)}</b> i¢",
-        parse_mode="HTML", disable_web_page_preview=True
+        f"🎒 <b>Мешок {mention(target)}</b>\n\n🍬 mos-конфетки: <b>{get_balance(target.id)}</b>\n☢️ Коины: <b>{get_coins(target.id)}</b> i¢",
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -7721,8 +7864,8 @@ async def my_candies_cmd(message: types.Message):
 async def top_candies_cmd(message: types.Message):
     top = get_top_candies(limit=10)
     if not top:
-        return await message.reply("📭 Пусто.", parse_mode="HTML", disable_web_page_preview=True)
-    text = "🏆 <b>Топ мешков:</b>\n\n"
+        return await message.reply("📭 Пусто.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    text = "🏆 <b>Топ мешков (mos-конфетки):</b>\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for i, (user_id, balance) in enumerate(top, 1):
         try:
@@ -7731,15 +7874,15 @@ async def top_candies_cmd(message: types.Message):
         except: name = f"ID: {user_id}"
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {name} — <b>{balance}</b> 🍬\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*(перевод|перевести)\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*(перевод|перевести)\b', m.text.strip(), re.IGNORECASE))
 async def transfer_candies_cmd(message: types.Message):
     user_id = message.from_user.id
     args = message.text.split()
     if len(args) < 2:
-        return await message.reply("📌 <code>.перевод @user 100</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.перевод @user 100</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target = None; amount_arg = None
     if message.reply_to_message and len(args) == 2:
         target = message.reply_to_message.from_user; amount_arg = args[1]
@@ -7755,7 +7898,7 @@ async def transfer_candies_cmd(message: types.Message):
             except: return
     if not target or target.id == user_id or target.id == bot.id: return
     if is_transfer_blocked(target.id, user_id):
-        return await message.reply(f"{em('cross', '❌')} {mention(target)} <b>запретил(а)</b> тебе переводить ириски.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} {mention(target)} <b>запретил(а)</b> тебе переводить mos-конфетки.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try: amount = int(amount_arg)
     except: return
     if amount < 1 or amount > 100000: return
@@ -7767,47 +7910,47 @@ async def transfer_candies_cmd(message: types.Message):
         c.execute("UPDATE candies SET balance = balance + ? WHERE user_id = ?", (amount, target.id))
         conn.commit()
     await message.reply(
-        f"{em('check', '✅')} <b>Перевод!</b>\n\n👤 Кому: {mention(target)}\n💰 Сумма: <b>{amount}</b> 🍬",
-        parse_mode="HTML", disable_web_page_preview=True
+        f"{em('check', '✅')} <b>Перевод!</b>\n\n👤 Кому: {mention(target)}\n💰 Сумма: <b>{amount}</b> 🍬 mos-конфеток",
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
     try:
-        await bot.send_message(target.id, f"🎁 <b>Вам перевели {amount} 🍬 от {message.from_user.first_name}</b>", parse_mode="HTML")
+        await bot.send_message(target.id, f"🎁 <b>Вам перевели {amount} 🍬 mos-конфеток от {message.from_user.first_name}</b>", parse_mode="HTML")
     except: pass
 
 
 # ================= ЗАПРЕТ ПЕРЕВОДОВ =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*запретить\s+переводы\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*запретить\s+переводы\b', m.text.strip(), re.IGNORECASE))
 async def block_transfer_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply(f"{em('cross', '❌')} Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply("📌 Ответь на сообщение юзера или напиши:\n<code>.запретить переводы @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 Ответь на сообщение юзера или напиши:\n<code>.запретить переводы @user</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     blocker_id = message.from_user.id
     if target.id == blocker_id:
-        return await message.reply(f"{em('cross', '❌')} Себе нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Себе нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if target.id == bot.id:
-        return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     ok = add_transfer_block(blocker_id, target.id, blocker_id)
     if not ok:
-        return await message.reply(f"ℹ️ {mention(target)} уже в списке запрещённых.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"ℹ️ {mention(target)} уже в списке запрещённых.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     await message.reply(
-        f"{em('check', '✅')} <b>Готово!</b>\n\n🚫 {mention(target)} <b>больше не может</b> переводить ириски {mention(message.from_user)}.",
-        parse_mode="HTML", disable_web_page_preview=True
+        f"{em('check', '✅')} <b>Готово!</b>\n\n🚫 {mention(target)} <b>больше не может</b> переводить mos-конфетки {mention(message.from_user)}.",
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*разрешить\s+переводы\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*разрешить\s+переводы\b', m.text.strip(), re.IGNORECASE))
 async def unblock_transfer_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply(f"{em('cross', '❌')} Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
-        return await message.reply("📌 Ответь на сообщение юзера или напиши:\n<code>.разрешить переводы @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 Ответь на сообщение юзера или напиши:\n<code>.разрешить переводы @user</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     ok = remove_transfer_block(message.from_user.id, target.id)
     if not ok:
-        return await message.reply(f"ℹ️ {mention(target)} не был в списке запрещённых.", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"{em('check', '✅')} {mention(target)} снова может переводить тебе ириски.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"ℹ️ {mention(target)} не был в списке запрещённых.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    await message.reply(f"{em('check', '✅')} {mention(target)} снова может переводить тебе mos-конфетки.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("мои запреты")
@@ -7815,8 +7958,8 @@ async def unblock_transfer_cmd(message: types.Message):
 async def my_transfer_blocks_cmd(message: types.Message):
     blocks = get_transfer_blocks(message.from_user.id)
     if not blocks:
-        return await message.reply(f"📭 У вас нет запретов на переводы.", parse_mode="HTML", disable_web_page_preview=True)
-    text = f"🚫 <b>Запрет на переводы вам</b> ({len(blocks)}):\n\n"
+        return await message.reply(f"📭 У вас нет запретов на переводы.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    text = f"🚫 <b>Запрет на переводы mos-конфеток вам</b> ({len(blocks)}):\n\n"
     for i, (blocked_id, added_at) in enumerate(blocks, 1):
         try:
             u = await bot.get_chat(blocked_id)
@@ -7824,7 +7967,7 @@ async def my_transfer_blocks_cmd(message: types.Message):
         except: name = f"<code>{blocked_id}</code>"
         text += f"{i}. {name} — <i>{_fmt_added_dt(added_at)}</i>\n"
     text += f"\n📌 Снять запрет: <code>.разрешить переводы @user</code>"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= КОИНЫ =================
@@ -7845,7 +7988,7 @@ async def coins_balance_cmd(message: types.Message):
         except: pass
     else: text += f"\n⛏ Ферма доступна!"
     text += f"\n\n💱 <code>Купить коины 10</code>\n💸 <code>Бкоин 100</code>"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("ферма")
@@ -7854,14 +7997,14 @@ async def farm_cmd(message: types.Message):
     apply_tax(user_id)
     reward, wait_minutes = get_farm_reward(user_id)
     if reward == 0:
-        return await message.reply(f"⏳ Ферма не готова. Ещё <b>{wait_minutes} мин.</b>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"⏳ Ферма не готова. Ещё <b>{wait_minutes} мин.</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     info = get_coins_info(user_id)
     total_farmed = (info[2] or 0) + reward
     add_coins(user_id, reward, "ферма"); update_farm_time(user_id, total_farmed)
-    await message.reply(f"⛏ <b>Урожай!</b>\n💰 +{reward} i¢", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"⛏ <b>Урожай!</b>\n💰 +{reward} i¢", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("купить коины")
+@cmd("купить коины", allow_args=True, args_pattern=r"^\d+$")
 async def buy_coins_cmd(message: types.Message):
     args = message.text.split()
     if len(args) < 3 or not args[-1].isdigit(): return
@@ -7875,10 +8018,10 @@ async def buy_coins_cmd(message: types.Message):
         conn.commit()
     coins_amount = candies_amount * 100
     add_coins(user_id, coins_amount, "обмен")
-    await message.reply(f"💱 Обмен!\n💸 -{candies_amount} 🍬\n💰 +{coins_amount} i¢", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"💱 Обмен!\n💸 -{candies_amount} 🍬 mos-конфеток\n💰 +{coins_amount} i¢", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("бкоин")
+@cmd("бкоин", allow_args=True, args_pattern=r"^\d+$")
 async def bkoin_cmd(message: types.Message):
     args = message.text.split()
     if len(args) < 2 or not args[-1].isdigit(): return
@@ -7896,7 +8039,7 @@ async def bkoin_cmd(message: types.Message):
     text = f"💸 Взнос: <b>{amount}</b> i¢\n🏦 Счёт чата: <b>{total}</b> i¢"
     if total >= 35000: text += f"\n\n✅ <b>Можно в каталог!</b>"
     else: text += f"\n\n📊 До каталога: <b>{35000 - total}</b> i¢"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("коинытоп")
@@ -7912,20 +8055,20 @@ async def coins_top_cmd(message: types.Message):
         except: name = f"ID: {user_id}"
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {name} — <b>{balance}</b> i¢\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= STARS =================
-@cmd("купитьириски")
-@cmd("купить-ириски")
-@cmd("buycandies")
+@cmd("купитьириски", allow_args=True, args_pattern=r"^\d+$")
+@cmd("купить-ириски", allow_args=True, args_pattern=r"^\d+$")
+@cmd("buycandies", allow_args=True, args_pattern=r"^\d+$")
 async def buy_candies_stars_cmd(message: types.Message):
     args = message.text.split()
     if len(args) < 2 or not args[1].isdigit():
         price = get_stars_per_candy(message.chat.id)
         return await message.reply(
-            f"🍬 <b>Покупка ирисок</b>\n\n💰 Курс: <b>{price} ⭐ = 1 🍬</b>\n\n📌 <code>.купитьириски 10</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            f"🍬 <b>Покупка mos-конфеток</b>\n\n💰 Курс: <b>{price} ⭐ = 1 🍬</b>\n\n📌 <code>.купитьириски 10</code>",
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     amount = int(args[1])
     if amount < 1 or amount > 10000: return
@@ -7933,14 +8076,14 @@ async def buy_candies_stars_cmd(message: types.Message):
     payment_id = create_stars_payment(user_id=message.from_user.id, chat_id=message.chat.id, amount_candies=amount, stars=total_stars)
     try:
         await bot.send_invoice(
-            chat_id=message.chat.id, title=f"🍬 {amount} ирисок",
-            description=f"{amount} ирисов за {total_stars} ⭐",
+            chat_id=message.chat.id, title=f"🍬 {amount} mos-конфеток",
+            description=f"{amount} mos-конфеток за {total_stars} ⭐",
             payload=f"candies_{payment_id}", provider_token="", currency="XTR",
-            prices=[types.LabeledPrice(label=f"{amount} ирисок", amount=total_stars)],
+            prices=[types.LabeledPrice(label=f"{amount} mos-конфеток", amount=total_stars)],
             start_parameter=f"buy_candies_{payment_id}"
         )
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.pre_checkout_query()
@@ -7958,8 +8101,8 @@ async def successful_payment_handler(message: types.Message):
     if not result: return
     user_id, chat_id, amount_candies, stars_paid = result
     await message.reply(
-        f"{em('check', '✅')} <b>Покупка успешна!</b>\n\n🍬 +{amount_candies}\n⭐ {stars_paid}",
-        parse_mode="HTML", disable_web_page_preview=True
+        f"{em('check', '✅')} <b>Покупка успешна!</b>\n\n🍬 +{amount_candies} mos-конфеток\n⭐ {stars_paid}",
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )# ================= РЫБАЛКА — ПОМОЩЬ =================
 def _fishing_help_text() -> str:
     return (
@@ -8015,15 +8158,15 @@ def _fishing_help_text() -> str:
     )
 
 
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!]?\s*рыбалка\s+(помощь|хелп|help)\s*$',
-    m.text.strip(), re.IGNORECASE
-))
+@cmd("рыбалка помощь")
+@cmd("рыбалка хелп")
+@cmd("рыбалка help")
 async def fishing_help_cmd(message: types.Message):
     await message.reply(
         _fishing_help_text(),
         parse_mode="HTML",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
+        **_reply_kwargs(message)
     )
 
 
@@ -8047,7 +8190,8 @@ async def fishing_cmd(message: types.Message):
             f"После подписки попробуй снова: <code>.рыбалка</code>",
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=kb
+            reply_markup=kb,
+            **_reply_kwargs(message)
         )
 
     info = get_fishing(user_id)
@@ -8089,10 +8233,10 @@ async def fishing_cmd(message: types.Message):
             f"<code>{bar}</code> {percent}%\n\n"
             f"⏱ Осталось: <b>{time_str}</b>\n"
             f"⚙️ Твой кулдаун: <b>{cd_str}</b> <i>(улучшай снасти!)</i>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
-    msg = await message.reply("🎣 Забрасываю удочку...")
+    msg = await message.reply("🎣 Забрасываю удочку...", **_reply_kwargs(message))
     await asyncio.sleep(2)
     event = get_active_event(chat_id)
     event_bonus = 1.0; event_text = ""; rare_boost = 1.0
@@ -8297,7 +8441,7 @@ async def fish_storage_cmd(message: types.Message):
     user_id = message.from_user.id
     storage = get_fish_storage(user_id)
     if not storage:
-        return await message.reply("🎣 <b>Садок пуст</b>\n\nПоймай: <code>.рыбалка</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("🎣 <b>Садок пуст</b>\n\nПоймай: <code>.рыбалка</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = "🎒 <b>Твой садок</b>\n\n"
     total_price = 0; total_count = 0
     sorted_fish = sorted(storage.items(), key=lambda x: get_fish_price(x[0]), reverse=True)
@@ -8305,20 +8449,20 @@ async def fish_storage_cmd(message: types.Message):
         qty = data["quantity"]; emoji = data["emoji"]; price = get_fish_price(fish_name)
         total_price += price * qty; total_count += qty
         text += f"{emoji} <b>{fish_name}</b> × <b>{qty}</b> — {price} 🍬/шт\n"
-    text += f"\n💰 <b>Всего:</b> {total_count} рыб на <b>{total_price}</b> 🍬"
+    text += f"\n💰 <b>Всего:</b> {total_count} рыб на <b>{total_price}</b> 🍬 mos-конфеток"
     text += f"\n\n<code>.продать все</code>\n<code>.продать Щука</code>"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("продать")
+@cmd("продать", allow_args=True, args_pattern=r"^.+$")
 async def sell_fish_cmd(message: types.Message):
     user_id = message.from_user.id
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        return await message.reply("📌 <code>.продать все</code>\n📌 <code>.продать Щука 5</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.продать все</code>\n📌 <code>.продать Щука 5</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     storage = get_fish_storage(user_id)
     if not storage:
-        return await message.reply("🎣 Садок пуст", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("🎣 Садок пуст", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     query = args[1].strip()
     if query.lower() in ["все", "всё", "all", "*"]:
         total_price = 0; total_count = 0; sold_list = []
@@ -8331,8 +8475,8 @@ async def sell_fish_cmd(message: types.Message):
         text = f"{em('check', '✅')} <b>Продано!</b>\n\n"
         for s in sold_list[:20]: text += f"  • {s}\n"
         if len(sold_list) > 20: text += f"  ... +{len(sold_list)-20} ещё\n"
-        text += f"\n💰 +{total_price} 🍬\n📊 Всего: {total_count} рыб\n💼 Баланс: <b>{get_balance(user_id)}</b> 🍬"
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        text += f"\n💰 +{total_price} 🍬 mos-конфеток\n📊 Всего: {total_count} рыб\n💼 Баланс: <b>{get_balance(user_id)}</b> 🍬"
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     parts = query.split()
     fish_name_query = parts[0]
     matched_fish = None
@@ -8340,7 +8484,7 @@ async def sell_fish_cmd(message: types.Message):
         if fish_name_query.lower() in fish_name.lower() or fish_name.lower() in fish_name_query.lower():
             matched_fish = fish_name; break
     if not matched_fish:
-        return await message.reply(f"{em('cross', '❌')} Не найдена.\n<code>.садок</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Не найдена.\n<code>.садок</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     available = storage[matched_fish]["quantity"]
     emoji = storage[matched_fish]["emoji"]; price = get_fish_price(matched_fish)
     if len(parts) >= 2 and parts[1].isdigit():
@@ -8351,8 +8495,8 @@ async def sell_fish_cmd(message: types.Message):
     remove_fish_from_storage(user_id, matched_fish, qty)
     add_candies(user_id, total_price, 0)
     await message.reply(
-        f"{em('check', '✅')} <b>Продано!</b>\n\n{emoji} <b>{matched_fish}</b> × <b>{qty}</b>\n💰 +{total_price} 🍬\n📊 Осталось: <b>{available - qty}</b>",
-        parse_mode="HTML", disable_web_page_preview=True
+        f"{em('check', '✅')} <b>Продано!</b>\n\n{emoji} <b>{matched_fish}</b> × <b>{qty}</b>\n💰 +{total_price} 🍬 mos-конфеток\n📊 Осталось: <b>{available - qty}</b>",
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -8360,7 +8504,7 @@ async def sell_fish_cmd(message: types.Message):
 async def fishing_top_cmd(message: types.Message):
     top = get_fishing_top(limit=10)
     if not top:
-        return await message.reply("📭 Никто не рыбачил.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 Никто не рыбачил.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = "🏆 <b>Топ рыбаков:</b>\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for i, (user_id, caught, level) in enumerate(top, 1):
@@ -8370,7 +8514,7 @@ async def fishing_top_cmd(message: types.Message):
         except: name = f"ID: {user_id}"
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {name} — <b>{caught}</b> 🐟 (ур. {level})\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("моя рыбалка")
@@ -8433,7 +8577,7 @@ async def fishing_stats_cmd(message: types.Message):
         f"🍯 Прикормка: {bait_text}\n"
         f"⚙️ Кулдаун: <b>{cd_full_str}</b> (улучшай снасти!)\n"
         f"⏰ Готовность: {cooldown_text}",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -8442,16 +8586,16 @@ async def buy_bait_cmd(message: types.Message):
     user_id = message.from_user.id
     info = get_fishing(user_id)
     if is_bait_active(info[6]):
-        return await message.reply("🍯 Уже активна.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("🍯 Уже активна.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     price = 20
     if get_balance(user_id) < price:
-        return await message.reply(f"❌ Нужно <b>{price}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"❌ Нужно <b>{price}</b> 🍬 mos-конфеток", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (price, user_id))
         conn.commit()
     set_fishing_bait(user_id)
-    await message.reply(f"✅ <b>Прикормка куплена!</b>\n🍯 {BAIT_DURATION_HOURS} ч.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"✅ <b>Прикормка куплена!</b>\n🍯 {BAIT_DURATION_HOURS} ч.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("магазин снастей")
@@ -8484,16 +8628,16 @@ async def fishing_shop_cmd(message: types.Message):
                 f"   Купить: <code>.купить {key}</code>\n\n"
             )
 
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*купить\s+\S+', m.text.strip(), re.IGNORECASE)
-    and not re.match(r'^\s*[.\/!]?\s*купить\s+вип\b', m.text.strip(), re.IGNORECASE)
-    and not re.match(r'^\s*[.\/!]?\s*купить\s+коины\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*купить\s+\S+', m.text.strip(), re.IGNORECASE)
+    and not re.match(r'^\s*[.\/!+-]?\s*купить\s+вип\b', m.text.strip(), re.IGNORECASE)
+    and not re.match(r'^\s*[.\/!+-]?\s*купить\s+коины\b', m.text.strip(), re.IGNORECASE))
 async def fishing_buy_cmd(message: types.Message):
     args = message.text.split()
     if len(args) < 2:
-        return await message.reply("📌 <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     query = args[1].lower()
     gear_key = None
@@ -8502,18 +8646,18 @@ async def fishing_buy_cmd(message: types.Message):
             gear_key = k; break
 
     if not gear_key:
-        return await message.reply("❌ Снасть не найдена. <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Снасть не найдена. <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     gear = FISHING_GEAR[gear_key]
     user_id = message.from_user.id
     inv = get_fishing_inventory(user_id)
 
     if inv.get(gear_key, 0) > 0:
-        return await message.reply(f"⚠️ Уже есть <b>{gear['name']}</b>. Улучшить: <code>.улучшить {gear_key}</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"⚠️ Уже есть <b>{gear['name']}</b>. Улучшить: <code>.улучшить {gear_key}</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     price = gear["base_price"]
     if get_balance(user_id) < price:
-        return await message.reply(f"❌ Нужно <b>{price}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"❌ Нужно <b>{price}</b> 🍬 mos-конфеток", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -8522,15 +8666,15 @@ async def fishing_buy_cmd(message: types.Message):
     add_to_fishing_inventory(user_id, gear_key, 1)
     await message.reply(
         f"{em('check', '✅')} <b>Куплено!</b>\n\n{gear['name']} — ур. 1/{gear['max_level']}\n<i>{gear['desc']}</i>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*улучшить\s+\S+', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*улучшить\s+\S+', m.text.strip(), re.IGNORECASE))
 async def upgrade_gear_cmd(message: types.Message):
     args = message.text.split()
     if len(args) < 2:
-        return await message.reply("📌 <code>.улучшить hook</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.улучшить hook</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     query = args[1].lower()
     gear_key = None
@@ -8539,7 +8683,7 @@ async def upgrade_gear_cmd(message: types.Message):
             gear_key = k; break
 
     if not gear_key:
-        return await message.reply("❌ Снасть не найдена. <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Снасть не найдена. <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     ok, msg_text, new_level = upgrade_fishing_gear(message.from_user.id, gear_key)
     if ok:
@@ -8548,10 +8692,10 @@ async def upgrade_gear_cmd(message: types.Message):
             f"✅ <b>{gear['name']} улучшено!</b>\n\n"
             f"⬆️ Теперь уровень: <b>{new_level}/{gear['max_level']}</b>\n"
             f"{msg_text}",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     else:
-        await message.reply(f"❌ {msg_text}", parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(f"❌ {msg_text}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("инвентарь")
@@ -8588,7 +8732,7 @@ async def fishing_inventory_cmd(message: types.Message):
     else:
         cd_str = f"{cd_min} мин."
     text += f"\n⚙️ Твой кулдаун: <b>{cd_str}</b>"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("мои рыбные ачивки")
@@ -8604,7 +8748,7 @@ async def fishing_ach_cmd(message: types.Message):
     for key, ach in FISHING_ACHIEVEMENTS.items():
         mark = "✅" if key in have else "🔒"
         text += f"{mark} {ach['name']}\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("событие")
@@ -8616,7 +8760,7 @@ async def fishing_event_cmd(message: types.Message):
         return await message.reply(
             "☀️ <b>Сейчас штиль</b>\n\n"
             "Следующее событие появится в течение <b>1.5 часа</b>.",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     ev_key, bonus, expires = event
     ev_data = FISHING_EVENTS.get(ev_key, {})
@@ -8642,14 +8786,14 @@ async def fishing_event_cmd(message: types.Message):
     )
     if ev_data.get("rare_boost"):
         text += f"\n💎 Шанс редких ×{ev_data['rare_boost']}"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("локация")
-@cmd("локации")
+@cmd("локация", allow_args=True)
+@cmd("локации", allow_args=True)
 async def location_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     current_key = get_chat_location(message.chat.id)
     current = LOCATIONS.get(current_key, LOCATIONS["pier"])
@@ -8673,7 +8817,7 @@ async def location_cmd(message: types.Message):
             )
 
         text += f"📌 Сменить: <code>.локация пирс</code> (и т.д.)"
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     query = args[1].lower()
     mapping = {
@@ -8687,7 +8831,7 @@ async def location_cmd(message: types.Message):
     if query not in mapping:
         return await message.reply(
             "❌ Доступные локации: <code>пирс</code>, <code>камни</code>, <code>закатный</code>, <code>бездна</code>, <code>остров</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     new_key = mapping[query]
@@ -8696,7 +8840,7 @@ async def location_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 3) and message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
         return await message.reply(
             f"❌ Только <b>Мл. Админ (3+)</b> может менять локацию.",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     set_chat_location(message.chat.id, new_key)
@@ -8709,15 +8853,15 @@ async def location_cmd(message: types.Message):
         f"🟣 Редкая: <b>+{new_loc['rare_chance']}%</b>\n"
         f"💎 Легендарка: <b>+{new_loc['legendary_chance']}%</b>\n"
         f"💰 Сокровища: <b>+{new_loc['treasure_chance']}%</b>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@cmd("регион")
-@cmd("рыбное место")
+@cmd("регион", allow_args=True)
+@cmd("рыбное место", allow_args=True)
 async def region_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     current = get_chat_region(message.chat.id)
     region_names = {
@@ -8733,11 +8877,11 @@ async def region_cmd(message: types.Message):
             f"🗺 <b>Регион рыбалки</b>\n\n"
             f"📍 Сейчас: <b>{region_names.get(current, current)}</b>\n\n"
             f"📌 Сменить (ранг 3+): <code>.регион река|озеро|море|океан</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     if not has_permission(message.chat.id, message.from_user.id, 3):
-        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     sub = args[1].lower()
     mapping = {
@@ -8749,7 +8893,7 @@ async def region_cmd(message: types.Message):
     if sub not in mapping:
         return await message.reply(
             "❌ Допустимые: <code>река</code>, <code>озеро</code>, <code>море</code>, <code>океан</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     new_region = mapping[sub]
     set_chat_region(message.chat.id, new_region)
@@ -8757,28 +8901,28 @@ async def region_cmd(message: types.Message):
         f"{em('check', '✅')} <b>Регион изменён!</b>\n\n"
         f"📍 Теперь: <b>{region_names[new_region]}</b>\n"
         f"👮 {mention(message.from_user)}",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@cmd("турнир")
+@cmd("турнир", allow_args=True)
 async def fishing_tournament_cmd(message: types.Message):
     args = message.text.split(); chat_id = message.chat.id
     if len(args) >= 2 and args[1].lower() in ["участвовать", "join"]:
         tour = get_active_tournament(chat_id)
         if not tour:
-            return await message.reply("❌ Нет активного турнира.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("❌ Нет активного турнира.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         join_tournament(chat_id, message.from_user.id)
-        return await message.reply(f"{em('check', '✅')} Ты в турнире!", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Ты в турнире!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if len(args) >= 2 and args[1].lower() in ["стоп", "end"]:
         is_admin = (message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
                     or has_agent_rank(message.from_user.id, 1)
                     or await is_tg_admin(chat_id, message.from_user.id))
         if not is_admin:
-            return await message.reply(f"{em('cross', '❌')} Только админ.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Только админ.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         winners = end_tournament(chat_id)
         if not winners:
-            return await message.reply("❌ Турнир не найден или нет участников.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("❌ Турнир не найден или нет участников.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         text = "🏆 <b>ТУРНИР ЗАВЕРШЁН!</b>\n\n"
         medals = ["🥇", "🥈", "🥉"]
         for i, (uid, caught, prize) in enumerate(winners):
@@ -8787,13 +8931,13 @@ async def fishing_tournament_cmd(message: types.Message):
                 name = user_link(uid, u.first_name, u.username)
             except: name = f"ID {uid}"
             text += f"{medals[i]} {name} — <b>{caught}</b> 🐟 (+{prize} 🍬)\n"
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     is_admin = (message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
                 or has_agent_rank(message.from_user.id, 1)
                 or await is_tg_admin(chat_id, message.from_user.id))
     if not is_admin:
-        return await message.reply(f"{em('cross', '❌')} Только админ может запустить турнир.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Только админ может запустить турнир.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     tour = get_active_tournament(chat_id)
     if tour:
@@ -8815,7 +8959,7 @@ async def fishing_tournament_cmd(message: types.Message):
                 m = medals[i] if i < 3 else f"{i+1}."
                 text += f"{m} {name} — <b>{caught}</b> 🐟\n"
         text += f"\n📌 <code>.турнир участвовать</code>"
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     create_tournament(chat_id, message.from_user.id, prize=100, duration_min=TOURNAMENT_DURATION_MIN)
     join_tournament(chat_id, message.from_user.id)
@@ -8823,7 +8967,7 @@ async def fishing_tournament_cmd(message: types.Message):
         f"🏆 <b>ТУРНИР ЗАПУЩЕН!</b>\n⏰ {TOURNAMENT_DURATION_MIN} мин.\n"
         f"💰 Призы: <b>20–100</b> 🍬 (зависит от числа участников)\n"
         f"📌 <code>.турнир участвовать</code>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -8832,9 +8976,9 @@ async def enable_events_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     if is_events_enabled(message.chat.id):
-        return await message.reply("ℹ️ Уже включены.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Уже включены.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_events_enabled(message.chat.id, True)
-    await message.reply(f"{em('check', '✅')} Уведомления о событиях включены!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Уведомления о событиях включены!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-событие", "- событие"])
@@ -8842,9 +8986,9 @@ async def disable_events_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
     if not is_events_enabled(message.chat.id):
-        return await message.reply("ℹ️ Уже выключены.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Уже выключены.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_events_enabled(message.chat.id, False)
-    await message.reply(f"{em('check', '✅')} Уведомления о событиях выключены!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Уведомления о событиях выключены!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("события")
@@ -8853,34 +8997,47 @@ async def events_status_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     enabled = is_events_enabled(message.chat.id)
     status = "🟢 включены" if enabled else "🔴 выключены"
-    await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True)# ================= МРП =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+мрп\b', m.text.strip(), re.IGNORECASE))
+    await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))# ================= МРП =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+мрп\b', m.text.strip(), re.IGNORECASE))
 async def create_rp_cmd(message: types.Message):
     if not get_vip(message.from_user.id):
-        return await message.reply(f"{em('cross', '❌')} Только VIP.", parse_mode="HTML", disable_web_page_preview=True)
-    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
-    raw = re.sub(r'^\+мрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
-    parts = raw.split("/", 2)
+        return await message.reply(f"{em('cross', '❌')} Только VIP.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+
+    full_html = entities_to_html(message)
+    body = re.sub(r'^[.\/!+-]?\s*\+мрп\s*', '', full_html, count=1, flags=re.IGNORECASE).strip()
+
+    parts = body.split("/", 2)
     if len(parts) < 3:
-        return await message.reply("📌 <b>Формат:</b>\n<code>+мрп ущипнуть / 🤏 / ущипнул</code>", parse_mode="HTML", disable_web_page_preview=True)
-    name = parts[0].strip().lower()[:30]
-    emoji = parts[1].strip()[:5]
-    action_text = parts[2].strip()[:300]
-    if not name or not emoji or not action_text:
-        return await message.reply("❌ Заполни все 3 поля.", parse_mode="HTML", disable_web_page_preview=True)
-    if "{actor}" not in action_text and "{target}" not in action_text:
-        full_text = f"{{actor}} {action_text} {{target}}"
+        return await message.reply("📌 <b>Формат:</b>\n<code>+мрп ущипнуть / 🤏 / ущипнул</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+
+    name_html = parts[0].strip()
+    emoji_html = parts[1].strip()[:120]
+    action_html = parts[2].strip()[:400]
+
+    name_clean = re.sub(r'<[^>]+>', '', name_html).strip().lower()[:30]
+    if not name_clean or not emoji_html or not action_html:
+        return await message.reply("❌ Заполни все 3 поля.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+
+    if "{actor}" not in action_html and "{target}" not in action_html:
+        full_text = f"{{actor}} {action_html} {{target}}"
     else:
-        full_text = action_text
+        full_text = action_html
+
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         try:
             c.execute("INSERT INTO rp_commands (chat_id, name, emoji, text, created_by) VALUES (?, ?, ?, ?, ?)",
-                      (message.chat.id, name, emoji, full_text, message.from_user.id))
+                      (message.chat.id, name_clean, emoji_html, full_text, message.from_user.id))
             conn.commit()
-            await message.reply(f"{em('check', '✅')} РП <b>{emoji} {name}</b> создано!\n\n📝 Шаблон: {full_text}", parse_mode="HTML", disable_web_page_preview=True)
+            await message.reply(
+                f"{em('check', '✅')} РП <b>{emoji_html} {name_clean}</b> создано!\n\n📝 Шаблон: {full_text}",
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
+            )
         except sqlite3.IntegrityError:
-            return await message.reply(f"{em('cross', '❌')} Уже есть. Удалить: <code>-мрп {name}</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(
+                f"{em('cross', '❌')} Уже есть. Удалить: <code>-мрп {name_clean}</code>",
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
+            )
 
 
 @cmd("мрп")
@@ -8897,12 +9054,12 @@ async def list_rp_cmd(message: types.Message):
         text += "\n"
     text += f"<b>🌐 Стандартные ({len(STANDARD_RP)}):</b>\n  " + ", ".join(f"<code>{n}</code>" for n in list(STANDARD_RP.keys())[:30])
     text += f"\n\n📌 <code>.обнять @user</code> или ответом"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-мрп\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*-мрп\b', m.text.strip(), re.IGNORECASE))
 async def delete_rp_cmd(message: types.Message):
-    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
+    raw = re.sub(r'^[.\/!+-]\s*', '', message.text.strip())
     raw = re.sub(r'^-мрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
     if not raw: return
     name = raw.lower()
@@ -8911,52 +9068,59 @@ async def delete_rp_cmd(message: types.Message):
         c.execute("DELETE FROM rp_commands WHERE chat_id = ? AND name = ? AND created_by = ?",
                   (message.chat.id, name, message.from_user.id))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} Удалено.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Удалено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= ГМРП =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+гмрп\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+гмрп\b', m.text.strip(), re.IGNORECASE))
 async def create_global_rp_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 4):
         return
-    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
-    raw = re.sub(r'^\+гмрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
-    parts = raw.split("/", 2)
+
+    full_html = entities_to_html(message)
+    body = re.sub(r'^[.\/!+-]?\s*\+гмрп\s*', '', full_html, count=1, flags=re.IGNORECASE).strip()
+
+    parts = body.split("/", 2)
     if len(parts) < 3:
-        return await message.reply("📌 <b>Формат:</b>\n<code>+гмрп ущипнуть / 🤏 / ущипнул</code>", parse_mode="HTML", disable_web_page_preview=True)
-    name = parts[0].strip().lower()[:30]
-    emoji = parts[1].strip()[:5]
-    action_text = parts[2].strip()[:300]
-    if not name or not emoji or not action_text:
-        return await message.reply("❌ Заполни все 3 поля.", parse_mode="HTML", disable_web_page_preview=True)
-    if "{actor}" not in action_text and "{target}" not in action_text:
-        full_text = f"{{actor}} {action_text} {{target}}"
+        return await message.reply("📌 <b>Формат:</b>\n<code>+гмрп ущипнуть / 🤏 / ущипнул</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+
+    name_html = parts[0].strip()
+    emoji_html = parts[1].strip()[:120]
+    action_html = parts[2].strip()[:400]
+
+    name_clean = re.sub(r'<[^>]+>', '', name_html).strip().lower()[:30]
+    if not name_clean or not emoji_html or not action_html:
+        return await message.reply("❌ Заполни все 3 поля.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+
+    if "{actor}" not in action_html and "{target}" not in action_html:
+        full_text = f"{{actor}} {action_html} {{target}}"
     else:
-        full_text = action_text
+        full_text = action_html
+
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         try:
             c.execute("INSERT OR REPLACE INTO global_rp_commands (user_id, name, emoji, text, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
-                      (message.from_user.id, name, emoji, full_text))
+                      (message.from_user.id, name_clean, emoji_html, full_text))
             conn.commit()
-            await message.reply(f"{em('check', '✅')} Глобальное РП <b>{emoji} {name}</b> создано!\n\n📝 Шаблон: {full_text}", parse_mode="HTML", disable_web_page_preview=True)
+            await message.reply(f"{em('check', '✅')} Глобальное РП <b>{emoji_html} {name_clean}</b> создано!\n\n📝 Шаблон: {full_text}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         except Exception as e:
-            return await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-гмрп\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*-гмрп\b', m.text.strip(), re.IGNORECASE))
 async def delete_global_rp_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 4):
         return
-    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
+    raw = re.sub(r'^[.\/!+-]\s*', '', message.text.strip())
     raw = re.sub(r'^-гмрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
     if not raw:
-        return await message.reply("📌 <code>-гмрп Название</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>-гмрп Название</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("DELETE FROM global_rp_commands WHERE user_id = ? AND LOWER(name) = ?", (message.from_user.id, raw.lower()))
         conn.commit()
-    await message.reply(f"{em('check', '✅')} Удалено.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Удалено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("гмрп")
@@ -8966,124 +9130,23 @@ async def list_global_rp_cmd(message: types.Message):
         c.execute("SELECT id, name, emoji FROM global_rp_commands WHERE user_id = ? ORDER BY id ASC", (message.from_user.id,))
         rows = c.fetchall()
     if not rows:
-        return await message.reply("📭 У тебя нет глобальных РП.\n📌 <code>+гмрп обнять / 🤗 / обнял</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 У тебя нет глобальных РП.\n📌 <code>+гмрп обнять / 🤗 / обнял</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = "🌐 <b>Твои глобальные РП:</b>\n\n"
     for i, (rid, name, emoji) in enumerate(rows, 1):
         text += f"{i}. {emoji} <code>{name}</code>\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
-
-
-# ================= РП ХЕНДЛЕР =================
-@dp.message(lambda m: m.text and not m.text.startswith(('.', '+', '-', '!', '/')) and not m.text.lower().strip().startswith("брак"))
-async def standard_rp_handler(message: types.Message):
-    if not message.text: return
-    txt = message.text.strip()
-    if not txt: return
-    txt_lower = txt.lower()
-
-    rp_emoji = None
-    rp_template = None
-    matched_name = None
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?", (message.chat.id, txt_lower))
-        row = c.fetchone()
-        if row:
-            rp_emoji, rp_template = row
-            matched_name = txt_lower
-        else:
-            first = txt_lower.split()[0] if txt_lower.split() else ""
-            if first and first != txt_lower:
-                c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?", (message.chat.id, first))
-                row = c.fetchone()
-                if row:
-                    rp_emoji, rp_template = row
-                    matched_name = first
-        if not rp_template:
-            c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (txt_lower,))
-            row = c.fetchone()
-            if row:
-                rp_emoji, rp_template = row
-                matched_name = txt_lower
-            else:
-                first = txt_lower.split()[0] if txt_lower.split() else ""
-                if first and first != txt_lower:
-                    c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (first,))
-                    row = c.fetchone()
-                    if row:
-                        rp_emoji, rp_template = row
-                        matched_name = first
-
-    if rp_template:
-        actor = message.from_user
-        target = None
-        reply_to_id = None
-        if message.reply_to_message:
-            target = message.reply_to_message.from_user
-            reply_to_id = message.reply_to_message.message_id
-        else:
-            rest = txt[len(matched_name):].strip() if matched_name else ""
-            for w in rest.split():
-                if w.startswith('@'):
-                    try: target = await bot.get_chat(w); break
-                    except: pass
-                if w.isdigit():
-                    try: target = await bot.get_chat(int(w)); break
-                    except: pass
-        if target and not target.is_bot:
-            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(target))
-        else:
-            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(actor))
-        await message.reply(f"{rp_emoji} {out}", parse_mode="HTML", disable_web_page_preview=True, reply_to_message_id=reply_to_id)
-        return
-
-    rp_data = None
-    rp_name = None
-    if txt_lower in STANDARD_RP:
-        rp_name = txt_lower; rp_data = STANDARD_RP[txt_lower]
-    else:
-        for name in sorted(STANDARD_RP.keys(), key=len, reverse=True):
-            if txt_lower.startswith(name):
-                rest = txt_lower[len(name):]
-                if not rest or rest[0] == ' ':
-                    rp_name = name; rp_data = STANDARD_RP[name]; break
-    if not rp_data: return
-    actor = message.from_user; target = None
-    reply_to_id = None
-    if message.reply_to_message:
-        target = message.reply_to_message.from_user
-        reply_to_id = message.reply_to_message.message_id
-    if not target:
-        rest_text = txt[len(rp_name):].strip()
-        if rest_text:
-            try:
-                target_arg = rest_text.split()[0]
-                if target_arg.startswith('@'): target = await bot.get_chat(target_arg)
-                elif target_arg.isdigit(): target = await bot.get_chat(int(target_arg))
-            except: pass
-    if not target:
-        return await message.reply(
-            f"{rp_data['emoji']} {rp_data['self_text'].format(actor=mention(actor), target=mention(actor))}",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-    if target.is_bot: return
-    await message.reply(
-        f"{rp_data['emoji']} {rp_data['text'].format(actor=mention(actor), target=mention(target))}",
-        parse_mode="HTML", disable_web_page_preview=True,
-        reply_to_message_id=reply_to_id
-    )
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= ПРАВИЛА =================
-@cmd("правила")
-@cmd("rules")
+@cmd("правила", allow_args=True)
+@cmd("rules", allow_args=True)
 async def rules_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         rules = get_chat_rules(message.chat.id)
         if not rules:
-            return await message.reply("📭 Правила не установлены.", parse_mode="HTML", disable_web_page_preview=True)
-        return await message.reply(f"📜 <b>Правила:</b>\n\n{rules}", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📭 Правила не установлены.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+        return await message.reply(f"📜 <b>Правила:</b>\n\n{rules}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     sub = args[1].strip().lower()
     if sub.startswith("установить"):
         if not has_permission(message.chat.id, message.from_user.id, 3): return
@@ -9092,23 +9155,23 @@ async def rules_cmd(message: types.Message):
         nl_idx = message.text.find("\n")
         raw_text_html = _extract_html_after(message, nl_idx + 1)[:3500]
         set_chat_rules(message.chat.id, raw_text_html, message.from_user.id)
-        return await message.reply(f"{em('check', '✅')} Правила установлены!", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Правила установлены!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if sub in ["сброс", "удалить"]:
         if not has_permission(message.chat.id, message.from_user.id, 3): return
         reset_chat_rules(message.chat.id)
-        return await message.reply(f"{em('check', '✅')} Сброшено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Сброшено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if sub in ["закрепить", "пин"]:
         if not has_permission(message.chat.id, message.from_user.id, 3): return
         rules = get_chat_rules(message.chat.id)
         if not rules: return
         try:
-            msg = await message.reply(f"📜 <b>Правила:</b>\n\n{rules}", parse_mode="HTML", disable_web_page_preview=True)
+            msg = await message.reply(f"📜 <b>Правила:</b>\n\n{rules}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
             await bot.pin_chat_message(message.chat.id, msg.message_id, disable_notification=True)
         except: pass
 
 
 # ================= ПРИВЕТСТВИЕ =================
-@cmd("приветствие")
+@cmd("приветствие", allow_args=True)
 async def greeting_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not has_permission(message.chat.id, message.from_user.id, 3): return
@@ -9117,8 +9180,28 @@ async def greeting_cmd(message: types.Message):
     if not sub:
         current = get_greeting(message.chat.id)
         if not current:
-            return await message.reply("📭 Не установлено.\n📌 <code>.приветствие установить</code>", parse_mode="HTML", disable_web_page_preview=True)
-        return await message.reply(f"📜 <b>Текущее:</b>\n\n<code>{current}</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(
+                "📭 <b>Приветствие не установлено</b>\n\n"
+                "📌 <b>Установить:</b>\n"
+                "<code>.приветствие установить</code>\n"
+                "<code>Твой текст приветствия</code>\n\n"
+                "🔹 <b>Плейсхолдеры:</b>\n"
+                "• <code>{ник}</code> — кликабельный ник (по умолчанию сверху)\n"
+                "• <code>{имя}</code> — имя без ссылки\n"
+                "• <code>{юзер}</code> — @username\n"
+                "• <code>{чат}</code> — название чата\n"
+                "• <code>{айди}</code> — ID юзера\n"
+                "• <code>{без_ника}</code> — не добавлять ник сверху",
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
+            )
+        preview = format_greeting(current, message.from_user, message.chat)
+        return await message.reply(
+            f"📜 <b>Текущее приветствие:</b>\n\n"
+            f"<b>Превью (для тебя):</b>\n{preview}\n\n"
+            f"<b>Шаблон:</b>\n<code>{html_escape_text(current)}</code>\n\n"
+            f"🔹 <b>Плейсхолдеры:</b> <code>{{имя}}</code> · <code>{{ник}}</code> · <code>{{юзер}}</code> · <code>{{чат}}</code> · <code>{{айди}}</code> · <code>{{без_ника}}</code>",
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
+        )
     if sub.startswith("установить"):
         parts = message.text.split("\n", 1)
         if len(parts) < 2: return
@@ -9126,14 +9209,18 @@ async def greeting_cmd(message: types.Message):
         raw_text_html = _extract_html_after(message, nl_idx + 1)[:1000]
         if not raw_text_html: return
         set_greeting(message.chat.id, raw_text_html, message.from_user.id)
-        return await message.reply(f"{em('check', '✅')} Установлено!\n\n{format_greeting(raw_text_html, message.from_user, message.chat)}", parse_mode="HTML", disable_web_page_preview=True)
+        preview = format_greeting(raw_text_html, message.from_user, message.chat)
+        return await message.reply(
+            f"{em('check', '✅')} Установлено!\n\n<b>Превью:</b>\n{preview}",
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
+        )
     if sub in ["сброс", "удалить"]:
         reset_greeting(message.chat.id)
-        return await message.reply(f"{em('check', '✅')} Сброшено.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Сброшено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= ФИЛЬТР ССЫЛОК =================
-@cmd("фильтрссылок")
+@cmd("фильтрссылок", allow_args=True)
 async def link_filter_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not has_permission(message.chat.id, message.from_user.id, 3): return
@@ -9142,13 +9229,13 @@ async def link_filter_cmd(message: types.Message):
     if not sub:
         enabled = is_link_filter_enabled(message.chat.id)
         status = "🟢 включён" if enabled else "🔴 выключен"
-        return await message.reply(f"🔗 <b>Фильтр ссылок:</b> {status}", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"🔗 <b>Фильтр ссылок:</b> {status}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if sub in ["вкл", "on", "+"]:
         set_link_filter(message.chat.id, True)
-        return await message.reply(f"{em('check', '✅')} Включён", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Включён", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if sub in ["выкл", "off", "-"]:
         set_link_filter(message.chat.id, False)
-        return await message.reply(f"{em('check', '✅')} Выключен", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Выключен", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= КАПЧА =================
@@ -9156,18 +9243,20 @@ async def link_filter_cmd(message: types.Message):
 async def enable_captcha_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
-    if is_captcha_enabled(message.chat.id): return
+    if is_captcha_enabled(message.chat.id):
+        return await message.reply("ℹ️ Уже включена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_captcha_enabled(message.chat.id, True)
-    await message.reply(f"{em('check', '✅')} Капча включена!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Капча включена!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-капча", "- капча"])
 async def disable_captcha_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not await _check_automod_perms(message): return
-    if not is_captcha_enabled(message.chat.id): return
+    if not is_captcha_enabled(message.chat.id):
+        return await message.reply("ℹ️ Уже выключена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_captcha_enabled(message.chat.id, False)
-    await message.reply(f"{em('check', '✅')} Капча выключена!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Капча выключена!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("капча")
@@ -9185,15 +9274,15 @@ async def captcha_status_cmd(message: types.Message):
         f"⏱ Время на прохождение: <b>{timeout} сек.</b> ({human})\n\n"
         f"📌 <code>+капча</code> / <code>-капча</code> — вкл/выкл\n"
         f"📌 <code>.капчавремя 180</code> — изменить время",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@cmd("капчавремя")
-@cmd("капча время")
+@cmd("капчавремя", allow_args=True, args_pattern=r"^\d+$")
+@cmd("капча время", allow_args=True, args_pattern=r"^\d+$")
 async def captcha_time_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not await _check_automod_perms(message): return
     args = message.text.split()
     current = get_captcha_timeout(message.chat.id)
@@ -9203,14 +9292,14 @@ async def captcha_time_cmd(message: types.Message):
             f"🕐 Сейчас: <b>{current} сек.</b> ({current // 60} мин. {current % 60} сек.)\n\n"
             f"📌 Установить: <code>.капчавремя 180</code>\n"
             f"📌 Диапазон: от <b>10</b> до <b>3600</b> секунд",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     raw = args[1].strip()
     if not raw.isdigit():
-        return await message.reply("❌ Укажи число секунд.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Укажи число секунд.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     seconds = int(raw)
     if seconds < 10 or seconds > 3600:
-        return await message.reply("❌ Допустимый диапазон: <b>10</b> – <b>3600</b> секунд.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Допустимый диапазон: <b>10</b> – <b>3600</b> секунд.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_captcha_timeout(message.chat.id, seconds)
     mins = seconds // 60
     secs = seconds % 60
@@ -9218,7 +9307,7 @@ async def captcha_time_cmd(message: types.Message):
     await message.reply(
         f"{em('check', '✅')} <b>Время капчи обновлено!</b>\n\n"
         f"⏱ Теперь: <b>{seconds} сек.</b> ({human})",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -9230,9 +9319,9 @@ async def become_citizen_cmd(message: types.Message):
     current = get_citizenship_info(user_id)
     if current:
         if current[0] == chat_id: return
-        return await message.reply("⚠️ Уже гражданин другого чата. <code>-гражданство</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Уже гражданин другого чата. <code>-гражданство</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_citizenship(user_id, chat_id)
-    await message.reply(f"🏠 {mention(message.from_user)} стал гражданином чата!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"🏠 {mention(message.from_user)} стал гражданином чата!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("гражданство")
@@ -9240,14 +9329,14 @@ async def citizenship_info_cmd(message: types.Message):
     target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     info = get_citizenship_info(target.id)
     if not info:
-        return await message.reply(f"ℹ️ {mention(target)} не гражданин.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"ℹ️ {mention(target)} не гражданин.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     chat_id, became_at = info
     try:
         chat = await bot.get_chat(chat_id)
         title = chat.title or f"Чат"
     except: title = "Чат"
     duration = format_citizenship_duration(became_at)
-    await message.reply(f"🏠 {mention(target)}\n🏠 {title}\n⏳ {duration}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"🏠 {mention(target)}\n🏠 {title}\n⏳ {duration}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-гражданство")
@@ -9255,14 +9344,14 @@ async def leave_citizenship_cmd(message: types.Message):
     info = get_citizenship_info(message.from_user.id)
     if not info: return
     remove_citizenship(message.from_user.id)
-    await message.reply("👋 Вы больше не гражданин.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("👋 Вы больше не гражданин.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("кто гражданин")
 async def citizens_list_cmd(message: types.Message):
     citizens = get_chat_citizens(message.chat.id)
     if not citizens:
-        return await message.reply("📭 Нет граждан.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 Нет граждан.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"🏠 <b>Граждане</b> ({len(citizens)}):\n\n"
     for i, (user_id, became_at) in enumerate(citizens, 1):
         try:
@@ -9270,7 +9359,7 @@ async def citizens_list_cmd(message: types.Message):
             name = user_link(user_id, user.first_name, user.username)
         except: name = f"ID: {user_id}"
         text += f"{i}. {name} — {format_citizenship_duration(became_at)}\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= НИК / ЗВАНИЕ / ДЕВИЗ / О СЕБЕ =================
@@ -9282,20 +9371,20 @@ async def set_nick_cmd(message: types.Message):
     nick_html = _extract_html_after(message, idx + len("+ник"))[:300]
     if not nick_html: return
     set_user_nick(message.from_user.id, message.chat.id, nick_html)
-    await message.reply(f"✅ Ник: <b>{nick_html}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"✅ Ник: <b>{nick_html}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-ник")
 async def remove_nick_cmd(message: types.Message):
     remove_user_nick(message.from_user.id, message.chat.id)
-    await message.reply("✅ Ник удалён.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Ник удалён.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("ник")
 async def show_my_nick_cmd(message: types.Message):
     nick = get_user_nick(message.from_user.id, message.chat.id)
-    if not nick: return await message.reply("📭 Нет ника.", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"🔤 {nick}", parse_mode="HTML", disable_web_page_preview=True)
+    if not nick: return await message.reply("📭 Нет ника.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    await message.reply(f"🔤 {nick}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+звание"))
@@ -9306,20 +9395,20 @@ async def set_rank_text_cmd(message: types.Message):
     rank_html = _extract_html_after(message, idx + len("+звание"))[:300]
     if not rank_html: return
     set_user_rank_text(message.from_user.id, message.chat.id, rank_html)
-    await message.reply(f"✅ Звание: <b>{rank_html}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"✅ Звание: <b>{rank_html}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-звание")
 async def remove_rank_text_cmd(message: types.Message):
     remove_user_rank_text(message.from_user.id, message.chat.id)
-    await message.reply("✅ Удалено.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Удалено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("звание")
 async def show_my_rank_text_cmd(message: types.Message):
     rank_text = get_user_rank_text(message.from_user.id, message.chat.id)
-    if not rank_text: return await message.reply("📭 Нет звания.", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"📌 {rank_text}", parse_mode="HTML", disable_web_page_preview=True)
+    if not rank_text: return await message.reply("📭 Нет звания.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    await message.reply(f"📌 {rank_text}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+о себе"))
@@ -9329,20 +9418,20 @@ async def set_about_cmd(message: types.Message):
     if nl_idx == -1: return
     raw_html = _extract_html_after(message, nl_idx + 1)[:500]
     set_user_about(message.from_user.id, raw_html)
-    await message.reply("✅ Сохранено.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Сохранено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-о себе")
 async def remove_about_cmd(message: types.Message):
     remove_user_about(message.from_user.id)
-    await message.reply("✅ Удалено.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Удалено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("о себе")
 async def show_my_about_cmd(message: types.Message):
     text = get_user_about(message.from_user.id)
-    if not text: return await message.reply("📭 Нет описания.", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"✏️ {text}", parse_mode="HTML", disable_web_page_preview=True)
+    if not text: return await message.reply("📭 Нет описания.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    await message.reply(f"✏️ {text}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+девиз"))
@@ -9353,46 +9442,49 @@ async def set_motto_cmd(message: types.Message):
     motto_html = _extract_html_after(message, idx + len("+девиз"))[:500]
     if not motto_html: return
     update_user_profile(message.from_user.id, "motto", motto_html)
-    await message.reply("✅ Девиз установлен.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Девиз установлен.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-девиз")
 async def remove_motto_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "motto", None)
-    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("девиз")
 async def show_motto_cmd(message: types.Message):
     profile = get_user_profile(message.from_user.id)
     motto = profile[6] if len(profile) > 6 else None
-    if not motto: return await message.reply("📭 Нет девиза.", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"💭 {motto}", parse_mode="HTML", disable_web_page_preview=True)
+    if not motto: return await message.reply("📭 Нет девиза.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    await message.reply(f"💭 {motto}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+анкета", "+ анкета"])
 async def show_profile_flag_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "is_hidden", 0)
-    await message.reply("✅ Анкета открыта.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Анкета открыта.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-анкета", "- анкета"])
 async def hide_profile_flag_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "is_hidden", 1)
-    await message.reply("✅ Анкета скрыта.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply("✅ Анкета скрыта.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("моя стата")
 async def my_stats_cmd(message: types.Message):
     try: chart_buf = generate_user_activity_chart(message.from_user.id, days=30)
     except: return
-    if not chart_buf: return await message.reply("📭 Нет данных.", disable_web_page_preview=True)
-    await message.reply_photo(photo=types.BufferedInputFile(chart_buf.getvalue(), filename="my_stats.png"),
-                              caption="📊 Статистика за 30 дней", parse_mode="HTML")
+    if not chart_buf: return await message.reply("📭 Нет данных.", disable_web_page_preview=True, **_reply_kwargs(message))
+    await message.reply_photo(
+        photo=types.BufferedInputFile(chart_buf.getvalue(), filename="my_stats.png"),
+        caption="📊 Статистика за 30 дней", parse_mode="HTML",
+        **_reply_kwargs(message)
+    )
 
 
 # ================= ЕЖЕДНЕВКА =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*ежедневка\b', m.text.strip(), re.IGNORECASE))
+@cmd("ежедневка")
 async def daily_reward_cmd(message: types.Message):
     user_id = message.from_user.id
     today = datetime.now().date().isoformat()
@@ -9400,49 +9492,33 @@ async def daily_reward_cmd(message: types.Message):
         c = conn.cursor()
         c.execute("SELECT 1 FROM daily_rewards WHERE user_id = ? AND date = ?", (user_id, today))
         if c.fetchone():
-            return await message.reply("⏰ Уже получал(а) сегодня. Заходи завтра!", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("⏰ Уже получал(а) сегодня. Заходи завтра!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         c.execute("INSERT INTO daily_rewards (user_id, date) VALUES (?, ?)", (user_id, today))
         conn.commit()
     reward = random.randint(5, 20)
     add_candies(user_id, reward, 0)
-    await message.reply(f"🎁 <b>Ежедневная награда!</b>\n💰 +{reward} 🍬", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"🎁 <b>Ежедневная награда!</b>\n💰 +{reward} 🍬 mos-конфеток", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= VIP =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип\s+цена\s+\d+', m.text.strip(), re.IGNORECASE))
+@cmd("вип цена", allow_args=True, args_pattern=r"^\d+$")
 async def vip_set_price_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 4):
-        return await message.reply(f"{em('cross', '❌')} Нужен ранг 4+.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нужен ранг 4+.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     args = message.text.split()
     if len(args) < 3 or not args[2].isdigit():
-        return await message.reply("📌 <code>.вип цена 150</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.вип цена 150</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     new_price = int(args[2])
     if new_price < 1 or new_price > 100000:
-        return await message.reply("❌ Цена от 1 до 100 000 🍬", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Цена от 1 до 100 000 🍬", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_vip_price(message.chat.id, new_price)
-    await message.reply(f"{em('check', '✅')} Новая цена VIP: <b>{new_price} 🍬</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Новая цена VIP: <b>{new_price} 🍬 mos-конфеток</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип\s+цена\b', m.text.strip(), re.IGNORECASE))
-async def vip_price_info_cmd(message: types.Message):
-    if not await check_command_access(message, "вип"): return
-    price = get_vip_price(message.chat.id)
-    await message.reply(
-        f"💎 <b>Цена VIP</b>\n\n💰 Стоимость: <b>{price} 🍬</b> за 1 месяц\n📅 Максимум: <b>12 месяцев</b>",
-        parse_mode="HTML", disable_web_page_preview=True
-    )
-
-
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*вип(\s+\d+)?\s*$', m.text.strip(), re.IGNORECASE))
+@cmd("вип")
 async def vip_info_cmd(message: types.Message):
     if not await check_command_access(message, "вип"): return
-    args = message.text.split()
     price = get_vip_price(message.chat.id)
-    if len(args) >= 2 and args[1].isdigit():
-        if not has_permission(message.chat.id, message.from_user.id, 4):
-            return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True)
-        set_vip_price(message.chat.id, int(args[1]))
-        return await message.reply(f"{em('check', '✅')} Цена VIP: {args[1]} 🍬", parse_mode="HTML", disable_web_page_preview=True)
     balance = get_balance(message.from_user.id)
     v = get_vip(message.from_user.id)
     already = ""
@@ -9453,14 +9529,14 @@ async def vip_info_cmd(message: types.Message):
         InlineKeyboardButton(text=f"💎 Купить VIP на месяц ({price} 🍬)", callback_data="vip_buy_1m")
     ]])
     await message.reply(
-        f"💎 <b>VIP-статус</b>\n\n💰 Цена: <b>{price}</b> 🍬 / мес\n"
+        f"💎 <b>VIP-статус</b>\n\n💰 Цена: <b>{price}</b> 🍬 mos-конфеток / мес\n"
         f"💼 Баланс: <b>{balance}</b> 🍬"
         f"{already}\n\n"
-        f"📌 <code>.вип цена</code> — подробнее о цене\n"
+        f"📌 <code>.вип цена 150</code> — изменить цену (ранг 4+)\n"
         f"📌 <code>.купить вип [1-12]</code> — купить вручную\n"
         f"📌 <code>.мой вип</code> — твой VIP",
         parse_mode="HTML", disable_web_page_preview=True,
-        reply_markup=kb
+        reply_markup=kb, **_reply_kwargs(message)
     )
 
 
@@ -9472,7 +9548,7 @@ async def vip_buy_callback(callback: types.CallbackQuery):
     balance = get_balance(user_id)
     if balance < price:
         return await callback.answer(
-            f"❌ Недостаточно ирисок.\nНужно: {price} 🍬\nУ тебя: {balance} 🍬",
+            f"❌ Недостаточно mos-конфеток.\nНужно: {price} 🍬\nУ тебя: {balance} 🍬",
             show_alert=True
         )
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -9492,7 +9568,7 @@ async def vip_buy_callback(callback: types.CallbackQuery):
             f"👤 {mention(callback.from_user)}\n"
             f"📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n"
             f"⏳ Осталось: <b>{days_left} дн.</b>\n"
-            f"💰 Списано: <b>{price}</b> 🍬\n"
+            f"💰 Списано: <b>{price}</b> 🍬 mos-конфеток\n"
             f"💼 Осталось: <b>{new_balance}</b> 🍬",
             parse_mode="HTML", disable_web_page_preview=True,
             reply_markup=kb
@@ -9505,7 +9581,7 @@ async def vip_buy_callback(callback: types.CallbackQuery):
     await callback.answer("💎 VIP активирован!")
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*купить\s+вип\b', m.text.strip(), re.IGNORECASE))
+@cmd("купить вип", allow_args=True, args_pattern=r"^\d+$")
 async def buy_vip_cmd(message: types.Message):
     if not await check_command_access(message, "купить вип"): return
     args = message.text.split()
@@ -9516,10 +9592,10 @@ async def buy_vip_cmd(message: types.Message):
             try: target = await bot.get_chat(a)
             except: pass
     if months < 1 or months > 12:
-        return await message.reply("📌 <code>.купить вип [1-12]</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.купить вип 6</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     total = get_vip_price(message.chat.id) * months
     if get_balance(message.from_user.id) < total:
-        return await message.reply(f"❌ Нужно <b>{total}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"❌ Нужно <b>{total}</b> 🍬 mos-конфеток", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (total, message.from_user.id))
@@ -9527,16 +9603,16 @@ async def buy_vip_cmd(message: types.Message):
     new_exp = add_vip_months(target.id, months)
     await message.reply(
         f"💎 <b>VIP активирован!</b>\n\n👤 Кому: {mention(target)}\n📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n💰 -{total} 🍬",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
 @cmd("мой вип")
 async def my_vip_cmd(message: types.Message):
     v = get_vip(message.from_user.id)
-    if not v: return await message.reply("💎 Нет VIP.", parse_mode="HTML", disable_web_page_preview=True)
+    if not v: return await message.reply("💎 Нет VIP.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     days = get_vip_days_left(message.from_user.id)
-    await message.reply(f"💎 <b>Ваш VIP</b>\n📅 Осталось: <b>{days} дн.</b>\n😎 Эмодзи: {v[1] or '—'}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"💎 <b>Ваш VIP</b>\n📅 Осталось: <b>{days} дн.</b>\n😎 Эмодзи: {v[1] or '—'}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+вип эмодзи"))
@@ -9545,68 +9621,69 @@ async def set_vip_emoji_cmd(message: types.Message):
     args = message.text.split(maxsplit=2)
     if len(args) < 3: return
     set_vip_emoji(message.from_user.id, args[2].strip()[:10])
-    await message.reply(f"{em('check', '✅')} Эмодзи: {args[2].strip()[:10]}", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Эмодзи: {args[2].strip()[:10]}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-вип эмодзи")
 async def remove_vip_emoji_cmd(message: types.Message):
     if not get_vip(message.from_user.id): return
     set_vip_emoji(message.from_user.id, None)
-    await message.reply("✅ Убран.", parse_mode="HTML", disable_web_page_preview=True)# ================= ЗАМЕТКИ =================
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("+заметка "))
+    await message.reply("✅ Убран.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))# ================= ЗАМЕТКИ =================
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+заметка\s+\S+', m.text.strip(), re.IGNORECASE))
 async def create_note_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 3): return
     parts = message.text.split("\n", 1)
-    name = parts[0].replace("+Заметка", "").replace("+заметка", "").strip()
-    if not name or len(parts) < 2:
+    first_line = parts[0]
+    name_raw = re.sub(r'^[.\/!+-]?\s*\+заметка\s+', '', first_line, count=1, flags=re.IGNORECASE).strip()
+    if not name_raw or len(parts) < 2:
         return await message.reply(
             "📌 <b>Формат:</b>\n"
             "<code>+заметка Название\nТекст заметки</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
-    name = name[:60]
+    name = name_raw[:60]
 
     nl_idx = message.text.find("\n")
     body_html = _extract_html_after(message, nl_idx + 1)[:3500]
 
     cleaned_body = body_html
     if not cleaned_body.strip():
-        return await message.reply("❌ Текст заметки пустой.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Текст заметки пустой.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     note_id = add_note(message.chat.id, name, cleaned_body, message.from_user.id)
     if not note_id:
-        return await message.reply(f"{em('cross', '❌')} Заметка с таким названием уже есть.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Заметка с таким названием уже есть.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     await message.reply(
         f"{em('check', '✅')} Заметка <b>{html_escape_text(name)}</b> создана (ID: <code>{note_id}</code>)",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip().startswith("-заметка "))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*-заметка\s+\S+', m.text.strip(), re.IGNORECASE))
 async def delete_note_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 3): return
-    arg = message.text[len("-Заметка"):].strip()
+    arg = re.sub(r'^[.\/!+-]?\s*-заметка\s+', '', message.text.strip(), count=1, flags=re.IGNORECASE).strip()
     if not arg: return
     note = get_note_by_number(message.chat.id, int(arg)) if arg.isdigit() else get_note_by_name(message.chat.id, arg)
     if not note:
-        return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Не найдена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     delete_note(message.chat.id, note[0])
-    await message.reply(f"{em('check', '✅')} Удалена.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Удалена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("заметки")
 async def list_notes_cmd(message: types.Message):
     notes = get_all_notes(message.chat.id)
     if not notes:
-        return await message.reply("📭 Нет заметок.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 Нет заметок.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"📋 <b>Заметки</b> ({len(notes)})\n\n"
     for i, (nid, name) in enumerate(notes, 1):
         text += f"<b>{i}.</b> {html_escape_text(name)}\n"
     text += f"\n📌 Открыть: <code>Заметка название</code> или <code>Заметка 1</code>"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@cmd("заметка")
+@cmd("заметка", allow_args=True, args_pattern=r"^.+$")
 async def get_note_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
@@ -9614,43 +9691,43 @@ async def get_note_cmd(message: types.Message):
             "📌 <b>Формат:</b>\n"
             "• <code>Заметка Название</code>\n"
             "• <code>Заметка 1</code> — по номеру",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     arg = args[1].strip()
     note = get_note_by_number(message.chat.id, int(arg)) if arg.isdigit() else get_note_by_name(message.chat.id, arg)
     if not note:
-        return await message.reply(f"{em('cross', '❌')} Заметка не найдена.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Заметка не найдена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     note_id, note_name, note_text = note[0], note[1], note[2]
     out = f"📌 <b>Заметка «{html_escape_text(note_name)}»</b>\n\n{note_text}"
 
     try:
-        await message.reply(out, parse_mode="HTML", disable_web_page_preview=True)
+        await message.reply(out, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
         await message.reply(
             f"📌 Заметка «{note_name}»\n\n{re.sub(r'<[^>]+>', '', note_text)}",
-            disable_web_page_preview=True
+            disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
 
 # ================= СЕТКА =================
-@cmd("создать сетку")
+@cmd("создать сетку", allow_args=True, args_pattern=r"^.+$")
 async def create_grid_cmd(message: types.Message):
     if message.chat.type != "private":
-        return await message.reply("⚠️ Только в ЛС с ботом.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только в ЛС с ботом.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        return await message.reply(f"{em('cross', '❌')} Только владелец или совладелец бота.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Только владелец или совладелец бота.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
-        return await message.reply("📌 <code>.создать сетку Название</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.создать сетку Название</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     name = args[2].strip().replace(" ", "_")[:24]
     grid_id = create_grid(name, message.from_user.id)
     if not grid_id:
-        return await message.reply("❌ Сетка с таким именем уже есть.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Сетка с таким именем уже есть.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     await message.reply(
         f"{em('check', '✅')} <b>Сетка создана!</b>\n\n🕸 Название: <b>{name}</b>\n🆔 ID: <code>{grid_id}</code>\n\n"
         f"📌 Теперь в каждом чате напишите: <code>сетка {name}</code>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -9658,10 +9735,10 @@ async def create_grid_cmd(message: types.Message):
 async def list_grid_chats(message: types.Message):
     grid_id = get_chat_grid(message.chat.id)
     if not grid_id:
-        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     chats = get_grid_chats(grid_id, include_hidden=False)
     if not chats:
-        return await message.reply("📭 В сетке нет чатов.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 В сетке нет чатов.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT name FROM grids WHERE id = ?", (grid_id,))
@@ -9686,14 +9763,14 @@ async def list_grid_chats(message: types.Message):
                 text += f"{i}. <b>{title}</b> <i>(без ссылки)</i>\n"
         except Exception as e:
             text += f"{i}. <code>{chat_id}</code> <i>(нет доступа)</i>\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= +ЧАТ / -ЧАТ =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+чат\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+чат\b', m.text.strip(), re.IGNORECASE))
 async def open_chat_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     has_rights = (
         message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
         or has_agent_rank(message.from_user.id, 1)
@@ -9701,15 +9778,15 @@ async def open_chat_cmd(message: types.Message):
         or has_permission(message.chat.id, message.from_user.id, 3)
     )
     if not has_rights:
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         bm = await bot.get_chat_member(message.chat.id, bot.id)
         if bm.status not in ["administrator", "creator"]:
-            return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if bm.status == "administrator" and not getattr(bm, "can_change_info", False):
-            return await message.reply(f"{em('cross', '❌')} Нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         await bot.set_chat_permissions(
             chat_id=message.chat.id,
@@ -9721,14 +9798,14 @@ async def open_chat_cmd(message: types.Message):
             )
         )
     except Exception as e:
-        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"{em('check', '✅')} <b>Чат открыт</b> для общения!\n👮 {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    await message.reply(f"{em('check', '✅')} <b>Чат открыт</b> для общения!\n👮 {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-чат\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*-чат\b', m.text.strip(), re.IGNORECASE))
 async def close_chat_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
-        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     has_rights = (
         message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
         or has_agent_rank(message.from_user.id, 1)
@@ -9736,15 +9813,15 @@ async def close_chat_cmd(message: types.Message):
         or has_permission(message.chat.id, message.from_user.id, 3)
     )
     if not has_rights:
-        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Недостаточно прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         bm = await bot.get_chat_member(message.chat.id, bot.id)
         if bm.status not in ["administrator", "creator"]:
-            return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Я не админ здесь.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if bm.status == "administrator" and not getattr(bm, "can_change_info", False):
-            return await message.reply(f"{em('cross', '❌')} Нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нет права «Изменение настроек чата».", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         await bot.set_chat_permissions(
             chat_id=message.chat.id,
@@ -9756,16 +9833,16 @@ async def close_chat_cmd(message: types.Message):
             )
         )
     except Exception as e:
-        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply(f"{em('cross', '❌')} <b>Чат закрыт</b> для общения!\n👮 {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} {e}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    await message.reply(f"{em('cross', '❌')} <b>Чат закрыт</b> для общения!\n👮 {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= СЕТКА — РОУТЕР =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*сетка\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*сетка\b', m.text.strip(), re.IGNORECASE))
 async def grid_command_router(message: types.Message):
     if message.chat.type == "private":
-        return await message.reply("⚠️ Команды сетки работают только в группе.", parse_mode="HTML", disable_web_page_preview=True)
-    raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
+        return await message.reply("⚠️ Команды сетки работают только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    raw = re.sub(r'^[.\/!+-]\s*', '', message.text.strip())
     parts = raw.split()
     if len(parts) < 2:
         return await message.reply(
@@ -9778,13 +9855,13 @@ async def grid_command_router(message: types.Message):
             "• <code>сетка повысить @user 2</code>\n"
             "• <code>сетка понизить @user 1</code>\n"
             "• <code>сетка -чат</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     action = parts[1].lower()
     if action in ["инфо", "info"]:
         grid_id = get_chat_grid(message.chat.id)
         if not grid_id:
-            return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT name, creator_id FROM grids WHERE id = ?", (grid_id,))
@@ -9806,7 +9883,7 @@ async def grid_command_router(message: types.Message):
                 except: name = f"<code>{uid}</code>"
                 badge = "👑" if is_admin else "🛡"
                 text += f"{badge} {name} — ранг {rank}\n"
-        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     known_actions = ["+админ", "+админка", "+adm", "-админ", "-админка", "-adm",
                      "разжаловать", "снять", "повысить", "понизить", "-чат"]
@@ -9821,7 +9898,7 @@ async def grid_command_router(message: types.Message):
                 cur_name = g[0] if g else "?"
             return await message.reply(
                 f"ℹ️ Чат уже привязан к сетке <b>{cur_name}</b> (#{existing_grid}).\n📌 Отвязать: <code>сетка -чат</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
         is_creator_of_chat = False
         try:
@@ -9833,22 +9910,22 @@ async def grid_command_router(message: types.Message):
         if grid_lookup and is_grid_moderator(grid_lookup[0], message.from_user.id, 5):
             has_rights = True
         if not has_rights:
-            return await message.reply(f"{em('cross', '❌')} Только создатель чата или владелец сетки.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Только создатель чата или владелец сетки.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if not grid_lookup:
             return await message.reply(
                 f"{em('cross', '❌')} Сетка <b>{grid_name}</b> не найдена.\n\n📌 Создать: <code>.создать сетку {grid_name}</code>",
-                parse_mode="HTML", disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
         grid_id, grid_db_name = grid_lookup
         add_chat_to_grid(grid_id, message.chat.id, hidden=0)
         return await message.reply(
             f"{em('check', '✅')} <b>Чат привязан к сетке!</b>\n\n🕸 Название: <b>{grid_db_name}</b>\n🆔 ID: <code>{grid_id}</code>\n👮 Сделал: {mention(message.from_user)}",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     grid_id = get_chat_grid(message.chat.id)
     if not grid_id:
-        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Чат не привязан к сетке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     actor_id = message.from_user.id
     chats = get_grid_chats(grid_id, include_hidden=True)
 
@@ -9864,10 +9941,10 @@ async def grid_command_router(message: types.Message):
 
     if action in ["+админ", "+админка", "+adm"]:
         if actor_id != OWNER_ID and not is_coowner(actor_id) and not is_grid_moderator(grid_id, actor_id, 5):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         target, _ = await resolve_target(message)
         if not target:
-            return await message.reply("📌 <code>сетка +админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📌 <code>сетка +админ @user</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if target.id == OWNER_ID: return
         added_to = 0; failed = 0
         for chat_id, hidden, desc in chats:
@@ -9891,15 +9968,15 @@ async def grid_command_router(message: types.Message):
         return await message.reply(
             f"{em('check', '✅')} {mention(target)} — <b>ТГ-админ</b> в <b>{added_to}/{len(chats)}</b> чатах.\n"
             f"⚠️ Ошибок: {failed}\n📢 Уведомлений: {sent}/{len(chats)}",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     if action in ["-админ", "-админка", "-adm"]:
         if actor_id != OWNER_ID and not is_coowner(actor_id) and not is_grid_moderator(grid_id, actor_id, 5):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 5 в сетке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         target, _ = await resolve_target(message)
         if not target:
-            return await message.reply("📌 <code>сетка -админ @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📌 <code>сетка -админ @user</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if target.id == OWNER_ID: return
         removed_from = 0
         failed = 0
@@ -9938,14 +10015,14 @@ async def grid_command_router(message: types.Message):
         )
         if errors_log:
             result_text += f"\n\n<b>Первая ошибка:</b>\n<code>{errors_log[0][:200]}</code>"
-        return await message.reply(result_text, parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(result_text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if action in ["разжаловать", "снять"]:
         if actor_id != OWNER_ID and not is_coowner(actor_id) and not is_grid_moderator(grid_id, actor_id, 3):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 3.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 3.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         target, _ = await resolve_target(message)
         if not target:
-            return await message.reply("📌 <code>сетка разжаловать @user</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📌 <code>сетка разжаловать @user</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if target.id == OWNER_ID: return
         removed_from = 0
         for chat_id, hidden, desc in chats:
@@ -9969,15 +10046,15 @@ async def grid_command_router(message: types.Message):
         sent = await notify_all_chats(notify_text)
         return await message.reply(
             f"{em('cross', '❌')} {mention(target)} <b>разжалован</b> в {removed_from}/{len(chats)} чатах.\n📢 Уведомлений: {sent}/{len(chats)}",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     if action in ["повысить"]:
         if actor_id != OWNER_ID and not is_coowner(actor_id) and not is_grid_moderator(grid_id, actor_id, 4):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         target, _ = await resolve_target(message)
         if not target:
-            return await message.reply("📌 <code>сетка повысить @user 2</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📌 <code>сетка повысить @user 2</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if target.id == OWNER_ID: return
         new_rank = 1
         for p in parts:
@@ -9995,15 +10072,15 @@ async def grid_command_router(message: types.Message):
         sent = await notify_all_chats(notify_text)
         return await message.reply(
             f"🏆 {mention(target)} повышен до ранга <b>{new_rank}</b>\n📢 Уведомлений: {sent}/{len(chats)}",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     if action in ["понизить"]:
         if actor_id != OWNER_ID and not is_coowner(actor_id) and not is_grid_moderator(grid_id, actor_id, 4):
-            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Нужен ранг 4.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         target, _ = await resolve_target(message)
         if not target:
-            return await message.reply("📌 <code>сетка понизить @user 1</code>", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply("📌 <code>сетка понизить @user 1</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if target.id == OWNER_ID: return
         new_rank = 1
         for p in parts:
@@ -10021,7 +10098,7 @@ async def grid_command_router(message: types.Message):
         sent = await notify_all_chats(notify_text)
         return await message.reply(
             f"📉 {mention(target)} понижен до ранга <b>{new_rank}</b>\n📢 Уведомлений: {sent}/{len(chats)}",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
     if action in ["-чат"]:
@@ -10031,7 +10108,7 @@ async def grid_command_router(message: types.Message):
             is_creator_of_chat = (m.status == "creator")
         except: pass
         if not (actor_id == OWNER_ID or is_coowner(actor_id) or is_creator_of_chat or is_grid_moderator(grid_id, actor_id, 5)):
-            return await message.reply(f"{em('cross', '❌')} Только создатель чата или владелец сетки.", parse_mode="HTML", disable_web_page_preview=True)
+            return await message.reply(f"{em('cross', '❌')} Только создатель чата или владелец сетки.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
             c.execute("SELECT name FROM grids WHERE id = ?", (grid_id,))
@@ -10041,12 +10118,12 @@ async def grid_command_router(message: types.Message):
             conn.commit()
         return await message.reply(
             f"{em('check', '✅')} <b>Чат отвязан от сетки</b>\n\n🕸 Было: <b>{grid_name}</b>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )# ================= БРАКИ =================
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак(\s|$)', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*брак(\s|$)', m.text.strip(), re.IGNORECASE))
 async def marriage_router(message: types.Message):
     txt = message.text.strip()
-    txt = re.sub(r'^[.\/!]\s*', '', txt)
+    txt = re.sub(r'^[.\/!+-]\s*', '', txt)
     rest = re.sub(r'^брак\s*', '', txt, count=1, flags=re.IGNORECASE).strip()
     if rest.lower().startswith("цена продления"):
         return await set_marriage_price_cmd(message)
@@ -10063,7 +10140,7 @@ async def marriage_router(message: types.Message):
                 try:
                     target = await bot.get_chat(w); break
                 except:
-                    return await message.reply(f"{em('cross', '❌')} Пользователь <code>{w}</code> не найден.", parse_mode="HTML", disable_web_page_preview=True)
+                    return await message.reply(f"{em('cross', '❌')} Пользователь <code>{w}</code> не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
             if w.isdigit():
                 try:
                     target = await bot.get_chat(int(w)); break
@@ -10071,20 +10148,20 @@ async def marriage_router(message: types.Message):
     if not target:
         return await message.reply(
             "💍 <b>Как жениться:</b>\n\n• Ответь на сообщение юзера: <code>брак</code>\n• Или: <code>брак @username</code>",
-            parse_mode="HTML", disable_web_page_preview=True
+            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     if target.id == message.from_user.id:
-        return await message.reply(f"{em('cross', '❌')} На себя нельзя.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} На себя нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if target.is_bot:
-        return await message.reply(f"{em('cross', '❌')} Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if get_marriage(message.chat.id, message.from_user.id):
-        return await message.reply(f"{em('cross', '❌')} Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ты уже в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if get_marriage(message.chat.id, target.id):
-        return await message.reply(f"{em('cross', '❌')} {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} {mention(target)} уже в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     div = get_divorced_marriage(message.chat.id, message.from_user.id)
     if div:
         restore_marriage(div[0])
-        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("💞 <b>Брак восстановлен!</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     add_proposal(message.chat.id, message.from_user.id, target.id)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="💍 Принять", callback_data=f"marry_accept:{message.from_user.id}:{target.id}:{message.chat.id}"),
@@ -10092,7 +10169,8 @@ async def marriage_router(message: types.Message):
     ]])
     await message.reply(
         f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
-        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb,
+        **_reply_kwargs(message)
     )
 
 
@@ -10133,11 +10211,11 @@ async def marriage_response(callback: types.CallbackQuery):
         await callback.answer("❌ Отказано.")
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*развод\b', m.text.strip(), re.IGNORECASE))
+@cmd("развод")
 async def divorce_cmd(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
     if not mar:
-        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
     partner_id = u2_id if u1_id == message.from_user.id else u1_id
     partner_name = u2_name if u1_id == message.from_user.id else u1_name
@@ -10145,7 +10223,7 @@ async def divorce_cmd(message: types.Message):
     divorce_marriage(message.chat.id, message.from_user.id)
     await message.reply(
         f"💔 {mention(message.from_user)} и {mention_by_id(partner_id, partner_name)} развелись.\n📅 Длился: <b>{duration}</b>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -10154,18 +10232,18 @@ async def divorce_cmd(message: types.Message):
 async def my_marriage_cmd(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
     if not mar:
-        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
     partner_id = u2_id if u1_id == message.from_user.id else u1_id
     partner_name = u2_name if u1_id == message.from_user.id else u1_name
     duration = format_marriage_duration(married_at, extra or 0)
     await message.reply(
         f"💍 <b>Ваш брак</b>\n\n👫 {mention(message.from_user)} 💞 {mention_by_id(partner_id, partner_name)}\n📅 {married_at[:10]}\n⏳ Вместе: <b>{duration}</b>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@cmd("твой брак")
+@cmd("твой брак", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def user_marriage_cmd(message: types.Message):
     target = None
     if message.reply_to_message:
@@ -10178,17 +10256,17 @@ async def user_marriage_cmd(message: types.Message):
                 elif args[1].isdigit(): target = await bot.get_chat(int(args[1]))
             except: pass
     if not target:
-        return await message.reply("📌 <b>Формат:</b>\n• <code>твой брак @user</code>\n• Ответом на сообщение", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <b>Формат:</b>\n• <code>твой брак @user</code>\n• Ответом на сообщение", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     mar = get_marriage(message.chat.id, target.id)
     if not mar:
-        return await message.reply(f"💔 {mention(target)} не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"💔 {mention(target)} не в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     _, u1_id, u2_id, u1_name, u2_name, married_at, _, _, _, extra = mar
     partner_id = u2_id if u1_id == target.id else u1_id
     partner_name = u2_name if u1_id == target.id else u1_name
     duration = format_marriage_duration(married_at, extra or 0)
     await message.reply(
         f"💍 <b>Брак {mention(target)}</b>\n\n👫 {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)}\n📅 {married_at[:10]}\n⏳ Вместе: <b>{duration}</b>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
@@ -10196,49 +10274,49 @@ async def user_marriage_cmd(message: types.Message):
 async def marriages_list_cmd(message: types.Message):
     pairs = get_all_marriages(message.chat.id)
     if not pairs:
-        return await message.reply("📭 В этом чате пока нет браков.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 В этом чате пока нет браков.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = "💍 <b>Браки в этом чате:</b>\n\n"
     for i, (u1_id, u1_name, u2_id, u2_name, married_at, extra) in enumerate(pairs, 1):
         duration = format_marriage_duration(married_at, extra or 0)
         text += f"{i}. {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)} — <i>{duration}</i>\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак\s+цена\s+продления\s+\d+', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*брак\s+цена\s+продления\s+\d+', m.text.strip(), re.IGNORECASE))
 async def set_marriage_price_cmd(message: types.Message):
     if not await check_command_access(message, "брак"): return
     args = message.text.split()
     price = int(args[-1])
     if price < 1 or price > 10000:
-        return await message.reply("❌ Цена от 1 до 10000 🍬", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Цена от 1 до 10000 🍬", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_marriage_price(message.chat.id, price)
-    await message.reply(f"{em('check', '✅')} Цена продления брака: <b>{price} 🍬</b> за 1 день.", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Цена продления брака: <b>{price} 🍬</b> за 1 день.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак\s+продлить\s+\d+', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*брак\s+продлить\s+\d+', m.text.strip(), re.IGNORECASE))
 async def prolong_marriage_cmd(message: types.Message):
     if not await check_command_access(message, "брак"): return
     mar = get_marriage(message.chat.id, message.from_user.id)
     if not mar:
-        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     args = message.text.split()
     days = int(args[-1])
     if days < 1 or days > 365:
-        return await message.reply("❌ Дней от 1 до 365", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Дней от 1 до 365", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     settings = get_marriage_settings(message.chat.id)
     price_per_day = settings[0]
     total_cost = price_per_day * days
     if get_balance(message.from_user.id) < total_cost:
-        return await message.reply(f"❌ Нужно <b>{total_cost}</b> 🍬 (по {price_per_day} за день).", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"❌ Нужно <b>{total_cost}</b> 🍬 (по {price_per_day} за день).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (total_cost, message.from_user.id))
         conn.commit()
     add_marriage_days(message.chat.id, message.from_user.id, days)
-    await message.reply(f"{em('check', '✅')} Брак продлён на <b>{days} дн.</b>\n💰 Списано: <b>{total_cost}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Брак продлён на <b>{days} дн.</b>\n💰 Списано: <b>{total_cost}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак\s+режим\s+развода', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*брак\s+режим\s+развода', m.text.strip(), re.IGNORECASE))
 async def set_divorce_mode_cmd(message: types.Message):
     if not await check_command_access(message, "брак"): return
     args = message.text.split(maxsplit=3)
@@ -10247,24 +10325,24 @@ async def set_divorce_mode_cmd(message: types.Message):
     current_mode = settings[1]
     if mode in ["выключить", "off"]:
         set_divorce_mode(message.chat.id, "выключить")
-        return await message.reply(f"{em('check', '✅')} Автоматическое расторжение браков <b>отключено</b>.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Автоматическое расторжение браков <b>отключено</b>.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if mode == "один":
         set_divorce_mode(message.chat.id, "один")
-        return await message.reply(f"{em('check', '✅')} Режим: брак расторгается, если <b>один</b> из супругов выйдет.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Режим: брак расторгается, если <b>один</b> из супругов выйдет.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if mode == "оба":
         set_divorce_mode(message.chat.id, "оба")
-        return await message.reply(f"{em('check', '✅')} Режим: брак расторгается, если <b>оба</b> супруга выйдут.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('check', '✅')} Режим: брак расторгается, если <b>оба</b> супруга выйдут.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     mode_names = {"выключить": "❌ Выключено", "один": "👤 Один", "оба": "👥 Оба"}
     await message.reply(
         f"💔 <b>Режим развода</b>\n\nТекущий: <b>{mode_names.get(current_mode, current_mode)}</b>\n\n"
         f"<code>брак режим развода выключить</code>\n"
         f"<code>брак режим развода один</code>\n"
         f"<code>брак режим развода оба</code>",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*поженить\s+пару\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*поженить\s+пару\b', m.text.strip(), re.IGNORECASE))
 async def force_marry_cmd(message: types.Message):
     if not await check_command_access(message, "поженить пару"): return
     args = message.text.split()
@@ -10283,19 +10361,19 @@ async def force_marry_cmd(message: types.Message):
                 elif not target2: target2 = user
             except: pass
     if not target1 or not target2:
-        return await message.reply("📌 <code>.поженить пару @user1 @user2</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.поженить пару @user1 @user2</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if target1.id == target2.id:
-        return await message.reply("❌ Нельзя поженить одного и того же.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Нельзя поженить одного и того же.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if get_marriage(message.chat.id, target1.id) or get_marriage(message.chat.id, target2.id):
-        return await message.reply("❌ Кто-то уже в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Кто-то уже в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     create_marriage(message.chat.id, target1.id, target1.first_name, target2.id, target2.first_name)
     await message.reply(
         f"💍💐 <b>Свадьба!</b>\n\n{mention(target1)} и {mention(target2)} теперь в браке!\n👮 Сделал: {mention(message.from_user)}",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*развести\s+пару\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*развести\s+пару\b', m.text.strip(), re.IGNORECASE))
 async def force_divorce_cmd(message: types.Message):
     if not await check_command_access(message, "развести пару"): return
     args = message.text.split()
@@ -10314,31 +10392,31 @@ async def force_divorce_cmd(message: types.Message):
                 elif not target2: target2 = user
             except: pass
     if not target1 or not target2:
-        return await message.reply("📌 <code>.развести пару @user1 @user2</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <code>.развести пару @user1 @user2</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     mar = get_marriage_by_users(message.chat.id, target1.id, target2.id)
     if not mar:
-        return await message.reply("❌ Эти пользователи не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Эти пользователи не в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     divorce_marriage(message.chat.id, target1.id)
     await message.reply(
         f"💔 {mention(target1)} и {mention(target2)} разведены.\n👮 Сделал: {mention(message.from_user)}",
-        parse_mode="HTML", disable_web_page_preview=True
+        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip() in ["!сброс браков", "сброс браков"])
+@dp.message(lambda m: m.text and re.sub(r'^[.\/!+-]\s*', '', m.text.strip().lower()) in ["сброс браков"])
 async def reset_marriages_cmd(message: types.Message):
     if not await check_command_access(message, "сброс браков"): return
     count = reset_all_marriages(message.chat.id)
-    await message.reply(f"{em('check', '✅')} Сброшено браков: <b>{count}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Сброшено браков: <b>{count}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and m.text.lower().strip() in ["!развести вышедших", "развести вышедших"])
+@dp.message(lambda m: m.text and re.sub(r'^[.\/!+-]\s*', '', m.text.strip().lower()) in ["развести вышедших"])
 async def divorce_left_cmd(message: types.Message):
     if not await check_command_access(message, "развести вышедших"): return
     settings = get_marriage_settings(message.chat.id)
     mode = settings[1]
     if mode == "выключить":
-        return await message.reply("❌ Режим развода выключен.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("❌ Режим развода выключен.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     pairs = get_all_marriages(message.chat.id)
     divorced_count = 0
     for u1_id, u1_name, u2_id, u2_name, married_at, extra in pairs:
@@ -10354,55 +10432,55 @@ async def divorce_left_cmd(message: types.Message):
                 divorce_marriage(message.chat.id, u1_id)
                 divorced_count += 1
         except: pass
-    await message.reply(f"{em('check', '✅')} Разведено пар: <b>{divorced_count}</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Разведено пар: <b>{divorced_count}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*топ\s+браков\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*топ\s+браков\b', m.text.strip(), re.IGNORECASE))
 async def marriage_top_cmd(message: types.Message):
     if not await check_command_access(message, "топ браков"): return
     pairs = get_top_marriages(message.chat.id)
     if not pairs:
-        return await message.reply("📭 Топ браков пуст. Добавьте свой брак в топ: <code>+брак рейтинг</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📭 Топ браков пуст. Добавьте свой брак в топ: <code>+брак рейтинг</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = "🏆 <b>Топ браков:</b>\n\n"
     medals = ["🥇", "🥈", "🥉"]
     for i, (u1_id, u1_name, u2_id, u2_name, married_at, extra) in enumerate(pairs, 1):
         duration = format_marriage_duration(married_at, extra or 0)
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {mention_by_id(u1_id, u1_name)} 💞 {mention_by_id(u2_id, u2_name)} — <i>{duration}</i>\n"
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+брак рейтинг"])
 async def add_marriage_to_top_cmd(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
     if not mar:
-        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if mar[8] == 1:
-        return await message.reply("ℹ️ Твой брак уже в топе.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Твой брак уже в топе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_marriage_top_status(message.chat.id, message.from_user.id, True)
-    await message.reply(f"{em('check', '✅')} Твой брак добавлен в топ!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Твой брак добавлен в топ!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-брак рейтинг"])
 async def remove_marriage_from_top_cmd(message: types.Message):
     mar = get_marriage(message.chat.id, message.from_user.id)
     if not mar:
-        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("💔 Ты не в браке.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if mar[8] == 0:
-        return await message.reply("ℹ️ Твоего брака нет в топе.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("ℹ️ Твоего брака нет в топе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_marriage_top_status(message.chat.id, message.from_user.id, False)
-    await message.reply(f"{em('check', '✅')} Твой брак удалён из топа!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} Твой брак удалён из топа!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= РЕПОРТЫ =================
-REPORT_COMMAND_RE = re.compile(r'^[.!\/]\s*репорт\b', re.IGNORECASE)
+REPORT_COMMAND_RE = re.compile(r'^[.!\/+-]\s*репорт\b', re.IGNORECASE)
 
 
 @dp.message(lambda m: m.text and REPORT_COMMAND_RE.match(m.text.strip()))
 async def report_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     if not message.reply_to_message:
-        return await message.reply(f"{em('cross', '❌')} Ответьте на сообщение.\n📌 <code>.репорт [причина]</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Ответьте на сообщение.\n📌 <code>.репорт [причина]</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target_msg = message.reply_to_message
     target = target_msg.from_user
     if target.id == bot.id or target.id == message.from_user.id or target.is_bot: return
@@ -10426,7 +10504,7 @@ async def report_cmd(message: types.Message):
             sent = await bot.send_message(report_chat_id, header, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb, reply_to_message_id=fwd.message_id)
             set_report_forward_message(report_id, sent.message_id)
         except: pass
-    await message.reply(f"✅ Жалоба отправлена. Спасибо!", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"✅ Жалоба отправлена. Спасибо!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("report_done:"))
@@ -10440,7 +10518,7 @@ async def report_done_handler(callback: types.CallbackQuery):
     await callback.answer("✅ Проверен")
 
 
-@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+репорты\b', m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+репорты\b', m.text.strip(), re.IGNORECASE))
 async def set_report_chat_cmd(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -10448,12 +10526,12 @@ async def set_report_chat_cmd(message: types.Message):
         return
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
-        return await message.reply("📌 <b>Формат:</b>\n<code>+репорты КОДЧАТА</code>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("📌 <b>Формат:</b>\n<code>+репорты КОДЧАТА</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     report_chat_id = get_chat_by_code(args[1].strip().upper())
     if not report_chat_id:
-        return await message.reply(f"{em('cross', '❌')} Чат с таким кодом не найден.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Чат с таким кодом не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_report_chat(chat_id, report_chat_id, user_id)
-    await message.reply(f"{em('check', '✅')} <b>Репорты привязаны!</b>", parse_mode="HTML", disable_web_page_preview=True)
+    await message.reply(f"{em('check', '✅')} <b>Репорты привязаны!</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= БЭКАП / ИМПОРТ =================
@@ -10463,23 +10541,23 @@ async def backup_cmd(message: types.Message):
     try:
         with open(DATABASE_PATH, "rb") as f:
             data = f.read()
-        await message.reply_document(types.BufferedInputFile(data, filename=f"bot_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"), caption="💾 Бэкап")
+        await message.reply_document(types.BufferedInputFile(data, filename=f"bot_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"), caption="💾 Бэкап", **_reply_kwargs(message))
     except Exception as e:
-        await message.reply(f"❌ {e}", disable_web_page_preview=True)
+        await message.reply(f"❌ {e}", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-@dp.message(lambda m: m.text and m.text.strip().lower() in [".импорт", "/импорт", "!импорт"])
+@dp.message(lambda m: m.text and re.sub(r'^[.\/!+-]\s*', '', m.text.strip().lower()) == "импорт")
 async def import_db_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
         return
     if not message.reply_to_message or not message.reply_to_message.document:
-        return await message.reply(f"{em('cross', '❌')} <b>Ответьте на .db файл командой .импорт</b>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} <b>Ответьте на .db файл командой .импорт</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     doc = message.reply_to_message.document
     if not doc.file_name.lower().endswith(".db"):
-        return await message.reply(f"{em('cross', '❌')} Только <code>.db</code>.", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(f"{em('cross', '❌')} Только <code>.db</code>.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if doc.file_size and doc.file_size > 20 * 1024 * 1024:
-        return await message.reply(f"{em('cross', '❌')} Файл больше 20 МБ.", parse_mode="HTML", disable_web_page_preview=True)
-    status_msg = await message.reply("📥 Скачиваю...")
+        return await message.reply(f"{em('cross', '❌')} Файл больше 20 МБ.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    status_msg = await message.reply("📥 Скачиваю...", **_reply_kwargs(message))
     temp_path = f"temp_import_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
     try:
         file = await bot.get_file(doc.file_id)
@@ -10936,21 +11014,72 @@ async def on_join_request(request: types.ChatJoinRequest):
 
 @dp.message(Command("my_bans"))
 async def my_bans_cmd(message: types.Message):
-    if message.chat.type != "private": return
-    user_id = message.from_user.id
+    # Только в личке с ботом
+    if message.chat.type != "private":
+        return await message.reply(
+            "🔒 Команда доступна <b>только в личных сообщениях</b> с ботом.\n"
+            "📌 Напиши мне в ЛС: <code>/my_bans</code>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    user_id = message.from_user.id  # всегда только свои
+
     bans = []
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("SELECT reason, banned_at FROM chat_bans WHERE user_id = ? AND (until_date IS NULL OR until_date > ?)",
-                  (user_id, datetime.now().isoformat()))
-        for reason, banned_at in c.fetchall():
-            bans.append(f"🚫 {reason} ({_fmt_added_dt(banned_at)})")
+        c.execute("""SELECT chat_id, reason, banned_at, until_date 
+                     FROM chat_bans WHERE user_id = ? 
+                     ORDER BY banned_at DESC LIMIT 50""", (user_id,))
+        rows = c.fetchall()
+
+    for chat_id, reason, banned_at, until_date in rows:
+        status = ""
+        if until_date:
+            try:
+                until_dt = datetime.fromisoformat(until_date.replace("Z", ""))
+                if until_dt > datetime.now():
+                    dur = int((until_dt - datetime.now()).total_seconds())
+                    if dur >= 86400:
+                        status = f"ещё {dur // 86400} дн."
+                    elif dur >= 3600:
+                        status = f"ещё {dur // 3600} ч."
+                    elif dur >= 60:
+                        status = f"ещё {dur // 60} мин."
+                    else:
+                        status = f"ещё {dur} сек."
+                else:
+                    status = "истёк"
+            except:
+                status = ""
+        else:
+            status = "навсегда"
+
+        try:
+            chat = await bot.get_chat(chat_id)
+            chat_title = chat.title or f"Чат {chat_id}"
+        except:
+            chat_title = f"Чат {chat_id}"
+
+        bans.append(
+            f"🚫 <b>{html_escape_text(chat_title)}</b>\n"
+            f"   📝 <i>{html_escape_text(reason or 'без причины')}</i>\n"
+            f"   🗓 {_fmt_added_dt(banned_at)} · ⏱ {status}"
+        )
+
     if is_in_antispam(user_id):
         info = get_antispam_info(user_id)
-        bans.append(f"☢️ Антиспам: {info[0] if info else '?'}")
+        reason = info[0] if info else "?"
+        bans.append(f"\n☢️ <b>Антиспам:</b> <i>{html_escape_text(reason)}</i>")
+
     if not bans:
-        return await message.reply("✅ У вас нет банов.", parse_mode="HTML", disable_web_page_preview=True)
-    await message.reply("📋 <b>Ваши баны:</b>\n\n" + "\n".join(bans), parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply(
+            "✅ <b>У вас нет банов.</b>\n\n🎉 Всё чисто!",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    text = f"📋 <b>Ваши наказания</b>\n\n" + "\n\n".join(bans)
+    text += f"\n\n💬 <i>Если считаешь наказание несправедливым — напиши в поддержку:</i> {SUPPORT_CHAT_LINK}"
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
 @dp.my_chat_member()
@@ -11209,6 +11338,7 @@ async def auto_marriage_divorce_loop():
 
 
 async def auto_fill_users_loop():
+    """Раз в 12 часов пробегает по известным чатам и регистрирует админов."""
     while True:
         try:
             await asyncio.sleep(43200)
