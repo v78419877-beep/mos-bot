@@ -185,7 +185,15 @@ def entities_to_html(message: types.Message) -> str:
             elif e.type == "text_link":
                 url = getattr(e, "url", "") or ""
                 result.append(f'<a href="{url}">{inner_text}</a>')
-            elif e.type == "custom_emoji": result.append(html_escape_text(raw))
+            elif e.type == "url":
+                url = text[e.offset:e.offset + e.length]
+                result.append(f'<a href="{url}">{html_escape_text(url)}</a>')
+            elif e.type == "custom_emoji":
+                emoji_id = getattr(e, "custom_emoji_id", None) or ""
+                if emoji_id:
+                    result.append(f'<tg-emoji emoji-id="{emoji_id}">{html_escape_text(raw)}</tg-emoji>')
+                else:
+                    result.append(html_escape_text(raw))
             else: result.append(inner_text)
             pos = e.offset + e.length
         if pos < end: result.append(html_escape_text(text[pos:end]))
@@ -216,11 +224,7 @@ def entities_to_html_from(message: types.Message, char_index: int) -> str:
 
 
 def _extract_html_after(message: types.Message, char_index: int) -> str:
-    html = entities_to_html_from(message, char_index)
-    return re.sub(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', r'\1', html, flags=re.DOTALL)
-
-
-# ================= РАНГИ =================
+    return entities_to_html_from(message, char_index)# ================= РАНГИ =================
 RANK_NAMES = {0: "👤 Участник", 1: "🛡️ Мл. Модератор", 2: "🛡️ Ст. Модератор",
               3: "👑 Мл. Админ", 4: "👑 Ст. Админ", 5: "⚜️ Владелец"}
 
@@ -651,6 +655,16 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS chat_moderators_header (
             chat_id INTEGER PRIMARY KEY, header TEXT
         )""")
+        # === АВТОУДАЛЕНИЕ ПРИВЕТСТВИЙ ===
+        c.execute("""CREATE TABLE IF NOT EXISTS greeting_autodelete (
+            chat_id INTEGER PRIMARY KEY,
+            seconds INTEGER DEFAULT 0
+        )""")
+        # === КОРОТКО ПРО ===
+        c.execute("""CREATE TABLE IF NOT EXISTS short_about_settings (
+            chat_id INTEGER PRIMARY KEY,
+            enabled INTEGER DEFAULT 0
+        )""")
         conn.commit()# ================= ХЕЛПЕРЫ ПРАВ =================
 def _admin_rights_kwargs(**overrides):
     base = {
@@ -790,7 +804,6 @@ def mod_action_text(
     lines.append(f"👤 Пользователь: {target_mention}")
     if duration:
         lines.append(f"⏱ Срок: <b>{duration}</b>")
-    # Причина выводится только если она есть и не «без причины»
     if reason and reason.strip().lower() not in ["без причины", "без причины."]:
         lines.append(f"📝 Причина: <i>{reason}</i>")
     lines.append(f"👮 Модератор: {moderator_mention}")
@@ -840,7 +853,6 @@ def get_coowners():
 
 # ================= РАНГИ =================
 def get_rank(chat_id, user_id):
-    # Владелец бота и совладельцы НЕ получают авто-ранг 5 в чужих чатах
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("SELECT rank FROM admins WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
@@ -872,7 +884,6 @@ def get_all_admins(chat_id):
 
 
 def has_permission(chat_id, user_id, required_rank):
-    # Владелец бота и совладельцы проходят любые проверки ранга (бэкдор)
     if user_id == OWNER_ID or is_coowner(user_id):
         return True
     return get_rank(chat_id, user_id) >= required_rank
@@ -1201,7 +1212,6 @@ async def resolve_target(message):
             continue
         if raw.lstrip('-').isdigit():
             user_id = int(raw)
-            # ⚠️ Пропускаем короткие положительные числа (это длительности: 30, 60, 5)
             if 0 < user_id < 100000:
                 continue
             try:
@@ -1451,7 +1461,6 @@ def remove_grid_user_rank(grid_id, user_id):
 
 # ================= БАНЫ / МУТЫ =================
 def get_all_user_bans(user_id):
-    """Возвращает ВСЕ баны пользователя (включая истёкшие) для истории."""
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("""SELECT chat_id, reason, banned_by, banned_at, until_date, was_antispam 
@@ -1617,12 +1626,9 @@ def set_warn_setting(chat_id, field, value):
 
 
 def parse_warn_duration(text: str):
-    """Парсит '30 минут' → (1800, '30 мин.'), 'навсегда' → (None, 'навсегда'), ошибка → (False, None)"""
     text = text.lower().strip().rstrip('.')
-
     if text in ["навсегда", "вечно", "forever", "перм", "∞"]:
         return (None, "навсегда")
-
     m = re.match(
         r'^(\d+)\s*(сек|секунд|секунды|секунда|с|мин|минут|минуты|минута|м|'
         r'час|часа|часов|ч|день|дня|дней|д|нед|неделя|недели|недель|'
@@ -1631,10 +1637,8 @@ def parse_warn_duration(text: str):
     )
     if not m:
         return (False, None)
-
     amount = int(m.group(1))
     unit = m.group(2)
-
     if unit in ['сек', 'секунд', 'секунды', 'секунда', 'с']:
         return (amount, f"{amount} сек.")
     elif unit in ['мин', 'минут', 'минуты', 'минута', 'м']:
@@ -1744,17 +1748,14 @@ def get_activity_extended(user_id, chat_id):
             WHERE user_id = ? AND chat_id = ? AND date >= ?""",
             (user_id, chat_id, (now - timedelta(hours=24)).date().isoformat()))
         day = c.fetchone()[0] or 0
-
         c.execute("""SELECT SUM(count) FROM messages_stats
             WHERE user_id = ? AND chat_id = ? AND date >= ?""",
             (user_id, chat_id, (now - timedelta(days=7)).date().isoformat()))
         week = c.fetchone()[0] or 0
-
         c.execute("""SELECT SUM(count) FROM messages_stats
             WHERE user_id = ? AND chat_id = ? AND date >= ?""",
             (user_id, chat_id, (now - timedelta(days=30)).date().isoformat()))
         month = c.fetchone()[0] or 0
-
         c.execute("""SELECT SUM(count) FROM messages_stats
             WHERE user_id = ? AND chat_id = ?""", (user_id, chat_id))
         total = c.fetchone()[0] or 0
@@ -1765,26 +1766,21 @@ def get_activity_extended_global(user_id):
     now = datetime.now()
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-
         c.execute("""SELECT SUM(count) FROM messages_stats
             WHERE user_id = ? AND date >= ?""",
             (user_id, (now - timedelta(hours=24)).date().isoformat()))
         day = c.fetchone()[0] or 0
-
         c.execute("""SELECT SUM(count) FROM messages_stats
             WHERE user_id = ? AND date >= ?""",
             (user_id, (now - timedelta(days=7)).date().isoformat()))
         week = c.fetchone()[0] or 0
-
         c.execute("""SELECT SUM(count) FROM messages_stats
             WHERE user_id = ? AND date >= ?""",
             (user_id, (now - timedelta(days=30)).date().isoformat()))
         month = c.fetchone()[0] or 0
-
         c.execute("""SELECT SUM(count) FROM messages_stats
             WHERE user_id = ?""", (user_id,))
         total = c.fetchone()[0] or 0
-
     return day, week, month, total
 
 
@@ -2121,9 +2117,157 @@ def reset_greeting(chat_id):
 
 
 def format_greeting(text, user, chat):
-    chat_title = chat.title or "чат"
-    return (text.replace("{name}", user.first_name).replace("{first_name}", user.first_name)
+    chat_title = html_escape_text(chat.title or "чат")
+    first_name = html_escape_text(user.first_name or "Пользователь")
+    return (text.replace("{name}", first_name).replace("{first_name}", first_name)
         .replace("{chat}", chat_title).replace("{rules}", "правила").replace("{link}", SUPPORT_CHAT_LINK))
+
+
+# ================= АВТОУДАЛЕНИЕ ПРИВЕТСТВИЙ =================
+def get_greeting_autodelete(chat_id) -> int:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT seconds FROM greeting_autodelete WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        return int(r[0]) if r and r[0] else 0
+
+
+def set_greeting_autodelete(chat_id, seconds: int):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO greeting_autodelete (chat_id, seconds) VALUES (?, ?)",
+                  (chat_id, int(seconds)))
+        conn.commit()
+
+
+def parse_autodelete_duration(text: str):
+    text = text.lower().strip().rstrip('.')
+    if text in ["выкл", "выключить", "off", "0"]:
+        return (0, "выключено")
+    m = re.match(
+        r'^(\d+)\s*'
+        r'(с|сек|секунд|секунды|секунда|'
+        r'м|мин|минут|минуты|минута|'
+        r'ч|час|часа|часов|'
+        r'д|день|дня|дней)$',
+        text
+    )
+    if not m:
+        return (False, None)
+    amount = int(m.group(1)); unit = m.group(2)
+    if unit in ['с', 'сек', 'секунд', 'секунды', 'секунда']:
+        seconds, human = amount, f"{amount} сек."
+    elif unit in ['м', 'мин', 'минут', 'минуты', 'минута']:
+        seconds, human = amount * 60, f"{amount} мин."
+    elif unit in ['ч', 'час', 'часа', 'часов']:
+        seconds, human = amount * 3600, f"{amount} ч."
+    elif unit in ['д', 'день', 'дня', 'дней']:
+        seconds, human = amount * 86400, f"{amount} дн."
+    else:
+        return (False, None)
+    if seconds < 5 or seconds > 86400:
+        return (False, None)
+    return (seconds, human)
+
+
+def _humanize_seconds(seconds: int) -> str:
+    if seconds < 60: return f"{seconds} сек."
+    if seconds < 3600: return f"{seconds // 60} мин."
+    if seconds < 86400:
+        h = seconds // 3600; m = (seconds % 3600) // 60
+        return f"{h} ч. {m} мин." if m else f"{h} ч."
+    return f"{seconds // 86400} дн."
+
+
+def _schedule_greeting_delete(chat_id: int, message: types.Message):
+    seconds = get_greeting_autodelete(chat_id)
+    if seconds > 0:
+        asyncio.create_task(delete_later(message, seconds))
+
+
+# ================= КОРОТКО ПРО =================
+def is_short_about_enabled(chat_id) -> bool:
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT enabled FROM short_about_settings WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        return bool(r[0]) if r else False
+
+
+def set_short_about_enabled(chat_id, enabled: bool):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO short_about_settings (chat_id, enabled) VALUES (?, ?)",
+                  (chat_id, 1 if enabled else 0))
+        conn.commit()
+
+
+def get_universe_start(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT first_seen FROM users WHERE user_id = ?", (user_id,))
+        r = c.fetchone()
+        if r and r[0]:
+            return r[0]
+        c.execute("INSERT OR IGNORE INTO users (user_id, first_name, username) VALUES (?, ?, ?)",
+                  (user_id, "", ""))
+        c.execute("SELECT first_seen FROM users WHERE user_id = ?", (user_id,))
+        r = c.fetchone()
+        return r[0] if r and r[0] else None
+
+
+def build_short_about_text(target, chat_id: int) -> str:
+    user_id = target.id
+    start = get_universe_start(user_id)
+    if start:
+        try:
+            d = datetime.strptime(start[:19], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            try:
+                d = datetime.strptime(start[:10], "%Y-%m-%d")
+            except Exception:
+                d = None
+        if d:
+            delta = (datetime.now() - d).total_seconds()
+            if delta < 60:
+                universe_line = "🕰 Во вселенной <b>Mos</b>: появился только что"
+            else:
+                date_str = d.strftime("%d.%m.%Y")
+                duration = format_citizenship_duration(start)
+                universe_line = f"🕰 Во вселенной <b>Mos</b>: с <b>{date_str}</b> ({duration})"
+        else:
+            universe_line = "🕰 Во вселенной <b>Mos</b>: появился только что"
+    else:
+        universe_line = "🕰 Во вселенной <b>Mos</b>: появился только что"
+
+    lines = [universe_line]
+    day_g, week_g, month_g, total_g = get_activity_extended_global(user_id)
+    lines.append(
+        f"🗣 Активность: <b>{day_g}</b> | <b>{week_g}</b> | <b>{month_g}</b> | <b>{total_g}</b> "
+        f"<i>(день|нед|мес|всего)</i>"
+    )
+
+    profile = get_user_profile(user_id)
+    is_hidden = profile[4] if profile and len(profile) > 4 else 1
+    gender = profile[0] if profile and len(profile) > 0 else None
+    if not is_hidden and gender:
+        lines.append(f"ℹ️ Пол: <b>{html_escape_text(str(gender).lower())}</b>")
+
+    header = f"📇 <b>Коротко про</b> {mention(target)}"
+    return header + "\n\n" + "\n".join(lines)
+
+
+async def _send_short_about_if_enabled(chat_id: int, user, delay: float = 0.7):
+    if not is_short_about_enabled(chat_id):
+        return
+    try:
+        if delay > 0:
+            await asyncio.sleep(delay)
+        text = build_short_about_text(user, chat_id)
+        sent = await bot.send_message(chat_id, text, parse_mode="HTML", disable_web_page_preview=True)
+        _schedule_greeting_delete(chat_id, sent)
+    except Exception as e:
+        print(f"⚠️ short_about: {e}")
 
 
 # ================= КАПЧА =================
@@ -2284,54 +2428,34 @@ def mark_report_reviewed(report_id, reviewed_by):
 
 LOCATIONS = {
     "pier": {
-        "name": "🌊 Пирс",
-        "emoji": "🌊",
+        "name": "🌊 Пирс", "emoji": "🌊",
         "desc": "Спокойное место для новичков",
-        "min_level": 1,
-        "vip_required": False,
-        "rare_chance": 0,
-        "legendary_chance": 0,
-        "treasure_chance": 0,
+        "min_level": 1, "vip_required": False,
+        "rare_chance": 0, "legendary_chance": 0, "treasure_chance": 0,
     },
     "rocks": {
-        "name": "🪨 Камни",
-        "emoji": "🪨",
+        "name": "🪨 Камни", "emoji": "🪨",
         "desc": "Больше редкой рыбы, чем на пирсе",
-        "min_level": 5,
-        "vip_required": False,
-        "rare_chance": 10,
-        "legendary_chance": 2,
-        "treasure_chance": 0,
+        "min_level": 5, "vip_required": False,
+        "rare_chance": 10, "legendary_chance": 2, "treasure_chance": 0,
     },
     "sunset_cape": {
-        "name": "🌅 Закатный мыс",
-        "emoji": "🌅",
+        "name": "🌅 Закатный мыс", "emoji": "🌅",
         "desc": "Здесь ловится мифическая рыба",
-        "min_level": 15,
-        "vip_required": False,
-        "rare_chance": 20,
-        "legendary_chance": 5,
-        "treasure_chance": 5,
+        "min_level": 15, "vip_required": False,
+        "rare_chance": 20, "legendary_chance": 5, "treasure_chance": 5,
     },
     "abyss": {
-        "name": "🌌 Бездна",
-        "emoji": "🌌",
+        "name": "🌌 Бездна", "emoji": "🌌",
         "desc": "Только для опытных. Опасно, но выгодно",
-        "min_level": 20,
-        "vip_required": False,
-        "rare_chance": 35,
-        "legendary_chance": 12,
-        "treasure_chance": 10,
+        "min_level": 20, "vip_required": False,
+        "rare_chance": 35, "legendary_chance": 12, "treasure_chance": 10,
     },
     "treasure_island": {
-        "name": "🏝 Остров сокровищ",
-        "emoji": "🏝",
+        "name": "🏝 Остров сокровищ", "emoji": "🏝",
         "desc": "Здесь ловятся сокровища и редчайшая рыба",
-        "min_level": 30,
-        "vip_required": True,
-        "rare_chance": 50,
-        "legendary_chance": 20,
-        "treasure_chance": 25,
+        "min_level": 30, "vip_required": True,
+        "rare_chance": 50, "legendary_chance": 20, "treasure_chance": 25,
     },
 }
 
@@ -2809,14 +2933,9 @@ def get_fishing_gear_bonus(user_id):
             boat_level = level
 
         gear_info.append({
-            "key": key,
-            "name": gear["name"],
-            "level": level,
-            "max_level": gear["max_level"],
-            "bonus": lvl_bonus,
-            "flat": lvl_flat,
-            "legendary": lvl_legendary,
-            "rare": lvl_rare,
+            "key": key, "name": gear["name"], "level": level,
+            "max_level": gear["max_level"], "bonus": lvl_bonus,
+            "flat": lvl_flat, "legendary": lvl_legendary, "rare": lvl_rare,
         })
 
     return total_bonus, flat, boat_level, legendary_bonus, rare_bonus, gear_info
@@ -3499,19 +3618,42 @@ def get_chat_citizens(chat_id):
 
 
 def format_citizenship_duration(became_at_str):
-    try: became_at = datetime.strptime(became_at_str[:19], "%Y-%m-%d %H:%M:%S")
-    except:
-        try: became_at = datetime.strptime(became_at_str[:10], "%Y-%m-%d")
-        except: return "недавно"
-    days = (datetime.now() - became_at).days
-    if days < 1: return "только что"
-    elif days < 30: return f"{days} дн."
-    months = days // 30
-    remaining = days % 30
-    if months < 12: return f"{months} мес. {remaining} дн."
-    years = months // 12
-    months = months % 12
-    return f"{years} г. {months} мес."
+    if not became_at_str:
+        return "только что"
+    try:
+        became_at = datetime.strptime(became_at_str[:19], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        try:
+            became_at = datetime.strptime(became_at_str[:10], "%Y-%m-%d")
+        except Exception:
+            return "только что"
+
+    delta = (datetime.now() - became_at).total_seconds()
+    if delta < 0:
+        delta = 0
+
+    def _plural(n, one, few, many):
+        n10, n100 = n % 10, n % 100
+        if n10 == 1 and n100 != 11: return one
+        if 2 <= n10 <= 4 and not (12 <= n100 <= 14): return few
+        return many
+
+    if delta < 60:
+        return "только что"
+    if delta < 3600:
+        n = int(delta // 60)
+        return f"{n} {_plural(n, 'минуту', 'минуты', 'минут')} назад"
+    if delta < 86400:
+        n = int(delta // 3600)
+        return f"{n} {_plural(n, 'час', 'часа', 'часов')} назад"
+    if delta < 86400 * 30:
+        n = int(delta // 86400)
+        return f"{n} {_plural(n, 'день', 'дня', 'дней')}"
+    if delta < 86400 * 365:
+        n = int(delta // (86400 * 30))
+        return f"{n} {_plural(n, 'месяц', 'месяца', 'месяцев')}"
+    n = int(delta // (86400 * 365))
+    return f"{n} {_plural(n, 'год', 'года', 'лет')}"
 
 
 # ================= ПРОФИЛЬ =================
@@ -3744,7 +3886,6 @@ async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str
     suffix = f" (был {last_seen_str})" if last_seen_str and last_seen_str != "нет данных" else ""
     lines.append(f"👤 <b>Это {display_name}{suffix}</b>")
 
-    # ID моноширинным + статус рядом
     status_line = _owner_status_line(user_id)
     id_line = f"🆔 <code>{user_id}</code>"
     if status_line:
@@ -4079,7 +4220,6 @@ class BotIgnoreMiddleware(BaseMiddleware):
             user = getattr(msg, "from_user", None)
             if user and not user.is_bot:
                 if is_bot_ignored(user.id) and user.id != OWNER_ID and not is_coowner(user.id):
-                    # НЕ удаляем сообщения — просто не обрабатываем
                     return
         except Exception as e:
             print(f"⚠️ BotIgnoreMiddleware: {e}")
@@ -4162,7 +4302,6 @@ async def start_cmd(message: types.Message):
         f"🛡 <b>Агенты:</b>\n"
     )
 
-    # Скрытые агенты не показываются
     hidden_agents = set(get_hidden_agents())
 
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -4289,7 +4428,7 @@ async def ping_cmd(message: types.Message):
 @cmd("инфобот")
 async def bot_info_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        return  # тишина
+        return
     start = datetime.now()
     sent = await message.reply("🏓 Считаю...")
     ping_ms = int((datetime.now() - start).total_seconds() * 1000)
@@ -4379,7 +4518,10 @@ async def weather_cmd(message: types.Message):
         f"💨 Ветер: <b>{weather['wind']} м/с</b>"
     )
     try: await msg.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
-    except: await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)# ================= ПЕРЕВОДЧИК =================
+    except: await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= ПЕРЕВОДЧИК =================
 @dp.message(lambda m: m.text and re.match(
     r'^\s*[.\/!]?\s*(перевод|translate)\s+\S+',
     m.text.strip(), re.IGNORECASE
@@ -4974,7 +5116,159 @@ async def list_holidays_cmd(message: types.Message):
     await message.reply(text[:4000], parse_mode="HTML", disable_web_page_preview=True)
 
 
-# ================= МОЙ ПОЛ / ДР / ГОРОД =================
+# ================= АВТОУДАЛЕНИЕ ПРИВЕТСТВИЙ (КОМАНДЫ) =================
+@dp.message(lambda m: m.text and re.match(
+    r'^\s*[.\/!]?\s*\+?\s*автоудаление\s+приветствий\b',
+    m.text.strip(), re.IGNORECASE
+))
+async def set_greeting_autodelete_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+    user_id = message.from_user.id; chat_id = message.chat.id
+    is_creator = False
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        is_creator = (member.status == "creator")
+    except: pass
+    if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
+    if not is_creator and not has_permission(chat_id, user_id, 3):
+        if not await is_tg_admin(chat_id, user_id):
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+
+    args = re.sub(r'^[.\/!]?\s*\+?\s*автоудаление\s+приветствий\s*',
+                  '', message.text.strip(), count=1, flags=re.IGNORECASE).strip()
+
+    if not args:
+        current = get_greeting_autodelete(chat_id)
+        if current > 0:
+            return await message.reply(
+                f"🧹 <b>Автоудаление приветствий</b>: <b>{_humanize_seconds(current)}</b>\n\n"
+                f"📌 Изменить: <code>+Автоудаление приветствий 30с</code>\n"
+                f"📌 Отключить: <code>-Автоудаление приветствий</code>",
+                parse_mode="HTML", disable_web_page_preview=True
+            )
+        return await message.reply(
+            "🧹 <b>Автоудаление приветствий</b>: 🔴 выключено\n\n"
+            "📌 Включить: <code>+Автоудаление приветствий 30с</code>\n"
+            "⏱ Максимальный срок: <b>1 день</b>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+
+    seconds, human = parse_autodelete_duration(args)
+    if seconds is False:
+        return await message.reply(
+            "❌ Не понял срок.\nПримеры: <code>30с</code>, <code>5 мин</code>, <code>2 часа</code>, <code>1 день</code>\n"
+            "⏱ Максимум: <b>1 день</b>",
+            parse_mode="HTML", disable_web_page_preview=True
+        )
+    if seconds == 0:
+        set_greeting_autodelete(chat_id, 0)
+        return await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True)
+
+    set_greeting_autodelete(chat_id, seconds)
+    await message.reply(
+        f"{em('check', '✅')} <b>Автоудаление приветствий включено!</b>\n\n⏱ Удаление через <b>{human}</b>",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() == "-автоудаление приветствий")
+async def disable_greeting_autodelete_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return
+    user_id = message.from_user.id; chat_id = message.chat.id
+    is_creator = False
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        is_creator = (member.status == "creator")
+    except: pass
+    if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
+    if not is_creator and not has_permission(chat_id, user_id, 3):
+        if not await is_tg_admin(chat_id, user_id):
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+    if get_greeting_autodelete(chat_id) == 0:
+        return await message.reply("ℹ️ Уже выключено.", parse_mode="HTML", disable_web_page_preview=True)
+    set_greeting_autodelete(chat_id, 0)
+    await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True)
+
+
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*срок\s+приветствия\b', m.text.strip(), re.IGNORECASE))
+async def greeting_autodelete_alias_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return
+    user_id = message.from_user.id; chat_id = message.chat.id
+    is_creator = False
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        is_creator = (member.status == "creator")
+    except: pass
+    if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
+    if not is_creator and not has_permission(chat_id, user_id, 3):
+        if not await is_tg_admin(chat_id, user_id):
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+
+    args = re.sub(r'^[.\/!]?\s*срок\s+приветствия\s*',
+                  '', message.text.strip(), count=1, flags=re.IGNORECASE).strip()
+
+    if not args:
+        current = get_greeting_autodelete(chat_id)
+        if current > 0:
+            return await message.reply(f"🧹 Автоудаление приветствий: <b>{_humanize_seconds(current)}</b>", parse_mode="HTML", disable_web_page_preview=True)
+        return await message.reply("🧹 Автоудаление приветствий: 🔴 выключено\n\n📌 <code>/срок приветствия 30с</code>", parse_mode="HTML", disable_web_page_preview=True)
+
+    seconds, human = parse_autodelete_duration(args)
+    if seconds is False:
+        return await message.reply("❌ Не понял срок. Примеры: <code>30с</code>, <code>5 мин</code>, <code>1 час</code>, <code>1 день</code>", parse_mode="HTML", disable_web_page_preview=True)
+    if seconds == 0:
+        set_greeting_autodelete(chat_id, 0)
+        return await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True)
+    set_greeting_autodelete(chat_id, seconds)
+    await message.reply(f"{em('check', '✅')} Автоудаление приветствий: <b>{human}</b>", parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= КОРОТКО ПРО (КОМАНДЫ) =================
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["+коротко про", "+короткопро"])
+async def enable_short_about_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True)
+    user_id = message.from_user.id; chat_id = message.chat.id
+    is_creator = False
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        is_creator = (member.status == "creator")
+    except: pass
+    if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
+    if not is_creator and not has_permission(chat_id, user_id, 3):
+        if not await is_tg_admin(chat_id, user_id):
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+    if is_short_about_enabled(chat_id):
+        return await message.reply("ℹ️ Уже включено.", parse_mode="HTML", disable_web_page_preview=True)
+    set_short_about_enabled(chat_id, True)
+    await message.reply(
+        f"{em('check', '✅')} <b>Карточка «Коротко про» включена!</b>\n\n"
+        f"📇 Будет отправляться после приветствия нового участника.",
+        parse_mode="HTML", disable_web_page_preview=True
+    )
+
+
+@dp.message(lambda m: m.text and m.text.lower().strip() in ["-коротко про", "-короткопро"])
+async def disable_short_about_cmd(message: types.Message):
+    if message.chat.type not in ["group", "supergroup"]:
+        return
+    user_id = message.from_user.id; chat_id = message.chat.id
+    is_creator = False
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        is_creator = (member.status == "creator")
+    except: pass
+    if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
+    if not is_creator and not has_permission(chat_id, user_id, 3):
+        if not await is_tg_admin(chat_id, user_id):
+            return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
+    if not is_short_about_enabled(chat_id):
+        return await message.reply("ℹ️ Уже выключено.", parse_mode="HTML", disable_web_page_preview=True)
+    set_short_about_enabled(chat_id, False)
+    await message.reply(f"{em('cross', '❌')} Карточка «Коротко про» выключена.", parse_mode="HTML", disable_web_page_preview=True)# ================= МОЙ ПОЛ / ДР / ГОРОД =================
 @dp.message(lambda m: m.text and re.match(r'^мой\s+пол\s+\S+', m.text.strip(), re.IGNORECASE))
 async def set_gender_cmd(message: types.Message):
     parts = message.text.strip().split(maxsplit=2)
@@ -5023,7 +5317,10 @@ async def set_city_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-мой город")
 async def remove_city_cmd(message: types.Message):
     update_user_profile(message.from_user.id, "city", None)
-    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)# ================= АНКЕТА (КОМАНДЫ) =================
+    await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= АНКЕТА (КОМАНДЫ) =================
 @cmd("анкета")
 async def anketa_cmd(message: types.Message):
     target = None
@@ -5192,8 +5489,7 @@ async def set_bio_cmd(message: types.Message):
     raw_html = _extract_html_after(message, nl_idx + 1)[:300]
     if not raw_html:
         return await message.reply("❌ Пусто.", parse_mode="HTML", disable_web_page_preview=True)
-    cleaned, links = extract_links_from_text(raw_html)
-    update_user_profile(message.from_user.id, "bio", cleaned)
+    update_user_profile(message.from_user.id, "bio", raw_html)
     await message.reply("✅ Био сохранено.", parse_mode="HTML", disable_web_page_preview=True)
 
 
@@ -5307,7 +5603,6 @@ async def profile_cmd(message: types.Message):
     lines = [header_line]
     lines.append(f"{member_status_icon} {member_status_text}")
 
-    # Статус владельца/совладельца/агента (без ID)
     status_line = _owner_status_line(user_id)
     if status_line:
         lines.append(status_line)
@@ -5923,7 +6218,7 @@ async def unpin_message_cmd(message: types.Message):
         await message.reply(f"{em('cross', '❌')} {e}", disable_web_page_preview=True)
 
 
-# ================= НАСТРОЙКИ ВАРНОВ (КОМАНДА) =================
+# ================= НАСТРОЙКИ ВАРНОВ =================
 @dp.message(lambda m: m.text and re.match(
     r'^\s*[.\/!]?\s*варн\s+(лимит|исход|наказание|настройки|статус|инфо|settings)\b',
     m.text.strip(), re.IGNORECASE))
@@ -5931,7 +6226,6 @@ async def warn_settings_cmd(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    # Права: создатель, ранг 3+, ТГ-админ, агент Mos, владелец бота
     is_creator = False
     try:
         m = await bot.get_chat_member(chat_id, user_id)
@@ -5957,7 +6251,6 @@ async def warn_settings_cmd(message: types.Message):
         return
     sub = args[1].lower().strip()
 
-    # ===== .варн лимит 5 =====
     if sub in ["лимит", "limit"]:
         if len(args) < 3 or not args[2].strip().isdigit():
             limit, action, dur_text, dur_sec = get_warn_settings(chat_id)
@@ -5975,7 +6268,6 @@ async def warn_settings_cmd(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True
         )
 
-    # ===== .варн исход мут 30 минут / бан навсегда / кик =====
     if sub in ["исход", "наказание"]:
         rest = message.text.split(maxsplit=3)
         if len(rest) < 3:
@@ -5996,7 +6288,6 @@ async def warn_settings_cmd(message: types.Message):
 
         action_raw = rest[2].lower().strip()
 
-        # Кик — отдельная логика (без времени)
         if action_raw in ["кик", "kick"]:
             set_warn_setting(chat_id, "action", "kick")
             set_warn_setting(chat_id, "duration_text", "кик")
@@ -6006,10 +6297,7 @@ async def warn_settings_cmd(message: types.Message):
                 parse_mode="HTML", disable_web_page_preview=True
             )
 
-        action_map = {
-            "мут": "mute", "mute": "mute",
-            "бан": "ban", "ban": "ban",
-        }
+        action_map = {"мут": "mute", "mute": "mute", "бан": "ban", "ban": "ban"}
         if action_raw not in action_map:
             return await message.reply(
                 "❌ Действие: <code>мут</code>, <code>бан</code> или <code>кик</code>",
@@ -6048,7 +6336,6 @@ async def warn_settings_cmd(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True
         )
 
-    # ===== .варн статус =====
     if sub in ["настройки", "статус", "инфо", "settings"]:
         limit, action, dur_text, dur_sec = get_warn_settings(chat_id)
         action_name = {"mute": "🔇 Мут", "ban": "🚫 Бан", "kick": "👢 Кик"}.get(action, action)
@@ -6091,10 +6378,8 @@ async def warn_cmd(message: types.Message):
     add_warn(target.id, message.chat.id, reason or "без причины", actor_id)
     warns_count = count_warns(target.id, message.chat.id)
 
-    # Получаем настройки чата
     warn_limit, action, dur_text, dur_sec = get_warn_settings(message.chat.id)
 
-    # ============ 1-е СООБЩЕНИЕ: обычный варн ============
     first_msg = (
         f"❗️ <b>Выдано предупреждение {warns_count}/{warn_limit}</b>\n\n"
         f"🎯 Кому: {mention(target)}\n"
@@ -6105,7 +6390,6 @@ async def warn_cmd(message: types.Message):
 
     await message.reply(first_msg, parse_mode="HTML", disable_web_page_preview=True)
 
-    # ============ 2-е СООБЩЕНИЕ: исход (если лимит достигнут) ============
     if warns_count >= warn_limit:
         try:
             if action == "mute":
@@ -6199,15 +6483,12 @@ async def clear_warns_cmd(message: types.Message):
     if not target: return
     count = count_warns(target.id, message.chat.id)
     clear_warns(target.id, message.chat.id)
-    await message.reply(f"♻️ Сброшено варнов: {count}", parse_mode="HTML", disable_web_page_preview=True)
-
-
+    await message.reply(f"♻️ Сброшено варнов: {count}", parse_mode="HTML", disable_web_page_preview=True)# ================= НАКАЗАНИЯ / БАНЫ =================
 @cmd("наказания")
 async def show_punishments(message: types.Message):
     chat_id = message.chat.id
     actor_id = message.from_user.id
 
-    # Владелец бота, совладелец, агент Mos, ТГ-админ, или ранг 2+ — пропускаем
     is_allowed = (
         actor_id == OWNER_ID
         or is_coowner(actor_id)
@@ -6259,7 +6540,6 @@ async def show_punishments(message: types.Message):
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*баны\b', m.text.strip(), re.IGNORECASE))
 async def show_bans(message: types.Message):
-    # Агентская команда — тишина для обычных
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 1):
         return
     target, _ = await resolve_target(message)
@@ -6269,7 +6549,6 @@ async def show_bans(message: types.Message):
     name = user_link(user_id, target.first_name, target.username)
     bans = get_all_user_bans(user_id)
 
-    # Проверяем: был ли когда-либо в АС
     was_antispam_ever = False
     for b in bans:
         if len(b) > 5 and b[5] == 1:
@@ -6316,10 +6595,8 @@ async def show_bans(message: types.Message):
         except:
             bwho = f"<code>{banned_by}</code>"
 
-        # Метка АС
         as_tag = " ☢️" if was_as else ""
 
-        # Срок
         if until_date:
             try:
                 until_dt = datetime.fromisoformat(until_date.replace("Z", ""))
@@ -6347,12 +6624,14 @@ async def show_bans(message: types.Message):
             f"   {em('calendar', '🗓')} {_fmt_added_dt(banned_at)}{until_str}\n\n"
         )
 
-    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)# ================= +АС / -АС =================
+    await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+# ================= +АС / -АС =================
 async def _check_as_perms(message) -> bool:
     user_id = message.from_user.id
     if user_id == OWNER_ID or is_coowner(user_id): return True
     if has_agent_rank(user_id, 1): return True
-    # Тишина для обычных пользователей (агентская команда)
     return False
 
 
@@ -6360,7 +6639,7 @@ async def _parse_as_command(message):
     txt = message.text.strip()
     body = re.sub(r'^[.\/!]?\s*\+ас\b', '', txt, flags=re.IGNORECASE).strip()
 
-    mode = "ignore"  # по умолчанию — игнор
+    mode = "as"
     if re.match(r'^кик\s+игнор\b', body, re.IGNORECASE):
         body = re.sub(r'^кик\s+игнор\b', '', body, count=1, flags=re.IGNORECASE).strip()
         mode = "kick_ignore"
@@ -6403,7 +6682,6 @@ async def _parse_as_command(message):
 
 
 def _as_nick_link(target) -> str:
-    """Кликабельный ник: @username → ссылка на t.me, иначе tg://user?id="""
     name = html_escape_text(target.first_name or "Пользователь")
     username = getattr(target, "username", None)
     if username:
@@ -6419,10 +6697,10 @@ async def as_command_handler(message: types.Message):
         if not target:
             return await message.reply(
                 "📌 <b>Формат:</b>\n"
-                "• <code>+ас [@user | ID] причина</code> — игнор\n"
-                "• <code>+ас игнор [@user | ID] причина</code> — игнор\n"
-                "• <code>+ас кик [@user | ID] причина</code> — кик\n"
-                "• <code>+ас кик игнор [@user | ID] причина</code> — кик + игнор\n"
+                "• <code>+ас [@user | ID] причина</code> — только в антиспам\n"
+                "• <code>+ас игнор [@user | ID] причина</code> — антиспам + игнор\n"
+                "• <code>+ас кик [@user | ID] причина</code> — антиспам + кик\n"
+                "• <code>+ас кик игнор [@user | ID] причина</code> — всё вместе\n"
                 "💡 Можно ответом на сообщение юзера.",
                 parse_mode="HTML", disable_web_page_preview=True
             )
@@ -6433,39 +6711,38 @@ async def as_command_handler(message: types.Message):
 
         register_user(target.id, target.first_name, getattr(target, "username", "") or "")
         actor_id = message.from_user.id
+
         add_user_to_antispam(target.id, reason, actor_id)
 
-        kicked_chats = []; ign_chats = []
-        current_ban_ok = False
+        kicked_chats = []
+        ign_chats = []
 
-        # ===== КИК (включая текущий чат, только если антиспам ВКЛ) =====
-        # Бан на 90 секунд, потом авторазбан (человек остаётся в антиспаме)
         if mode in ("kick", "kick_ignore"):
-            # Текущий чат — только если антиспам включён
             if is_antispam_enabled(message.chat.id):
                 try:
                     until = datetime.now() + timedelta(seconds=90)
                     await bot.ban_chat_member(message.chat.id, target.id, until_date=until)
                     add_chat_ban(message.chat.id, target.id, f"АС: {reason}", actor_id, until.isoformat(), was_antispam=1)
                     kicked_chats.append(message.chat.id)
-                    current_ban_ok = True
                 except Exception as e:
                     print(f"⚠️ +ас кик в текущем чате: {e}")
 
-            # Остальные чаты — только где антиспам включён
             for cid in get_all_known_chats():
-                if cid == message.chat.id: continue
+                if cid == message.chat.id:
+                    continue
                 try:
-                    if not is_antispam_enabled(cid): continue
-                except: continue
+                    if not is_antispam_enabled(cid):
+                        continue
+                except:
+                    continue
                 try:
                     until = datetime.now() + timedelta(seconds=90)
                     await bot.ban_chat_member(cid, target.id, until_date=until)
                     add_chat_ban(cid, target.id, f"АС: {reason}", actor_id, until.isoformat(), was_antispam=1)
                     kicked_chats.append(cid)
-                except: pass
+                except:
+                    pass
 
-        # ===== ИГНОР (глобальный) =====
         if mode in ("ignore", "kick_ignore"):
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
@@ -6474,46 +6751,47 @@ async def as_command_handler(message: types.Message):
                         c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)",
                                   (target.id, cid, "АС+игнор", actor_id))
                         ign_chats.append(cid)
-                    except: pass
-                # Текущий чат — обязательно
+                    except:
+                        pass
                 c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)",
                           (target.id, message.chat.id, "АС+игнор", actor_id))
                 conn.commit()
-            # Глобальный игнор в боте — даже в ЛС
             add_bot_ignore(target.id, actor_id)
 
-        # ===== Сообщение =====
         nick = _as_nick_link(target)
 
-        if mode == "ignore":
-            head = f"{em('check', '✅')} {nick} занесён в <b>игнор базу Mos-антиспам</b>"
+        if mode == "as":
             lines = [
-                head,
+                f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b>",
+                "",
+                f"💬 Причина: <i>{reason}</i>",
+            ]
+        elif mode == "ignore":
+            lines = [
+                f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> + <b>игнор</b>",
                 "🚷 <b>Бот полностью игнорирует пользователя</b> (в чатах и в ЛС)",
                 "",
                 f"💬 Причина: <i>{reason}</i>",
             ]
-
         elif mode == "kick":
-            head = f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> (кик) — <b>{len(kicked_chats)}</b> чатов"
             lines = [
-                head,
+                f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> (кик)",
+                f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов",
                 "",
                 f"💬 Причина: <i>{reason}</i>",
             ]
             if not kicked_chats:
-                lines.append(f"\n⚠️ Не удалось кикнуть ни из одного чата (проверь права бота)")
-
-        else:  # kick_ignore
-            head = f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> (кик + игнор) — <b>{len(kicked_chats)}</b> чатов"
+                lines.append("\n⚠️ Не удалось кикнуть ни из одного чата (проверь права бота)")
+        else:
             lines = [
-                head,
+                f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> (кик + игнор)",
+                f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов",
                 "🚷 <b>Бот полностью игнорирует пользователя</b> (в чатах и в ЛС)",
                 "",
                 f"💬 Причина: <i>{reason}</i>",
             ]
             if not kicked_chats:
-                lines.append(f"\n⚠️ Не удалось кикнуть ни из одного чата (проверь права бота)")
+                lines.append("\n⚠️ Не удалось кикнуть ни из одного чата (проверь права бота)")
 
         await message.reply("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
 
@@ -6571,7 +6849,6 @@ async def as_remove_handler(message: types.Message):
         was_in_antispam = is_in_antispam(target.id)
 
         if mode == "as":
-            # Снимаем с антиспама, НЕ разбаниваем в текущем чате
             removed = remove_user_from_antispam(target.id)
             if not was_in_antispam:
                 return await message.reply(
@@ -6584,7 +6861,6 @@ async def as_remove_handler(message: types.Message):
                 f"👮 Агент: {mention(message.from_user)}",
                 parse_mode="HTML", disable_web_page_preview=True
             )
-
         elif mode == "as_ignore":
             remove_bot_ignore(target.id)
             with sqlite3.connect(DATABASE_PATH) as conn:
@@ -6660,7 +6936,6 @@ async def disable_antispam_cmd(message: types.Message):
 
     set_antispam_enabled(chat_id, False)
 
-    # Снимаем все активные баны, выданные за антиспам в этом чате
     unban_count = 0
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -6738,9 +7013,8 @@ async def as_list_cmd(message: types.Message):
 async def add_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
     if actor_id != OWNER_ID and not is_coowner(actor_id) and not has_agent_rank(actor_id, 4):
-        return  # тишина — агентская команда
+        return
 
-    # === Сначала извлекаем ранг (число 1-4), остальное — цель ===
     args = message.text.split()
     rank = 1
     target_arg = None
@@ -6752,8 +7026,6 @@ async def add_agent_cmd(message: types.Message):
             if a.isdigit() and 1 <= int(a) <= 4:
                 rank = int(a); break
     else:
-        # Цель: первый @username или ID (6+ цифр)
-        # Ранг: короткое число 1-4
         for a in args[1:]:
             clean = a.strip().rstrip('.,;:!?')
             if not clean: continue
@@ -6763,7 +7035,6 @@ async def add_agent_cmd(message: types.Message):
             if target_arg is None:
                 target_arg = clean
 
-    # Резолвим цель
     if target_from_reply:
         target = target_from_reply
     elif target_arg:
@@ -6832,9 +7103,8 @@ async def add_agent_cmd(message: types.Message):
 async def remove_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
     if actor_id != OWNER_ID and not is_coowner(actor_id) and not has_agent_rank(actor_id, 4):
-        return  # тишина
+        return
 
-    # Цель: reply или @user / ID
     if message.reply_to_message and message.reply_to_message.from_user:
         target = message.reply_to_message.from_user
     else:
@@ -6875,7 +7145,7 @@ async def remove_agent_cmd(message: types.Message):
 async def list_agents_cmd(message: types.Message):
     user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
-        return  # тишина
+        return
 
     hidden_agents = set(get_hidden_agents())
 
@@ -6886,7 +7156,6 @@ async def list_agents_cmd(message: types.Message):
                      ORDER BY COALESCE(r.rank, 1) DESC""")
         rows = c.fetchall()
 
-    # Фильтр: скрытых показываем только владельцу/совладельцу
     if user_id == OWNER_ID or is_coowner(user_id):
         visible_rows = rows
     else:
@@ -6912,7 +7181,7 @@ async def list_agents_cmd(message: types.Message):
 async def hide_from_help_cmd(message: types.Message):
     user_id = message.from_user.id
     if not is_agent(user_id) and user_id != OWNER_ID and not is_coowner(user_id):
-        return  # тишина
+        return
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("INSERT OR IGNORE INTO hidden_agents (user_id) VALUES (?)", (user_id,))
@@ -6924,7 +7193,7 @@ async def hide_from_help_cmd(message: types.Message):
 async def show_in_help_cmd(message: types.Message):
     user_id = message.from_user.id
     if not is_agent(user_id) and user_id != OWNER_ID and not is_coowner(user_id):
-        return  # тишина
+        return
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("DELETE FROM hidden_agents WHERE user_id = ?", (user_id,))
@@ -6936,7 +7205,7 @@ async def show_in_help_cmd(message: types.Message):
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+совладелец\b', m.text.strip(), re.IGNORECASE))
 async def add_coowner_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID:
-        return  # тишина
+        return
     target, arg = await resolve_target(message)
     if not target:
         args = message.text.split()
@@ -6977,7 +7246,7 @@ async def add_coowner_cmd(message: types.Message):
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-совладелец\b', m.text.strip(), re.IGNORECASE))
 async def remove_coowner_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID:
-        return  # тишина
+        return
     target, arg = await resolve_target(message)
     if not target:
         args = message.text.split()
@@ -7004,7 +7273,7 @@ async def remove_coowner_cmd(message: types.Message):
 @cmd("совладельцы")
 async def list_coowners_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        return  # тишина
+        return
     rows = get_coowners()
     if not rows:
         return await message.reply("📭 Нет совладельцев.", parse_mode="HTML", disable_web_page_preview=True)
@@ -7039,7 +7308,6 @@ async def promote_cmd(message: types.Message):
     if not target:
         return await message.reply("📌 <code>.повысить @user 3</code>", parse_mode="HTML", disable_web_page_preview=True)
 
-    # Себе нельзя — даже владельцу бота
     if target.id == actor_id:
         return await message.reply(
             f"{em('cross', '❌')} <b>Нельзя повышать себя.</b>\n"
@@ -7171,7 +7439,6 @@ async def list_admins_cmd(message: types.Message):
                 else:
                     name = f"<b>ID {user_id}</b>"
 
-            # 👨‍💻 — только для агентов Mos
             agent_icon = ""
             if is_agent(user_id):
                 agent_icon = "👨‍💻 "
@@ -7338,10 +7605,7 @@ async def grant_admin_cmd(message: types.Message):
         mark_bot_promoted(target.id, message.chat.id, message.from_user.id)
         await message.reply(f"{em('check', '✅')} {mention(target)} теперь <b>ТГ-админ</b>!", parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
-        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)
-
-
-# ================= АВТОМОД =================
+        await message.reply(f"{em('cross', '❌')} Ошибка: {e}", parse_mode="HTML", disable_web_page_preview=True)# ================= АВТОМОД =================
 def _fmt_time(minutes):
     if minutes >= 1440: return f"{minutes // 1440} дн."
     if minutes >= 60: return f"{minutes // 60} ч."
@@ -7354,7 +7618,6 @@ async def _check_automod_perms(message):
 
     if user_id == OWNER_ID or is_coowner(user_id):
         return True
-
     if has_agent_rank(user_id, 1):
         return True
 
@@ -7371,7 +7634,6 @@ async def _check_automod_perms(message):
     if await is_tg_admin(chat_id, user_id):
         return True
 
-    # Обычные — отвечаем «Нет прав»
     await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True)
     return False
 
@@ -7519,7 +7781,10 @@ async def afl_ban_cmd(message): await _set_automod_time(message, "antiflood", "b
 async def ac_mute_cmd(message): await _set_automod_time(message, "anticaps", "mute")
 
 @cmd("антисtickermut")
-async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker", "mute")# ================= АЧИВКИ =================
+async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker", "mute")
+
+
+# ================= АЧИВКИ =================
 @cmd("ачивки")
 @cmd("все ачивки")
 async def list_achievements_cmd(message: types.Message):
@@ -8037,10 +8302,7 @@ async def successful_payment_handler(message: types.Message):
     await message.reply(
         f"{em('check', '✅')} <b>Покупка успешна!</b>\n\n🍬 +{amount_candies}\n⭐ {stars_paid}",
         parse_mode="HTML", disable_web_page_preview=True
-    )
-
-
-# ================= РЫБАЛКА — ПОМОЩЬ =================
+    )# ================= РЫБАЛКА — ПОМОЩЬ =================
 def _fishing_help_text() -> str:
     return (
         "🎣 <b>Рыбалка — Mos</b>\n"
@@ -8980,7 +9242,7 @@ async def delete_rp_cmd(message: types.Message):
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*\+гмрп\b', m.text.strip(), re.IGNORECASE))
 async def create_global_rp_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 4):
-        return  # тишина
+        return
     raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
     raw = re.sub(r'^\+гмрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
     parts = raw.split("/", 2)
@@ -9009,7 +9271,7 @@ async def create_global_rp_cmd(message: types.Message):
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*-гмрп\b', m.text.strip(), re.IGNORECASE))
 async def delete_global_rp_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 4):
-        return  # тишина
+        return
     raw = re.sub(r'^[.\/!]\s*', '', message.text.strip())
     raw = re.sub(r'^-гмрп\s*', '', raw, count=1, flags=re.IGNORECASE).strip()
     if not raw:
@@ -9153,8 +9415,7 @@ async def rules_cmd(message: types.Message):
         if len(parts) < 2: return
         nl_idx = message.text.find("\n")
         raw_text_html = _extract_html_after(message, nl_idx + 1)[:3500]
-        cleaned_text, links = extract_links_from_text(raw_text_html)
-        set_chat_rules(message.chat.id, cleaned_text, message.from_user.id)
+        set_chat_rules(message.chat.id, raw_text_html, message.from_user.id)
         return await message.reply(f"{em('check', '✅')} Правила установлены!", parse_mode="HTML", disable_web_page_preview=True)
     if sub in ["сброс", "удалить"]:
         if not has_permission(message.chat.id, message.from_user.id, 3): return
@@ -9188,9 +9449,8 @@ async def greeting_cmd(message: types.Message):
         nl_idx = message.text.find("\n")
         raw_text_html = _extract_html_after(message, nl_idx + 1)[:1000]
         if not raw_text_html: return
-        cleaned_text, links = extract_links_from_text(raw_text_html)
-        set_greeting(message.chat.id, cleaned_text, message.from_user.id)
-        return await message.reply(f"{em('check', '✅')} Установлено!\n\n{format_greeting(cleaned_text, message.from_user, message.chat)}", parse_mode="HTML", disable_web_page_preview=True)
+        set_greeting(message.chat.id, raw_text_html, message.from_user.id)
+        return await message.reply(f"{em('check', '✅')} Установлено!\n\n{format_greeting(raw_text_html, message.from_user, message.chat)}", parse_mode="HTML", disable_web_page_preview=True)
     if sub in ["сброс", "удалить"]:
         reset_greeting(message.chat.id)
         return await message.reply(f"{em('check', '✅')} Сброшено.", parse_mode="HTML", disable_web_page_preview=True)
@@ -9392,8 +9652,7 @@ async def set_about_cmd(message: types.Message):
     nl_idx = message.text.find("\n")
     if nl_idx == -1: return
     raw_html = _extract_html_after(message, nl_idx + 1)[:500]
-    cleaned, links = extract_links_from_text(raw_html)
-    set_user_about(message.from_user.id, cleaned)
+    set_user_about(message.from_user.id, raw_html)
     await message.reply("✅ Сохранено.", parse_mode="HTML", disable_web_page_preview=True)
 
 
@@ -9617,10 +9876,7 @@ async def set_vip_emoji_cmd(message: types.Message):
 async def remove_vip_emoji_cmd(message: types.Message):
     if not get_vip(message.from_user.id): return
     set_vip_emoji(message.from_user.id, None)
-    await message.reply("✅ Убран.", parse_mode="HTML", disable_web_page_preview=True)
-
-
-# ================= ЗАМЕТКИ =================
+    await message.reply("✅ Убран.", parse_mode="HTML", disable_web_page_preview=True)# ================= ЗАМЕТКИ =================
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+заметка "))
 async def create_note_cmd(message: types.Message):
     if not has_permission(message.chat.id, message.from_user.id, 3): return
@@ -9634,11 +9890,10 @@ async def create_note_cmd(message: types.Message):
         )
     name = name[:60]
 
-    # Собираем полный текст после первой строки со ВСЕМИ entities
     nl_idx = message.text.find("\n")
     body_html = _extract_html_after(message, nl_idx + 1)[:3500]
 
-    cleaned_body, links = extract_links_from_text(body_html)
+    cleaned_body = body_html
     if not cleaned_body.strip():
         return await message.reply("❌ Текст заметки пустой.", parse_mode="HTML", disable_web_page_preview=True)
 
@@ -9691,18 +9946,18 @@ async def get_note_cmd(message: types.Message):
         return await message.reply(f"{em('cross', '❌')} Заметка не найдена.", parse_mode="HTML", disable_web_page_preview=True)
 
     note_id, note_name, note_text = note[0], note[1], note[2]
-
-    # Формируем сообщение: заголовок «Заметка Название» + текст
     out = f"📌 <b>Заметка «{html_escape_text(note_name)}»</b>\n\n{note_text}"
 
     try:
         await message.reply(out, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
-        # Fallback — без HTML
         await message.reply(
             f"📌 Заметка «{note_name}»\n\n{re.sub(r'<[^>]+>', '', note_text)}",
             disable_web_page_preview=True
-        )# ================= СЕТКА =================
+        )
+
+
+# ================= СЕТКА =================
 @cmd("создать сетку")
 async def create_grid_cmd(message: types.Message):
     if message.chat.type != "private":
@@ -9984,15 +10239,12 @@ async def grid_command_router(message: types.Message):
                 removed_from += 1
             else:
                 failed += 1
-            try:
-                remove_rank(chat_id, target.id)
+            try: remove_rank(chat_id, target.id)
             except: pass
-            try:
-                unmark_bot_promoted(target.id, chat_id)
+            try: unmark_bot_promoted(target.id, chat_id)
             except: pass
         remove_grid_moderator(grid_id, target.id)
-        try:
-            remove_grid_user_rank(grid_id, target.id)
+        try: remove_grid_user_rank(grid_id, target.id)
         except: pass
         notify_text = (
             f"❌ <b>Снятие администратора в сетке</b>\n\n"
@@ -10114,10 +10366,7 @@ async def grid_command_router(message: types.Message):
         return await message.reply(
             f"{em('check', '✅')} <b>Чат отвязан от сетки</b>\n\n🕸 Было: <b>{grid_name}</b>",
             parse_mode="HTML", disable_web_page_preview=True
-        )
-
-
-# ================= БРАКИ =================
+        )# ================= БРАКИ =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!]?\s*брак(\s|$)', m.text.strip(), re.IGNORECASE))
 async def marriage_router(message: types.Message):
     txt = message.text.strip()
@@ -10520,7 +10769,7 @@ async def set_report_chat_cmd(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_permission(chat_id, user_id, 3):
-        return  # тишина
+        return
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         return await message.reply("📌 <b>Формат:</b>\n<code>+репорты КОДЧАТА</code>", parse_mode="HTML", disable_web_page_preview=True)
@@ -10546,7 +10795,7 @@ async def backup_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.strip().lower() in [".импорт", "/импорт", "!импорт"])
 async def import_db_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        return  # тишина
+        return
     if not message.reply_to_message or not message.reply_to_message.document:
         return await message.reply(f"{em('cross', '❌')} <b>Ответьте на .db файл командой .импорт</b>", parse_mode="HTML", disable_web_page_preview=True)
     doc = message.reply_to_message.document
@@ -10588,15 +10837,11 @@ async def import_db_cmd(message: types.Message):
         if os.path.exists(temp_path):
             try: os.remove(temp_path)
             except: pass
-        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")
-
-
-# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
+        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot: return
 
-    # Глобальный игнор — не обрабатываем, но НЕ удаляем сообщения
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
         if is_bot_ignored(message.from_user.id):
             return
@@ -10691,7 +10936,6 @@ async def all_messages(message: types.Message):
                 set_rank(message.chat.id, message.from_user.id, 5, message.from_user.id)
     except: pass
 
-    # Регистрируем того, кому отвечают
     if message.reply_to_message and message.reply_to_message.from_user:
         ru = message.reply_to_message.from_user
         if not ru.is_bot:
@@ -10699,7 +10943,6 @@ async def all_messages(message: types.Message):
 
     register_user(message.from_user.id, message.from_user.first_name, message.from_user.username or "")
 
-    # Регистрируем всех, кто упомянут через text_mention
     try:
         entities = message.entities or message.caption_entities or []
         for e in entities:
@@ -10745,7 +10988,6 @@ async def on_join(event: types.ChatMemberUpdated):
             await bot.ban_chat_member(chat_id, user.id, until_date=until)
             add_chat_ban(chat_id, user.id, "АС: вход в чат", 0, until.isoformat(), was_antispam=1)
 
-            # Кликабельный ник
             name = html_escape_text(user.first_name or "Пользователь")
             if getattr(user, "username", None):
                 nick = f'<a href="https://t.me/{user.username}">{name}</a>'
@@ -10775,22 +11017,31 @@ async def on_join(event: types.ChatMemberUpdated):
         elif bot_member.status == "administrator":
             bot_can_restrict = getattr(bot_member, "can_restrict_members", False)
     except: bot_can_restrict = False
+
     captcha_on = is_captcha_enabled(chat_id) and bot_can_restrict
     if not captcha_on:
         greeting = get_greeting(chat_id)
         if greeting:
-            try: await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
+            try:
+                sent = await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
+                _schedule_greeting_delete(chat_id, sent)
             except Exception as e:
                 pass
+        await _send_short_about_if_enabled(chat_id, user)
         return
+
     try:
         await bot.restrict_chat_member(chat_id=chat_id, user_id=user.id, permissions=types.ChatPermissions(can_send_messages=False))
     except Exception as e:
         greeting = get_greeting(chat_id)
         if greeting:
-            try: await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
+            try:
+                sent = await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
+                _schedule_greeting_delete(chat_id, sent)
             except: pass
+        await _send_short_about_if_enabled(chat_id, user)
         return
+
     captcha_type = _random.choice(["emoji", "math", "odd"])
     if captcha_type == "emoji":
         rd = _random.choice(CAPTCHA_EMOJI_ROUNDS)
@@ -10831,6 +11082,7 @@ async def on_join(event: types.ChatMemberUpdated):
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
         answer = str(emojis.index(odd))
         text_captcha = f"👋 {mention(user)}!\n\n🤖 <b>Найди отличающийся</b>"
+
     try:
         msg = await bot.send_message(chat_id, text_captcha, reply_markup=kb, parse_mode="HTML")
         save_captcha(user.id, chat_id, msg.message_id, captcha_type, answer)
@@ -10838,8 +11090,11 @@ async def on_join(event: types.ChatMemberUpdated):
     except Exception as e:
         greeting = get_greeting(chat_id)
         if greeting:
-            try: await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
+            try:
+                sent = await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
+                _schedule_greeting_delete(chat_id, sent)
             except: pass
+        await _send_short_about_if_enabled(chat_id, user)
 
 
 async def captcha_timeout(user_id, chat_id):
@@ -10894,10 +11149,14 @@ async def captcha_answer_handler(callback: types.CallbackQuery):
     if greeting:
         try:
             chat = await bot.get_chat(chat_id)
-            await bot.send_message(chat_id, format_greeting(greeting, callback.from_user, chat), parse_mode="HTML")
+            sent = await bot.send_message(chat_id, format_greeting(greeting, callback.from_user, chat), parse_mode="HTML")
+            _schedule_greeting_delete(chat_id, sent)
         except: pass
     else:
-        await bot.send_message(chat_id, f"👋 Привет, {mention(callback.from_user)}!", parse_mode="HTML")
+        sent = await bot.send_message(chat_id, f"👋 Привет, {mention(callback.from_user)}!", parse_mode="HTML")
+        _schedule_greeting_delete(chat_id, sent)
+
+    await _send_short_about_if_enabled(chat_id, callback.from_user)
     await callback.answer("✅ Пройдена!")
 
 
@@ -10939,7 +11198,6 @@ async def on_bot_added(event: types.ChatMemberUpdated):
     chat_id = event.chat.id
     chat_type = event.chat.type
 
-    # === 1. Заносим ВСЕХ администраторов в базу ===
     try:
         admins = await bot.get_chat_administrators(chat_id)
         for admin in admins:
@@ -10954,7 +11212,6 @@ async def on_bot_added(event: types.ChatMemberUpdated):
     except Exception as e:
         print(f"⚠️ on_bot_added admins: {e}")
 
-    # === 2. Пробуем получить владельца напрямую ===
     try:
         creator = await bot.get_chat_member(chat_id, event.from_user.id)
         if creator.status == "creator":
@@ -10962,12 +11219,10 @@ async def on_bot_added(event: types.ChatMemberUpdated):
             set_rank(chat_id, event.from_user.id, 5, event.from_user.id)
     except: pass
 
-    # === 3. Заносим того, кто добавил бота ===
     if event.from_user:
         u = event.from_user
         register_user(u.id, u.first_name, u.username or "")
 
-    # === 4. Сканируем известных пользователей из БД ===
     try:
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
@@ -10982,7 +11237,6 @@ async def on_bot_added(event: types.ChatMemberUpdated):
                 register_user(uid, r[0], r[1] or "")
     except: pass
 
-    # === 5. Приветствие ===
     if chat_type in ["group", "supergroup"]:
         try:
             await bot.send_message(
@@ -10996,10 +11250,7 @@ async def on_bot_added(event: types.ChatMemberUpdated):
 @dp.business_connection()
 async def on_business_connection(connection: types.BusinessConnection):
     if connection.is_enabled:
-        save_business_connection(connection.user.id, connection.id)
-
-
-# ================= ФОНОВЫЕ ЗАДАЧИ =================
+        save_business_connection(connection.user.id, connection.id)# ================= ФОНОВЫЕ ЗАДАЧИ =================
 async def auto_unban_loop():
     while True:
         try:
@@ -11021,7 +11272,6 @@ async def auto_unban_loop():
                             )
                         )
                     except: pass
-                    # Уведомление НЕ отправляем — тихий разбан
                 except Exception as e:
                     pass
 
@@ -11263,7 +11513,6 @@ async def main():
             ("01-24", "Международный день эскимо", "fun"),
             ("01-25", "День российского студенчества (Татьянин день)", "prof"),
             ("01-25", "Татьянин день", "folk"),
-            ("01-25", "Международный день женщин в многосторонних процессах", "global"),
             ("01-26", "Международный день таможенника", "prof"),
             ("01-27", "Международный день памяти жертв Холокоста", "global"),
             ("01-28", "День открытия Антарктиды", "global"),
