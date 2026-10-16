@@ -7848,7 +7848,9 @@ async def events_status_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     enabled = is_events_enabled(message.chat.id)
     status = "🟢 включены" if enabled else "🔴 выключены"
-    await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))м# ================= МРП =================
+    await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))м
+  
+# ================= МРП =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+мрп\b', m.text.strip(), re.IGNORECASE))
 async def create_rp_cmd(message: types.Message):
     if not get_vip(message.from_user.id):
