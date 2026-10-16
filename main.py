@@ -40,62 +40,45 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-# ================= ХЕЛПЕРЫ ИМЁН =================
+# ================= ХЕЛПЕРЫ =================
 def _match_command(message: types.Message, name_lower: str,
                    allow_args: bool = False,
                    args_pattern: str = None,
                    require_prefix: bool = False) -> bool:
-    """
-    Строгая проверка команды:
-    - Команда должна быть в ПЕРВОЙ строке.
-    - После команды — либо конец строки, либо аргументы на новой строке.
-    - allow_args=True + args_pattern — разрешить валидные аргументы в той же строке.
-    - require_prefix=True — обязателен префикс (. ! / + -).
-    """
     if not message.text:
         return False
     txt = message.text
     if not txt:
         return False
-
     txt_stripped = txt.lstrip()
     if not txt_stripped:
         return False
-
     had_prefix = txt_stripped[0] in ".!/+-"
     if had_prefix:
         txt_stripped = txt_stripped[1:].lstrip()
     if not txt_stripped:
         return False
-
     if require_prefix and not had_prefix:
         return False
-
     first_line = txt_stripped.split("\n", 1)[0].strip()
     if not first_line:
         return False
-
     first_line_lower = first_line.lower()
     name_lower_clean = name_lower.lower().strip()
     words_needed = name_lower_clean.split()
     words_have = first_line_lower.split()
-
     if len(words_have) < len(words_needed):
         return False
     if words_have[:len(words_needed)] != words_needed:
         return False
-
     tail = words_have[len(words_needed):]
     if not tail:
         return True
-
     if not allow_args:
         return False
-
     if args_pattern:
         rest_text = " ".join(tail)
         return bool(re.match(args_pattern, rest_text, re.IGNORECASE))
-
     return True
 
 
@@ -143,9 +126,7 @@ def mod_cmd(name: str, allow_args: bool = False, args_pattern: str = None, requi
     return decorator
 
 
-# ================= ХЕЛПЕРЫ ОТВЕТА =================
 def _reply_kwargs(message: types.Message) -> dict:
-    """Если команда была реплаем — бот тоже отвечает реплаем."""
     if message.reply_to_message:
         return {"reply_to_message_id": message.reply_to_message.message_id}
     return {}
@@ -320,10 +301,8 @@ def get_moderator_title(chat_id: int, rank: int, case: str = "nom") -> str:
 
 
 def set_moderator_title(chat_id: int, rank: int, case: str, value: str):
-    col_map = {
-        "nom": "title_nom", "gen": "title_gen", "dat": "title_dat",
-        "ins": "title_ins", "plu": "title_plu",
-    }
+    col_map = {"nom": "title_nom", "gen": "title_gen", "dat": "title_dat",
+               "ins": "title_ins", "plu": "title_plu"}
     col = col_map.get(case)
     if not col: return False
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -439,44 +418,32 @@ DEFAULT_ACCESS = {
     "ачивки": 0, "все ачивки": 0, "мои ачивки": 0, "твои ачивки": 0, "вип": 0, "купить вип": 0,
     "мрп": 0, "репорт": 0, "админы": 0, "ухожу в отставку": 0,
     "регион": 3, "рыбное место": 3, "локация": 3, "локации": 3,
-
     "translate": 0,
     "калькулятор": 0, "кальк": 0, "calc": 0,
     "курс": 0, "крипта": 0, "биржа": 0,
     "вики": 0, "wiki": 0,
     "праздники": 0, "праздник": 0, "holidays": 0,
-
     "запретить переводы": 0, "разрешить переводы": 0, "мои запреты": 0, "запреты": 0,
-
     "выдать ачивку": 3, "снять ачивку": 4, "создать ачивку": 4,
-
     "бан": 2, "разбан": 2, "мут": 1, "размут": 1, "кик": 1,
     "варн": 1, "варны": 1, "снятьварн": 2, "сбросварнов": 3,
     "наказания": 1, "баны": 1, "пин": 1, "закрепить": 1,
     "анпин": 1, "открепить": 1, "унпин": 1, "репорты": 3,
-
     "правила": 3, "приветствие": 3, "фильтрссылок": 3,
     "капча": 3, "автомод": 3, "автомодерация": 3,
     "капчавремя": 3, "капча время": 3,
     "обновить чат": 3, "обновитьчат": 3, "кто не писал": 2, "неактивные": 2,
-
     "повысить": 3, "понизить": 3, "разжаловать": 3, "снять": 3, "восстановить": 3,
-
     "агенты": 4, "скрытые": 5, "совладельцы": 5,
     "создать сетку": 5, "чаты": 1, "глобан": 2, "глоразбан": 2,
-
     "заметка": 3, "заметки": 3, "пополнить": 3,
-
     "инфобот": -2, "бэкап": -2, "импорт": -2,
-
     "дк": 3, "дк список": 3, "дк сброс": 3,
-
     "топ браков": 0,
     "поженить пару": 3,
     "развести пару": 3,
     "сброс браков": 4,
     "развести вышедших": 3,
-
     "антиспам": 3,
     "мос": 0,
     "модераторы": 4,
@@ -844,15 +811,9 @@ def format_citizenship_short(became_at_str):
 
 
 # ================= ЕДИНЫЙ СТИЛЬ ОТВЕТОВ =================
-def mod_action_text(
-    action_emoji: str,
-    action_title: str,
-    target_mention: str,
-    moderator_mention: str,
-    duration: str = None,
-    reason: str = None,
-    extra: str = None,
-) -> str:
+def mod_action_text(action_emoji: str, action_title: str, target_mention: str,
+                    moderator_mention: str, duration: str = None,
+                    reason: str = None, extra: str = None) -> str:
     lines = [f"{action_emoji} <b>{action_title}</b>", ""]
     lines.append(f"👤 Пользователь: {target_mention}")
     if duration:
@@ -930,9 +891,7 @@ def remove_rank(chat_id, user_id):
 def get_all_admins(chat_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("""SELECT user_id, rank FROM admins 
-                     WHERE chat_id = ? AND rank > 0 
-                     ORDER BY rank DESC""", (chat_id,))
+        c.execute("""SELECT user_id, rank FROM admins WHERE chat_id = ? AND rank > 0 ORDER BY rank DESC""", (chat_id,))
         return c.fetchall()
 
 
@@ -1229,17 +1188,6 @@ def get_chat_code(chat_id):
         c.execute("INSERT INTO chat_codes (chat_id, code) VALUES (?, ?)", (chat_id, code))
         conn.commit()
         return code
-
-
-def get_user_stats(user_id, chat_id):
-    today = datetime.now().date().isoformat()
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT SUM(count) FROM messages_stats WHERE user_id = ? AND chat_id = ? AND date = ?", (user_id, chat_id, today))
-        today_count = c.fetchone()[0] or 0
-        c.execute("SELECT SUM(count) FROM messages_stats WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-        all_count = c.fetchone()[0] or 0
-        return today_count, all_count
 
 
 async def is_tg_admin(chat_id, user_id):
@@ -1854,17 +1802,6 @@ def get_activity_extended_global(user_id):
     return day, week, month, total
 
 
-def get_user_position_in_chat(user_id, chat_id, period="30d"):
-    try:
-        top = get_top_users(chat_id, period, limit=500)
-        for i, (uid, _) in enumerate(top, 1):
-            if uid == user_id:
-                return i
-    except Exception:
-        pass
-    return None
-
-
 # ================= ИРИСКИ =================
 def get_balance(user_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
@@ -2062,21 +1999,6 @@ def register_user(user_id, first_name, username):
         if c.fetchone() is None:
             c.execute("INSERT INTO users (user_id, first_name, username) VALUES (?, ?, ?)", (user_id, first_name, username))
             conn.commit()
-
-
-def register_users_bulk(users: list):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        for u in users:
-            if not u or getattr(u, "is_bot", False):
-                continue
-            try:
-                c.execute("SELECT 1 FROM users WHERE user_id = ?", (u.id,))
-                if c.fetchone() is None:
-                    c.execute("INSERT INTO users (user_id, first_name, username) VALUES (?, ?, ?)",
-                              (u.id, u.first_name or "", u.username or ""))
-            except: pass
-        conn.commit()
 
 
 def get_user_info(user_id):
@@ -2538,7 +2460,7 @@ def mark_report_reviewed(report_id, reviewed_by):
         conn.commit()
 
 
-# ================= РЫБАЛКА — ПОДПИСКА НА КАНАЛ =================
+# ================= РЫБАЛКА — ПОДПИСКА =================
 async def is_subscribed_to_fishing_channel(user_id: int) -> bool:
     if not FISHING_REQUIRE_SUBSCRIPTION:
         return True
@@ -2553,315 +2475,123 @@ async def is_subscribed_to_fishing_channel(user_id: int) -> bool:
         print(f"⚠️ is_subscribed_to_fishing_channel: {e}")
         return False# ================= РЫБАЛКА — ДАННЫЕ =================
 LOCATIONS = {
-    "pier": {
-        "name": "🌊 Пирс", "emoji": "🌊",
-        "desc": "Спокойное место для новичков",
-        "min_level": 1, "vip_required": False,
-        "rare_chance": 0, "legendary_chance": 0, "treasure_chance": 0,
-    },
-    "rocks": {
-        "name": "🪨 Камни", "emoji": "🪨",
-        "desc": "Больше редкой рыбы, чем на пирсе",
-        "min_level": 5, "vip_required": False,
-        "rare_chance": 10, "legendary_chance": 2, "treasure_chance": 0,
-    },
-    "sunset_cape": {
-        "name": "🌅 Закатный мыс", "emoji": "🌅",
-        "desc": "Здесь ловится мифическая рыба",
-        "min_level": 15, "vip_required": False,
-        "rare_chance": 20, "legendary_chance": 5, "treasure_chance": 5,
-    },
-    "abyss": {
-        "name": "🌌 Бездна", "emoji": "🌌",
-        "desc": "Только для опытных. Опасно, но выгодно",
-        "min_level": 20, "vip_required": False,
-        "rare_chance": 35, "legendary_chance": 12, "treasure_chance": 10,
-    },
-    "treasure_island": {
-        "name": "🏝 Остров сокровищ", "emoji": "🏝",
-        "desc": "Здесь ловятся сокровища и редчайшая рыба",
-        "min_level": 30, "vip_required": True,
-        "rare_chance": 50, "legendary_chance": 20, "treasure_chance": 25,
-    },
+    "pier": {"name": "🌊 Пирс", "emoji": "🌊", "desc": "Спокойное место для новичков", "min_level": 1, "vip_required": False, "rare_chance": 0, "legendary_chance": 0, "treasure_chance": 0},
+    "rocks": {"name": "🪨 Камни", "emoji": "🪨", "desc": "Больше редкой рыбы, чем на пирсе", "min_level": 5, "vip_required": False, "rare_chance": 10, "legendary_chance": 2, "treasure_chance": 0},
+    "sunset_cape": {"name": "🌅 Закатный мыс", "emoji": "🌅", "desc": "Здесь ловится мифическая рыба", "min_level": 15, "vip_required": False, "rare_chance": 20, "legendary_chance": 5, "treasure_chance": 5},
+    "abyss": {"name": "🌌 Бездна", "emoji": "🌌", "desc": "Только для опытных. Опасно, но выгодно", "min_level": 20, "vip_required": False, "rare_chance": 35, "legendary_chance": 12, "treasure_chance": 10},
+    "treasure_island": {"name": "🏝 Остров сокровищ", "emoji": "🏝", "desc": "Здесь ловятся сокровища и редчайшая рыба", "min_level": 30, "vip_required": True, "rare_chance": 50, "legendary_chance": 20, "treasure_chance": 25},
 }
 
 
 FISH_LIST = [
-    ("Окунь",        "🐟", 1,   3,   100,  "river", "any"),
-    ("Ёрш",          "🐡", 2,   4,   80,   "river", "any"),
-    ("Пескарь",      "🐟", 1,   3,   75,   "river", "any"),
-    ("Плотва",       "🐟", 2,   5,   70,   "river", "day"),
-    ("Краснопёрка",  "🐠", 3,   6,   65,   "river", "day"),
-    ("Густера",      "🐟", 3,   7,   60,   "river", "any"),
-    ("Язь",          "🐟", 5,   10,  45,   "river", "day"),
-    ("Лещ",          "🐠", 4,   9,   50,   "river", "day"),
-    ("Линь",         "🐠", 6,   12,  40,   "river", "any"),
-    ("Голавль",      "🐟", 6,   11,  42,   "river", "day"),
-    ("Жерех",        "🐡", 8,   14,  32,   "river", "day"),
-    ("Щука",         "🐡", 8,   18,  30,   "river", "any"),
-    ("Судак",        "🐡", 10,  22,  24,   "river", "night"),
-    ("Налим",        "🐡", 12,  24,  18,   "river", "night"),
-    ("Сом",          "🦈", 15,  30,  12,   "river", "night"),
-    ("Форель",       "🐟", 12,  24,  20,   "river", "day"),
-    ("Хариус",       "🐠", 10,  20,  16,   "river", "day"),
-    ("Таймень",      "🐡", 30,  60,  4,    "river", "any"),
-    ("Ручьевая форель","🐟",14, 28, 14,   "river", "day"),
-    ("Карась",       "🐠", 2,   5,   95,   "lake", "any"),
-    ("Карп",         "🐠", 10,  24,  22,   "lake", "day"),
-    ("Сазан",        "🐟", 12,  26,  18,   "lake", "day"),
-    ("Толстолобик",  "🐡", 14,  28,  15,   "lake", "day"),
-    ("Белый амур",   "🐟", 16,  32,  12,   "lake", "day"),
-    ("Линь-гигант",  "🐠", 25,  50,  3,    "lake", "any"),
-    ("Угорь",        "🐍", 18,  34,  10,   "lake", "night"),
-    ("Золотой карась","✨", 40,  80,  2,    "lake", "any"),
-    ("Сельдь",       "🐟", 10,  20,  28,   "sea", "any"),
-    ("Скумбрия",     "🐠", 15,  28,  22,   "sea", "day"),
-    ("Ставрида",     "🐟", 12,  22,  24,   "sea", "any"),
-    ("Камбала",      "🐠", 16,  30,  18,   "sea", "night"),
-    ("Бычок",        "🐡", 8,   16,  30,   "sea", "any"),
-    ("Пикша",        "🐟", 18,  34,  16,   "sea", "any"),
-    ("Треска",       "🐟", 20,  38,  14,   "sea", "any"),
-    ("Морской окунь","🐠", 22,  40,  12,   "sea", "day"),
-    ("Сайда",        "🐟", 18,  32,  15,   "sea", "day"),
-    ("Зубатка",      "🐡", 25,  45,  8,    "sea", "night"),
-    ("Морской чёрт", "🐡", 45,  90,  2,    "sea", "night"),
-    ("Барракуда",    "🐡", 35,  70,  3,    "sea", "any"),
-    ("Мурена-детёныш","🐍", 25,  50,  4,    "sea", "night"),
-    ("Морской конёк","🐠", 20,  40,  8,    "sea", "day"),
-    ("Рыба-попугай", "🦜", 30,  60,  3,    "sea", "day"),
-    ("Кальмар",      "🦑", 30,  60,  6,    "sea", "night"),
-    ("Осьминог",     "🐙", 45,  90,  2,    "sea", "night"),
-    ("Тунец",        "🐟", 40,  80,  5,    "ocean", "any"),
-    ("Меч-рыба",     "🗡", 55,  110, 3,    "ocean", "day"),
-    ("Рыба-меч",     "🗡", 60,  120, 2,    "ocean", "any"),
-    ("Марлин",       "🐟", 70,  140, 1.5,  "ocean", "day"),
-    ("Парусник",     "🐟", 80,  160, 1.2,  "ocean", "day"),
-    ("Мурена",       "🐍", 50,  100, 3,    "ocean", "night"),
-    ("Ильная рыба",  "🐟", 45,  90,  1.8,  "ocean", "night"),
-    ("Гигантский тресковый","🐟",50,100,2,"ocean", "any"),
-    ("Королевский лосось","🐠",55,110,1,  "ocean", "day"),
-    ("Кета",         "🐡", 45,  90,  1.2,  "ocean", "any"),
-    ("Кижуч",        "🐟", 55,  110, 1,    "ocean", "day"),
-    ("Нерка",        "🐟", 60,  120, 0.8,  "ocean", "any"),
-    ("Призрачный карп","👻",100,200,0.3,  "any", "night"),
-    ("Лунная рыба",  "🌙", 150, 300, 0.2,  "any", "night"),
-    ("Рыба-дракончик","🐉",200, 400, 0.1,  "any", "any"),
-    ("Золотая рыбка","✨", 250, 500, 0.05, "any", "any"),
-    ("Радужный лосось","🌈",180,360,0.1,  "any", "any"),
-    ("Стеклянная рыба","🔮",220,440,0.08, "any", "any"),
-    ("Электрический угорь","⚡",180, 340, 0.4, "river", "any"),
-    ("Скат-электро",       "⚡",250, 480, 0.2, "sea",   "night"),
-    ("Рыба-молния",        "⚡",320, 620, 0.1, "any",   "any"),
-    ("Удильщик",           "🎣",150, 290, 0.5, "ocean", "night"),
-    ("Рыба-фонарь",        "🔦",120, 240, 0.6, "ocean", "night"),
-    ("Гигантский кальмар", "🦑",280, 540, 0.15,"ocean", "night"),
-    ("Плащеносец",         "🦎",200, 400, 0.2, "ocean", "night"),
-    ("Древний латимерия",  "🦴",450, 900, 0.05,"any",   "any"),
-    ("Акула-молот",        "🦈",400, 800, 0.08,"ocean", "day"),
-    ("Акула-тигр",         "🦈",380, 760, 0.1, "ocean", "any"),
-    ("Китовая акула",      "🦈",700, 1400,0.02,"ocean", "any"),
-    ("Русалочья рыбка",    "🧜",300, 600, 0.1, "sea",   "day"),
-    ("Рыба-пегас",         "🦄",350, 700, 0.08,"any",   "day"),
-    ("Единороговая рыба",  "🦄",420, 840, 0.05,"any",   "any"),
-    ("Кристальная рыба",   "💎",380, 760, 0.06,"any",   "day"),
-    ("Рыба-клоун",         "🐠",25,  50,  20,  "sea",   "day"),
-    ("Хирург-рыба",        "🐠",30,  60,  15,  "sea",   "day"),
-    ("Мурена-радуга",      "🐍",55,  110, 5,   "sea",   "night"),
-    ("Крылатка",           "🦁",80,  160, 3,   "sea",   "any"),
-    ("Рыба-шар",           "🟠",40,  80,  10,  "sea",   "any"),
-    ("Щука-гигант",        "🐡",120, 240, 1.5, "lake",  "any"),
-    ("Сом-людоед",         "🐡",150, 300, 1.0, "river", "night"),
-    ("Пирания",            "🐟",90,  180, 2.5, "river", "any"),
-    ("Барракуда-гигант",   "🐡",180, 360, 1.2, "sea",   "night"),
-    ("Майская рыба",       "🌸",60,  120, 5,   "any",   "day"),
-    ("Осенний лосось",     "🍂",100, 200, 3,   "river", "any"),
-    ("Зимний сиг",         "❄️",80,  160, 4,   "lake",  "any"),
-    ("Летний окунь",       "☀️",50,  100, 8,   "any",   "day"),
-    ("Рыба-хамелеон",      "🦎",150, 300, 1.5, "any",   "any"),
-    ("Стеклянный карп",    "🔮",180, 360, 1.0, "lake",  "any"),
-    ("Стальная щука",      "⚙️",220, 440, 0.5, "river", "any"),
+    ("Окунь","🐟",1,3,100,"river","any"),("Ёрш","🐡",2,4,80,"river","any"),("Пескарь","🐟",1,3,75,"river","any"),
+    ("Плотва","🐟",2,5,70,"river","day"),("Краснопёрка","🐠",3,6,65,"river","day"),("Густера","🐟",3,7,60,"river","any"),
+    ("Язь","🐟",5,10,45,"river","day"),("Лещ","🐠",4,9,50,"river","day"),("Линь","🐠",6,12,40,"river","any"),
+    ("Голавль","🐟",6,11,42,"river","day"),("Жерех","🐡",8,14,32,"river","day"),("Щука","🐡",8,18,30,"river","any"),
+    ("Судак","🐡",10,22,24,"river","night"),("Налим","🐡",12,24,18,"river","night"),("Сом","🦈",15,30,12,"river","night"),
+    ("Форель","🐟",12,24,20,"river","day"),("Хариус","🐠",10,20,16,"river","day"),("Таймень","🐡",30,60,4,"river","any"),
+    ("Ручьевая форель","🐟",14,28,14,"river","day"),("Карась","🐠",2,5,95,"lake","any"),("Карп","🐠",10,24,22,"lake","day"),
+    ("Сазан","🐟",12,26,18,"lake","day"),("Толстолобик","🐡",14,28,15,"lake","day"),("Белый амур","🐟",16,32,12,"lake","day"),
+    ("Линь-гигант","🐠",25,50,3,"lake","any"),("Угорь","🐍",18,34,10,"lake","night"),("Золотой карась","✨",40,80,2,"lake","any"),
+    ("Сельдь","🐟",10,20,28,"sea","any"),("Скумбрия","🐠",15,28,22,"sea","day"),("Ставрида","🐟",12,22,24,"sea","any"),
+    ("Камбала","🐠",16,30,18,"sea","night"),("Бычок","🐡",8,16,30,"sea","any"),("Пикша","🐟",18,34,16,"sea","any"),
+    ("Треска","🐟",20,38,14,"sea","any"),("Морской окунь","🐠",22,40,12,"sea","day"),("Сайда","🐟",18,32,15,"sea","day"),
+    ("Зубатка","🐡",25,45,8,"sea","night"),("Морской чёрт","🐡",45,90,2,"sea","night"),("Барракуда","🐡",35,70,3,"sea","any"),
+    ("Мурена-детёныш","🐍",25,50,4,"sea","night"),("Морской конёк","🐠",20,40,8,"sea","day"),("Рыба-попугай","🦜",30,60,3,"sea","day"),
+    ("Кальмар","🦑",30,60,6,"sea","night"),("Осьминог","🐙",45,90,2,"sea","night"),("Тунец","🐟",40,80,5,"ocean","any"),
+    ("Меч-рыба","🗡",55,110,3,"ocean","day"),("Рыба-меч","🗡",60,120,2,"ocean","any"),("Марлин","🐟",70,140,1.5,"ocean","day"),
+    ("Парусник","🐟",80,160,1.2,"ocean","day"),("Мурена","🐍",50,100,3,"ocean","night"),("Ильная рыба","🐟",45,90,1.8,"ocean","night"),
+    ("Гигантский тресковый","🐟",50,100,2,"ocean","any"),("Королевский лосось","🐠",55,110,1,"ocean","day"),("Кета","🐡",45,90,1.2,"ocean","any"),
+    ("Кижуч","🐟",55,110,1,"ocean","day"),("Нерка","🐟",60,120,0.8,"ocean","any"),("Призрачный карп","👻",100,200,0.3,"any","night"),
+    ("Лунная рыба","🌙",150,300,0.2,"any","night"),("Рыба-дракончик","🐉",200,400,0.1,"any","any"),("Золотая рыбка","✨",250,500,0.05,"any","any"),
+    ("Радужный лосось","🌈",180,360,0.1,"any","any"),("Стеклянная рыба","🔮",220,440,0.08,"any","any"),
+    ("Электрический угорь","⚡",180,340,0.4,"river","any"),("Скат-электро","⚡",250,480,0.2,"sea","night"),("Рыба-молния","⚡",320,620,0.1,"any","any"),
+    ("Удильщик","🎣",150,290,0.5,"ocean","night"),("Рыба-фонарь","🔦",120,240,0.6,"ocean","night"),("Гигантский кальмар","🦑",280,540,0.15,"ocean","night"),
+    ("Плащеносец","🦎",200,400,0.2,"ocean","night"),("Древний латимерия","🦴",450,900,0.05,"any","any"),("Акула-молот","🦈",400,800,0.08,"ocean","day"),
+    ("Акула-тигр","🦈",380,760,0.1,"ocean","any"),("Китовая акула","🦈",700,1400,0.02,"ocean","any"),("Русалочья рыбка","🧜",300,600,0.1,"sea","day"),
+    ("Рыба-пегас","🦄",350,700,0.08,"any","day"),("Единороговая рыба","🦄",420,840,0.05,"any","any"),("Кристальная рыба","💎",380,760,0.06,"any","day"),
+    ("Рыба-клоун","🐠",25,50,20,"sea","day"),("Хирург-рыба","🐠",30,60,15,"sea","day"),("Мурена-радуга","🐍",55,110,5,"sea","night"),
+    ("Крылатка","🦁",80,160,3,"sea","any"),("Рыба-шар","🟠",40,80,10,"sea","any"),("Щука-гигант","🐡",120,240,1.5,"lake","any"),
+    ("Сом-людоед","🐡",150,300,1.0,"river","night"),("Пирания","🐟",90,180,2.5,"river","any"),("Барракуда-гигант","🐡",180,360,1.2,"sea","night"),
+    ("Майская рыба","🌸",60,120,5,"any","day"),("Осенний лосось","🍂",100,200,3,"river","any"),("Зимний сиг","❄️",80,160,4,"lake","any"),
+    ("Летний окунь","☀️",50,100,8,"any","day"),("Рыба-хамелеон","🦎",150,300,1.5,"any","any"),("Стеклянный карп","🔮",180,360,1.0,"lake","any"),
+    ("Стальная щука","⚙️",220,440,0.5,"river","any"),
 ]
 
 
 LEGENDARY_FISH = [
-    ("Мурена-гигант",   "🐍", 250,   500,   25),
-    ("Акула",           "🦈", 400,   800,   20),
-    ("Рыба-луна",       "🌕", 500,   1000,  15),
-    ("Голубой марлин",  "🐟", 700,   1400,  12),
-    ("Гигантский сом",  "🐟", 600,   1200,  10),
-    ("Кит-детёныш",     "🐋", 900,   1800,  8),
-    ("Кракен",          "🦑", 1500,  3000,  5),
-    ("Морской дракон",  "🐲", 2000,  4000,  3),
-    ("Император-краб",  "🦀", 2500,  5000,  2.5),
-    ("Древний осьминог","🐙", 3000,  6000,  2),
-    ("Хранитель глубин","🌊", 4000,  8000,  1.5),
-    ("Левиафан",        "🐉", 6000,  12000, 1),
-    ("Рыба-феникс",     "🔥", 8000,  16000, 0.5),
-    ("Космический кит", "🌌", 10000, 20000, 0.3),
-    ("Рыба-бог",        "⚡", 15000, 30000, 0.15),
-    ("Император морей", "🔱", 20000, 40000, 0.1),
-    ("Посейдон",        "🌊", 30000, 60000, 0.05),
-    ("Аватар моря",     "🌊", 50000, 100000, 0.03),
-    ("Рыба-титан",      "🗿", 70000, 140000, 0.02),
-    ("Рыба-хаос",       "🌀", 100000, 200000, 0.01),
-    ("Дух океана",      "👻", 150000, 300000, 0.005),
+    ("Мурена-гигант","🐍",250,500,25),("Акула","🦈",400,800,20),("Рыба-луна","🌕",500,1000,15),
+    ("Голубой марлин","🐟",700,1400,12),("Гигантский сом","🐟",600,1200,10),("Кит-детёныш","🐋",900,1800,8),
+    ("Кракен","🦑",1500,3000,5),("Морской дракон","🐲",2000,4000,3),("Император-краб","🦀",2500,5000,2.5),
+    ("Древний осьминог","🐙",3000,6000,2),("Хранитель глубин","🌊",4000,8000,1.5),("Левиафан","🐉",6000,12000,1),
+    ("Рыба-феникс","🔥",8000,16000,0.5),("Космический кит","🌌",10000,20000,0.3),("Рыба-бог","⚡",15000,30000,0.15),
+    ("Император морей","🔱",20000,40000,0.1),("Посейдон","🌊",30000,60000,0.05),("Аватар моря","🌊",50000,100000,0.03),
+    ("Рыба-титан","🗿",70000,140000,0.02),("Рыба-хаос","🌀",100000,200000,0.01),("Дух океана","👻",150000,300000,0.005),
 ]
 
 
 THINGS_LIST = [
-    ("Ржавый ключ",         "🗝", 60,  1,   "candies"),
-    ("Пустая бутылка",      "🍾", 80,  2,   "candies"),
-    ("Старый ботинок",      "👟", 70,  3,   "candies"),
-    ("Консервная банка",    "🥫", 75,  2,   "candies"),
-    ("Кусок водоросли",     "🌿", 65,  1,   "candies"),
-    ("Морской мусор",       "🗑", 45,  0,   "candies"),
-    ("Пакет",               "🛍", 55,  1,   "candies"),
-    ("Ржавая цепь",         "⛓", 30,  8,   "candies"),
-    ("Пустая ракушка",      "🐚", 40,  2,   "candies"),
-    ("Ржавый крючок",       "🪝", 30,  5,   "candies"),
-    ("Морская ракушка",     "🐚", 55,  4,   "candies"),
-    ("Морская звезда",      "⭐", 25,  12,  "candies"),
-    ("Медуза",              "🎐", 35,  6,   "candies"),
-    ("Морское стекло",      "🔷", 15,  50,  "candies"),
-    ("Коралловый обломок",  "🪸", 20,  35,  "candies"),
-    ("Чешуйка русалки",     "🧜‍♀️", 5, 200, "candies"),
-    ("Потерянная монета",   "🪙", 50,  15,  "candies"),
-    ("Мелкая монетка",      "💰", 40,  25,  "candies"),
-    ("Старинная монета",    "🪙", 15,  80,  "candies"),
-    ("Золотой слиток",      "🥇", 8,   800, "candies"),
-    ("Старое письмо",       "📜", 15,  30,  "candies"),
-    ("Древняя карта",       "🗺", 20,  40,  "candies"),
-    ("Старинный пергамент", "📜", 6,   150, "candies"),
-    ("Карта сокровищ",      "🗺", 0.3, 3000,"candies"),
-    ("Морской жемчуг",      "🦪", 10,  60,  "candies"),
-    ("Светящийся жемчуг",   "🔮", 8,   100, "candies"),
-    ("Розовый жемчуг",      "🩷", 5,   250, "pearl"),
-    ("Чёрный жемчуг",       "🖤", 2,   500, "pearl"),
-    ("Драгоценный камень",  "💠", 6,   120, "candies"),
-    ("Сапфир",              "🔷", 3,   350, "candies"),
-    ("Изумруд",             "💚", 3,   350, "candies"),
-    ("Алмаз",               "💎", 1,   700, "candies"),
-    ("Старый череп",        "💀", 12,  25,  "candies"),
-    ("Ржавый нож",          "🔪", 22,  10,  "candies"),
-    ("Сломанный компас",    "🧭", 18,  35,  "candies"),
-    ("Полузатонувший сундук","🗃", 5,  200, "candies"),
-    ("Сундук с сокровищами","🎁", 2.5, 500, "candies"),
-    ("Затонувший клад",     "🏴‍☠️", 0.8, 1500,"candies"),
-    ("Реликвия древних",    "🏺", 0.5, 2000,"candies"),
-    ("Ржавый якорь",        "⚓", 25,  20,  "candies"),
-    ("Рыбий жир",           "🧴", 20,  30,  "candies"),
-    ("Бутылка рома",        "🥃", 8,   100, "candies"),
-    ("Золотая маска",       "🎭", 0.5, 2500,"candies"),
-    ("Корона глубин",       "👑", 0.3, 3000,"candies"),
-    ("Кристалл силы",       "💠", 0.4, 2200,"candies"),
-    ("Прикормка (+1 ч)",    "🍯", 3,   0,   "gear_bait"),
-    ("Счастливая монета",   "🍀", 1.5, 0,   "gear_lucky"),
-    ("Крепкий крючок",      "🪝", 2,   0,   "gear_hook"),
-    ("Обломок лодки",       "🛶", 0.5, 0,   "gear_boat"),
-    ("Осколок поплавка",    "🔮", 1,   0,   "gear_float"),
+    ("Ржавый ключ","🗝",60,1,"candies"),("Пустая бутылка","🍾",80,2,"candies"),("Старый ботинок","👟",70,3,"candies"),
+    ("Консервная банка","🥫",75,2,"candies"),("Кусок водоросли","🌿",65,1,"candies"),("Морской мусор","🗑",45,0,"candies"),
+    ("Пакет","🛍",55,1,"candies"),("Ржавая цепь","⛓",30,8,"candies"),("Пустая ракушка","🐚",40,2,"candies"),
+    ("Ржавый крючок","🪝",30,5,"candies"),("Морская ракушка","🐚",55,4,"candies"),("Морская звезда","⭐",25,12,"candies"),
+    ("Медуза","🎐",35,6,"candies"),("Морское стекло","🔷",15,50,"candies"),("Коралловый обломок","🪸",20,35,"candies"),
+    ("Чешуйка русалки","🧜‍♀️",5,200,"candies"),("Потерянная монета","🪙",50,15,"candies"),("Мелкая монетка","💰",40,25,"candies"),
+    ("Старинная монета","🪙",15,80,"candies"),("Золотой слиток","🥇",8,800,"candies"),("Старое письмо","📜",15,30,"candies"),
+    ("Древняя карта","🗺",20,40,"candies"),("Старинный пергамент","📜",6,150,"candies"),("Карта сокровищ","🗺",0.3,3000,"candies"),
+    ("Морской жемчуг","🦪",10,60,"candies"),("Светящийся жемчуг","🔮",8,100,"candies"),("Розовый жемчуг","🩷",5,250,"pearl"),
+    ("Чёрный жемчуг","🖤",2,500,"pearl"),("Драгоценный камень","💠",6,120,"candies"),("Сапфир","🔷",3,350,"candies"),
+    ("Изумруд","💚",3,350,"candies"),("Алмаз","💎",1,700,"candies"),("Старый череп","💀",12,25,"candies"),
+    ("Ржавый нож","🔪",22,10,"candies"),("Сломанный компас","🧭",18,35,"candies"),("Полузатонувший сундук","🗃",5,200,"candies"),
+    ("Сундук с сокровищами","🎁",2.5,500,"candies"),("Затонувший клад","🏴‍☠️",0.8,1500,"candies"),("Реликвия древних","🏺",0.5,2000,"candies"),
+    ("Ржавый якорь","⚓",25,20,"candies"),("Рыбий жир","🧴",20,30,"candies"),("Бутылка рома","🥃",8,100,"candies"),
+    ("Золотая маска","🎭",0.5,2500,"candies"),("Корона глубин","👑",0.3,3000,"candies"),("Кристалл силы","💠",0.4,2200,"candies"),
+    ("Прикормка (+1 ч)","🍯",3,0,"gear_bait"),("Счастливая монета","🍀",1.5,0,"gear_lucky"),
+    ("Крепкий крючок","🪝",2,0,"gear_hook"),("Обломок лодки","🛶",0.5,0,"gear_boat"),("Осколок поплавка","🔮",1,0,"gear_float"),
 ]
 
 
 FISHING_GEAR = {
-    "hook": {
-        "name": "🪝 Крючок",
-        "base_price": 500,
-        "max_level": 5,
-        "bonus_per_level": 0.05,
-        "flat_per_level": 0,
-        "desc": "+5% к улову за уровень",
-    },
-    "spinning": {
-        "name": "🎣 Спиннинг",
-        "base_price": 1500,
-        "max_level": 5,
-        "bonus_per_level": 0.10,
-        "flat_per_level": 0,
-        "desc": "+10% к улову за уровень",
-    },
-    "bucket": {
-        "name": "🪣 Ведро",
-        "base_price": 2000,
-        "max_level": 5,
-        "bonus_per_level": 0.0,
-        "flat_per_level": 1,
-        "desc": "+1 🍬 к награде за уровень",
-    },
-    "boat": {
-        "name": "🚤 Лодка",
-        "base_price": 5000,
-        "max_level": 3,
-        "bonus_per_level": 0.0,
-        "flat_per_level": 0,
-        "rare_per_level": 10,
-        "desc": "+10% к шансу редкой рыбы за уровень",
-    },
-    "premium_rod": {
-        "name": "🎣 Премиум-удочка",
-        "base_price": 10000,
-        "max_level": 3,
-        "bonus_per_level": 0.05,
-        "flat_per_level": 0,
-        "legendary_per_level": 3,
-        "desc": "+5% к улову и +3% к шансу легендарки за уровень",
-    },
-    "magic_float": {
-        "name": "🔮 Магический поплавок",
-        "base_price": 25000,
-        "max_level": 5,
-        "bonus_per_level": 0.0,
-        "flat_per_level": 0,
-        "legendary_per_level": 2,
-        "desc": "+2% к шансу легендарки за уровень",
-    },
+    "hook": {"name": "🪝 Крючок", "base_price": 500, "max_level": 5, "bonus_per_level": 0.05, "flat_per_level": 0, "desc": "+5% к улову за уровень"},
+    "spinning": {"name": "🎣 Спиннинг", "base_price": 1500, "max_level": 5, "bonus_per_level": 0.10, "flat_per_level": 0, "desc": "+10% к улову за уровень"},
+    "bucket": {"name": "🪣 Ведро", "base_price": 2000, "max_level": 5, "bonus_per_level": 0.0, "flat_per_level": 1, "desc": "+1 🍬 к награде за уровень"},
+    "boat": {"name": "🚤 Лодка", "base_price": 5000, "max_level": 3, "bonus_per_level": 0.0, "flat_per_level": 0, "rare_per_level": 10, "desc": "+10% к шансу редкой рыбы за уровень"},
+    "premium_rod": {"name": "🎣 Премиум-удочка", "base_price": 10000, "max_level": 3, "bonus_per_level": 0.05, "flat_per_level": 0, "legendary_per_level": 3, "desc": "+5% к улову и +3% к шансу легендарки"},
+    "magic_float": {"name": "🔮 Магический поплавок", "base_price": 25000, "max_level": 5, "bonus_per_level": 0.0, "flat_per_level": 0, "legendary_per_level": 2, "desc": "+2% к шансу легендарки за уровень"},
 }
 
 
 FISHING_EVENTS = {
-    "rain":      {"name": "🌧 Дождь",         "bonus": 1.2, "duration": 30},
-    "heavy_rain":{"name": "⛈ Сильный дождь",  "bonus": 1.1, "duration": 20, "rare_boost": 1.2},
-    "storm":     {"name": "🌩 Гроза",          "bonus": 0.8, "duration": 15},
-    "fog":       {"name": "🌫 Туман",         "bonus": 0.9, "duration": 20},
-    "snow":      {"name": "❄️ Снег",           "bonus": 1.15,"duration": 40},
-    "hail":      {"name": "🌨 Град",           "bonus": 0.7, "duration": 10},
-    "wind":      {"name": "💨 Ветер",          "bonus": 1.1, "duration": 25},
-    "calm":      {"name": "☀️ Штиль",         "bonus": 1.0, "duration": 30},
-    "sunrise":   {"name": "🌅 Рассвет",       "bonus": 1.25,"duration": 25, "rare_boost": 1.3},
-    "sunset":    {"name": "🌇 Закат",         "bonus": 1.35,"duration": 30, "rare_boost": 1.4},
-    "night":     {"name": "🌙 Ночь",          "bonus": 1.3, "duration": 45, "rare_boost": 2.0},
-    "midnight":  {"name": "🌑 Полночь",       "bonus": 1.5, "duration": 20, "rare_boost": 2.5},
-    "twilight":  {"name": "🌆 Сумерки",       "bonus": 1.2, "duration": 20},
-    "full_moon":    {"name": "🌕 Полнолуние",  "bonus": 1.4, "duration": 40, "rare_boost": 3.0},
-    "new_moon":     {"name": "🌑 Новолуние",   "bonus": 1.35,"duration": 40, "rare_boost": 2.5},
-    "eclipse":      {"name": "🌒 Затмение",    "bonus": 1.7, "duration": 15, "rare_boost": 2.5},
-    "meteor":       {"name": "☄️ Метеоритный дождь","bonus": 1.6, "duration": 20, "rare_boost": 2.0},
-    "aurora":       {"name": "🌌 Северное сияние","bonus": 1.8, "duration": 30, "rare_boost": 2.5},
-    "school":       {"name": "🐟 Стая",          "bonus": 1.2, "duration": 20},
-    "migration":    {"name": "🐟 Миграция",      "bonus": 1.8, "duration": 20, "rare_boost": 1.5},
-    "boil":         {"name": "🫧 Кипение воды",  "bonus": 1.5, "duration": 15},
-    "spawning":     {"name": "🥚 Нерест",        "bonus": 2.0, "duration": 15, "rare_boost": 1.5},
-    "magic_hour":   {"name": "✨ Магический час", "bonus": 2.5, "duration": 10, "rare_boost": 3.0},
-    "portal":       {"name": "🌀 Портал",        "bonus": 3.0, "duration": 5,  "rare_boost": 5.0},
-    "sea_spirit":   {"name": "🧜 Дух моря",      "bonus": 2.2, "duration": 15, "rare_boost": 3.5},
-    "magnetic":     {"name": "🧲 Магнитная буря","bonus": 1.3, "duration": 25, "rare_boost": 1.8},
-    "blackout":     {"name": "⚡ Энергетическая буря","bonus": 1.4, "duration": 15},
+    "rain":{"name":"🌧 Дождь","bonus":1.2,"duration":30},"heavy_rain":{"name":"⛈ Сильный дождь","bonus":1.1,"duration":20,"rare_boost":1.2},
+    "storm":{"name":"🌩 Гроза","bonus":0.8,"duration":15},"fog":{"name":"🌫 Туман","bonus":0.9,"duration":20},"snow":{"name":"❄️ Снег","bonus":1.15,"duration":40},
+    "hail":{"name":"🌨 Град","bonus":0.7,"duration":10},"wind":{"name":"💨 Ветер","bonus":1.1,"duration":25},"calm":{"name":"☀️ Штиль","bonus":1.0,"duration":30},
+    "sunrise":{"name":"🌅 Рассвет","bonus":1.25,"duration":25,"rare_boost":1.3},"sunset":{"name":"🌇 Закат","bonus":1.35,"duration":30,"rare_boost":1.4},
+    "night":{"name":"🌙 Ночь","bonus":1.3,"duration":45,"rare_boost":2.0},"midnight":{"name":"🌑 Полночь","bonus":1.5,"duration":20,"rare_boost":2.5},
+    "twilight":{"name":"🌆 Сумерки","bonus":1.2,"duration":20},"full_moon":{"name":"🌕 Полнолуние","bonus":1.4,"duration":40,"rare_boost":3.0},
+    "new_moon":{"name":"🌑 Новолуние","bonus":1.35,"duration":40,"rare_boost":2.5},"eclipse":{"name":"🌒 Затмение","bonus":1.7,"duration":15,"rare_boost":2.5},
+    "meteor":{"name":"☄️ Метеоритный дождь","bonus":1.6,"duration":20,"rare_boost":2.0},"aurora":{"name":"🌌 Северное сияние","bonus":1.8,"duration":30,"rare_boost":2.5},
+    "school":{"name":"🐟 Стая","bonus":1.2,"duration":20},"migration":{"name":"🐟 Миграция","bonus":1.8,"duration":20,"rare_boost":1.5},
+    "boil":{"name":"🫧 Кипение воды","bonus":1.5,"duration":15},"spawning":{"name":"🥚 Нерест","bonus":2.0,"duration":15,"rare_boost":1.5},
+    "magic_hour":{"name":"✨ Магический час","bonus":2.5,"duration":10,"rare_boost":3.0},"portal":{"name":"🌀 Портал","bonus":3.0,"duration":5,"rare_boost":5.0},
+    "sea_spirit":{"name":"🧜 Дух моря","bonus":2.2,"duration":15,"rare_boost":3.5},"magnetic":{"name":"🧲 Магнитная буря","bonus":1.3,"duration":25,"rare_boost":1.8},
+    "blackout":{"name":"⚡ Энергетическая буря","bonus":1.4,"duration":15},
 }
 
 
 FISHING_ACHIEVEMENTS = {
-    "first_fish":      {"name": "🥇 Первый улов",         "check": lambda u: u["total_caught"] >= 1},
-    "ten_fish":        {"name": "🎣 10 рыб",              "check": lambda u: u["total_caught"] >= 10},
-    "hundred_fish":    {"name": "🎣 100 рыб",             "check": lambda u: u["total_caught"] >= 100},
-    "five_hundred":    {"name": "🐟 500 рыб",             "check": lambda u: u["total_caught"] >= 500},
-    "thousand_fish":   {"name": "🏆 1000 рыб",            "check": lambda u: u["total_caught"] >= 1000},
-    "level_5":         {"name": "📈 Рыбак-новичок",       "check": lambda u: u["level"] >= 5},
-    "level_10":        {"name": "📈 Рыбак-любитель",      "check": lambda u: u["level"] >= 10},
-    "level_25":        {"name": "📈 Рыбак-знаток",        "check": lambda u: u["level"] >= 25},
-    "level_50":        {"name": "🏆 Рыбак-профи",         "check": lambda u: u["level"] >= 50},
-    "level_100":       {"name": "👑 Рыбак-легенда",       "check": lambda u: u["level"] >= 100},
-    "legendary":       {"name": "💎 Легендарная рыба",    "check": lambda u: u["legendary_caught"] >= 1},
-    "legendary_10":    {"name": "💎 10 легендарок",       "check": lambda u: u["legendary_caught"] >= 10},
-    "legendary_50":    {"name": "💎 50 легендарок",       "check": lambda u: u["legendary_caught"] >= 50},
+    "first_fish":{"name":"🥇 Первый улов","check":lambda u: u["total_caught"]>=1},
+    "ten_fish":{"name":"🎣 10 рыб","check":lambda u: u["total_caught"]>=10},
+    "hundred_fish":{"name":"🎣 100 рыб","check":lambda u: u["total_caught"]>=100},
+    "five_hundred":{"name":"🐟 500 рыб","check":lambda u: u["total_caught"]>=500},
+    "thousand_fish":{"name":"🏆 1000 рыб","check":lambda u: u["total_caught"]>=1000},
+    "level_5":{"name":"📈 Рыбак-новичок","check":lambda u: u["level"]>=5},
+    "level_10":{"name":"📈 Рыбак-любитель","check":lambda u: u["level"]>=10},
+    "level_25":{"name":"📈 Рыбак-знаток","check":lambda u: u["level"]>=25},
+    "level_50":{"name":"🏆 Рыбак-профи","check":lambda u: u["level"]>=50},
+    "level_100":{"name":"👑 Рыбак-легенда","check":lambda u: u["level"]>=100},
+    "legendary":{"name":"💎 Легендарная рыба","check":lambda u: u["legendary_caught"]>=1},
+    "legendary_10":{"name":"💎 10 легендарок","check":lambda u: u["legendary_caught"]>=10},
+    "legendary_50":{"name":"💎 50 легендарок","check":lambda u: u["legendary_caught"]>=50},
 }
 
 
@@ -2929,35 +2659,23 @@ def get_fishing_top(limit=10):
 def get_user_fish_cooldown(user_id) -> int:
     inv = get_fishing_inventory(user_id)
     cooldown = FISH_COOLDOWN_BASE
-
     hook_level = inv.get("hook", 0)
-    if isinstance(hook_level, int) and hook_level > 0:
-        cooldown -= hook_level * 600
-
+    if isinstance(hook_level, int) and hook_level > 0: cooldown -= hook_level * 600
     spinning_level = inv.get("spinning", 0)
-    if isinstance(spinning_level, int) and spinning_level > 0:
-        cooldown -= spinning_level * 300
-
+    if isinstance(spinning_level, int) and spinning_level > 0: cooldown -= spinning_level * 300
     premium_level = inv.get("premium_rod", 0)
-    if isinstance(premium_level, int) and premium_level > 0:
-        cooldown -= premium_level * 180
-
+    if isinstance(premium_level, int) and premium_level > 0: cooldown -= premium_level * 180
     float_level = inv.get("magic_float", 0)
-    if isinstance(float_level, int) and float_level > 0:
-        cooldown -= float_level * 180
-
+    if isinstance(float_level, int) and float_level > 0: cooldown -= float_level * 180
     return max(FISH_COOLDOWN_MIN, cooldown)
 
 
 def format_fishing_cooldown(last_fish_str, cooldown_seconds: int = None):
-    if not last_fish_str:
-        return 0
+    if not last_fish_str: return 0
     try:
         last = datetime.strptime(last_fish_str[:19], "%Y-%m-%d %H:%M:%S")
-    except:
-        return 0
-    if cooldown_seconds is None:
-        cooldown_seconds = FISH_COOLDOWN_BASE
+    except: return 0
+    if cooldown_seconds is None: cooldown_seconds = FISH_COOLDOWN_BASE
     delta = (datetime.now() - last).total_seconds()
     remaining = cooldown_seconds - delta
     return max(0, int(remaining))
@@ -3002,68 +2720,41 @@ def add_to_fishing_inventory(user_id, gear_key, count=1):
 
 def upgrade_fishing_gear(user_id, gear_key) -> tuple:
     gear = FISHING_GEAR.get(gear_key)
-    if not gear:
-        return False, "Снасть не найдена", 0
+    if not gear: return False, "Снасть не найдена", 0
     inv = get_fishing_inventory(user_id)
     cur_level = inv.get(gear_key, 0)
-    if cur_level <= 0:
-        return False, "Сначала купи снасть", 0
-    if cur_level >= gear["max_level"]:
-        return False, f"Максимум — ур. {gear['max_level']}", cur_level
-
+    if cur_level <= 0: return False, "Сначала купи снасть", 0
+    if cur_level >= gear["max_level"]: return False, f"Максимум — ур. {gear['max_level']}", cur_level
     upgrade_cost = int(gear["base_price"] * (cur_level + 1) * 0.6)
     if get_balance(user_id) < upgrade_cost:
         return False, f"Нужно <b>{upgrade_cost}</b> 🍬", cur_level
-
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (upgrade_cost, user_id))
         conn.commit()
-
     inv[gear_key] = cur_level + 1
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("UPDATE fishing SET inventory = ? WHERE user_id = ?", (json.dumps(inv), user_id))
         conn.commit()
-
     return True, f"Улучшено до ур. {cur_level + 1} (-{upgrade_cost} 🍬)", cur_level + 1
 
 
 def get_fishing_gear_bonus(user_id):
     inv = get_fishing_inventory(user_id)
-    total_bonus = 0.0
-    flat = 0
-    boat_level = 0
-    legendary_bonus = 0
-    rare_bonus = 0
-    gear_info = []
-
+    total_bonus = 0.0; flat = 0; boat_level = 0; legendary_bonus = 0; rare_bonus = 0; gear_info = []
     for key, level in inv.items():
-        if not isinstance(level, int) or level <= 0:
-            continue
+        if not isinstance(level, int) or level <= 0: continue
         gear = FISHING_GEAR.get(key)
-        if not gear:
-            continue
-
+        if not gear: continue
         lvl_bonus = gear.get("bonus_per_level", 0) * level
         lvl_flat = gear.get("flat_per_level", 0) * level
         lvl_legendary = gear.get("legendary_per_level", 0) * level
         lvl_rare = gear.get("rare_per_level", 0) * level
-
-        total_bonus += lvl_bonus
-        flat += lvl_flat
-        legendary_bonus += lvl_legendary
-        rare_bonus += lvl_rare
-
-        if key == "boat":
-            boat_level = level
-
-        gear_info.append({
-            "key": key, "name": gear["name"], "level": level,
-            "max_level": gear["max_level"], "bonus": lvl_bonus,
-            "flat": lvl_flat, "legendary": lvl_legendary, "rare": lvl_rare,
-        })
-
+        total_bonus += lvl_bonus; flat += lvl_flat; legendary_bonus += lvl_legendary; rare_bonus += lvl_rare
+        if key == "boat": boat_level = level
+        gear_info.append({"key": key, "name": gear["name"], "level": level, "max_level": gear["max_level"],
+                          "bonus": lvl_bonus, "flat": lvl_flat, "legendary": lvl_legendary, "rare": lvl_rare})
     return total_bonus, flat, boat_level, legendary_bonus, rare_bonus, gear_info
 
 
@@ -3268,16 +2959,14 @@ def get_chat_location(chat_id) -> str:
         c = conn.cursor()
         c.execute("SELECT value FROM global_settings WHERE key = ?", (f"location:{chat_id}",))
         r = c.fetchone()
-        if r:
-            return r[0]
+        if r: return r[0]
         return "pier"
 
 
 def set_chat_location(chat_id, loc: str):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)",
-                  (f"location:{chat_id}", loc))
+        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)", (f"location:{chat_id}", loc))
         conn.commit()
 
 
@@ -3286,11 +2975,9 @@ def get_chat_region(chat_id) -> str:
         c = conn.cursor()
         c.execute("SELECT value FROM global_settings WHERE key = ?", (f"region:{chat_id}",))
         r = c.fetchone()
-        if r:
-            return r[0]
+        if r: return r[0]
         reg = random.choice(["river", "lake", "sea", "ocean"])
-        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)",
-                  (f"region:{chat_id}", reg))
+        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)", (f"region:{chat_id}", reg))
         conn.commit()
         return reg
 
@@ -3298,8 +2985,7 @@ def get_chat_region(chat_id) -> str:
 def set_chat_region(chat_id, region: str):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)",
-                  (f"region:{chat_id}", region))
+        c.execute("INSERT OR REPLACE INTO global_settings (key, value) VALUES (?, ?)", (f"region:{chat_id}", region))
         conn.commit()
 
 
@@ -3343,498 +3029,7 @@ STANDARD_RP = {
 }
 
 
-# ================= ГРАЖДАНСТВО =================
-def get_citizenship_info(user_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT chat_id, became_at FROM citizenship WHERE user_id = ?", (user_id,))
-        r = c.fetchone()
-        return r if r else None
-
-
-def set_citizenship(user_id, chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO citizenship (user_id, chat_id, became_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-                  (user_id, chat_id))
-        conn.commit()
-
-
-def remove_citizenship(user_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM citizenship WHERE user_id = ?", (user_id,))
-        conn.commit()
-
-
-def get_chat_citizens(chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT user_id, became_at FROM citizenship WHERE chat_id = ? ORDER BY became_at ASC", (chat_id,))
-        return c.fetchall()
-
-
-def format_citizenship_duration(became_at_str):
-    if not became_at_str:
-        return "только что"
-    try:
-        became_at = datetime.strptime(became_at_str[:19], "%Y-%m-%d %H:%M:%S")
-    except Exception:
-        try:
-            became_at = datetime.strptime(became_at_str[:10], "%Y-%m-%d")
-        except Exception:
-            return "только что"
-
-    delta = (datetime.now() - became_at).total_seconds()
-    if delta < 0:
-        delta = 0
-
-    def _plural(n, one, few, many):
-        n10, n100 = n % 10, n % 100
-        if n10 == 1 and n100 != 11: return one
-        if 2 <= n10 <= 4 and not (12 <= n100 <= 14): return few
-        return many
-
-    if delta < 60:
-        return "только что"
-    if delta < 3600:
-        n = int(delta // 60)
-        return f"{n} {_plural(n, 'минуту', 'минуты', 'минут')} назад"
-    if delta < 86400:
-        n = int(delta // 3600)
-        return f"{n} {_plural(n, 'час', 'часа', 'часов')} назад"
-    if delta < 86400 * 30:
-        n = int(delta // 86400)
-        return f"{n} {_plural(n, 'день', 'дня', 'дней')}"
-    if delta < 86400 * 365:
-        n = int(delta // (86400 * 30))
-        return f"{n} {_plural(n, 'месяц', 'месяца', 'месяцев')}"
-    n = int(delta // (86400 * 365))
-    return f"{n} {_plural(n, 'год', 'года', 'лет')}"
-
-
-# ================= ПРОФИЛЬ =================
-def get_user_nick(user_id, chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT nick FROM user_nicks WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-        r = c.fetchone()
-        return r[0] if r else None
-
-
-def set_user_nick(user_id, chat_id, nick):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO user_nicks (user_id, chat_id, nick) VALUES (?, ?, ?)", (user_id, chat_id, nick))
-        conn.commit()
-
-
-def remove_user_nick(user_id, chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM user_nicks WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-        conn.commit()
-
-
-def get_user_about(user_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT text FROM user_about WHERE user_id = ?", (user_id,))
-        r = c.fetchone()
-        return r[0] if r else None
-
-
-def set_user_about(user_id, text):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO user_about (user_id, text) VALUES (?, ?)", (user_id, text))
-        conn.commit()
-
-
-def remove_user_about(user_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM user_about WHERE user_id = ?", (user_id,))
-        conn.commit()
-
-
-def get_user_rank_text(user_id, chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT rank FROM user_ranks WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-        r = c.fetchone()
-        return r[0] if r else None
-
-
-def set_user_rank_text(user_id, chat_id, rank):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO user_ranks (user_id, chat_id, rank) VALUES (?, ?, ?)", (user_id, chat_id, rank))
-        conn.commit()
-
-
-def remove_user_rank_text(user_id, chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM user_ranks WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
-        conn.commit()
-
-
-# ================= ПРАВИЛА =================
-def get_chat_rules(chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT text FROM chat_rules WHERE chat_id = ?", (chat_id,))
-        r = c.fetchone()
-        return r[0] if r else None
-
-
-def set_chat_rules(chat_id, text, updated_by):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO chat_rules (chat_id, text, updated_by, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-                  (chat_id, text, updated_by))
-        conn.commit()
-
-
-def reset_chat_rules(chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("DELETE FROM chat_rules WHERE chat_id = ?", (chat_id,))
-        conn.commit()
-
-
-# ================= АНКЕТА =================
-def get_user_profile(user_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT gender, birth_date, city, bio, is_hidden, birth_visibility, motto, show_citizenship FROM user_profiles WHERE user_id = ?", (user_id,))
-        r = c.fetchone()
-        if not r:
-            c.execute("INSERT INTO user_profiles (user_id) VALUES (?)", (user_id,))
-            conn.commit()
-            return (None, None, None, None, 1, 'месяц', None, 1)
-        return r
-
-
-def update_user_profile(user_id, field, value):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR IGNORE INTO user_profiles (user_id) VALUES (?)", (user_id,))
-        c.execute(f"UPDATE user_profiles SET {field} = ? WHERE user_id = ?", (value, user_id))
-        conn.commit()
-
-
-def get_activity_stats(user_id):
-    today = datetime.now().date()
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT SUM(count) FROM messages_stats WHERE user_id = ? AND date = ?", (user_id, today.isoformat()))
-        day = c.fetchone()[0] or 0
-        week_ago = (today - timedelta(days=7)).isoformat()
-        c.execute("SELECT SUM(count) FROM messages_stats WHERE user_id = ? AND date >= ?", (user_id, week_ago))
-        week = c.fetchone()[0] or 0
-        month_ago = (today - timedelta(days=30)).isoformat()
-        c.execute("SELECT SUM(count) FROM messages_stats WHERE user_id = ? AND date >= ?", (user_id, month_ago))
-        month = c.fetchone()[0] or 0
-        c.execute("SELECT SUM(count) FROM messages_stats WHERE user_id = ?", (user_id,))
-        total = c.fetchone()[0] or 0
-        return day, week, month, total
-
-
-def format_number(n):
-    if n < 1000: return str(n)
-    elif n < 10000: return f"{n/1000:.1f}k"
-    elif n < 1000000: return f"{n//1000}k"
-    else: return f"{n/1000000:.1f}M"
-
-
-def format_time_since(date_str):
-    if not date_str: return "недавно"
-    try:
-        if isinstance(date_str, str): d = datetime.strptime(date_str[:10], "%Y-%m-%d")
-        else: d = date_str
-        days = (datetime.now() - d).days
-        if days < 30: return f"{days} дн."
-        months = days // 30
-        remaining = days % 30
-        if months < 12: return f"{months} мес. {remaining} дн."
-        years = months // 12
-        months = months % 12
-        return f"{years} г. {months} мес."
-    except: return "недавно"
-
-
-def _get_profile_field(profile, index, default=None):
-    try:
-        if profile and len(profile) > index:
-            val = profile[index]
-            return val if val is not None else default
-    except Exception:
-        pass
-    return default
-
-
-def _fmt_activity_num(n: int) -> str:
-    n = int(n or 0)
-    if n < 1000:
-        return str(n)
-    if n < 10000:
-        v = n / 1000
-        s = f"{v:.1f}".rstrip("0").rstrip(".")
-        return s.replace(".", ",") + "k"
-    if n < 100000:
-        return f"{n // 1000}k"
-    if n < 1000000:
-        v = n / 1000
-        return f"{v:.0f}k"
-    v = n / 1000000
-    s = f"{v:.1f}".rstrip("0").rstrip(".")
-    return s.replace(".", ",") + "M"
-
-
-def _owner_status_line(user_id: int) -> str:
-    if user_id == OWNER_ID:
-        return "⚜️ Владелец бота"
-    if is_coowner(user_id):
-        return "⚜️ Совладелец бота"
-    if is_agent(user_id):
-        return "🛡 Агент поддержки Mos"
-    return ""
-
-
-async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str:
-    user_id = target.id
-    profile = get_user_profile(user_id)
-    if not profile:
-        return "❌ Анкета не найдена."
-
-    gender = _get_profile_field(profile, 0)
-    birth_date = _get_profile_field(profile, 1)
-    city = _get_profile_field(profile, 2)
-    bio = _get_profile_field(profile, 3)
-    is_hidden = _get_profile_field(profile, 4, 1)
-    birth_vis = _get_profile_field(profile, 5, 'месяц')
-    motto = _get_profile_field(profile, 6)
-    show_citizenship = _get_profile_field(profile, 7, 1)
-
-    is_self = (viewer_id == user_id) if viewer_id else True
-    is_staff = False
-    if viewer_id:
-        is_staff = (viewer_id == OWNER_ID or is_coowner(viewer_id) or has_agent_rank(viewer_id, 1))
-
-    if is_hidden and not is_self and not is_staff:
-        return (
-            f"🔒 <b>Анкета скрыта</b>\n\n"
-            f"👤 {mention(target)} закрыл(а) свою анкету.\n"
-            f"<i>Он(а) может открыть её командой <code>+анкета</code>.</i>"
-        )
-
-    display_name = html_escape_text(target.first_name or "Пользователь")
-    if getattr(target, "username", None):
-        display_name = f'<a href="https://t.me/{target.username}">{display_name}</a>'
-    else:
-        display_name = f'<a href="tg://user?id={user_id}">{display_name}</a>'
-
-    lines = []
-
-    last_seen_raw = get_last_seen_in_chat(user_id, chat_id)
-    last_seen_str = format_last_seen(last_seen_raw) if last_seen_raw else None
-    suffix = f" (был {last_seen_str})" if last_seen_str and last_seen_str != "нет данных" else ""
-    lines.append(f"👤 <b>Это {display_name}{suffix}</b>")
-
-    status_line = _owner_status_line(user_id)
-    id_line = f"🆔 <code>{user_id}</code>"
-    if status_line:
-        lines.append(f"{id_line} · {status_line}")
-    else:
-        lines.append(id_line)
-
-    lines.append("")
-
-    cit = get_citizenship_info(user_id)
-    if show_citizenship and cit:
-        cit_chat_id, cit_date = cit
-        try:
-            d = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
-            date_str = d.strftime("%d.%m.%Y")
-        except Exception:
-            date_str = cit_date[:10]
-        duration = format_citizenship_duration(cit_date)
-        lines.append(f"🕰 Во вселенной <b>Mos</b>: с {date_str} ({duration})")
-
-    if gender:
-        lines.append(f"🙂‍↔️ Пол: <b>{html_escape_text(str(gender).lower())}</b>")
-    else:
-        lines.append("🙂‍↔️ Пол: <i>не указан</i>")
-
-    if birth_date:
-        bd_display = str(birth_date)
-        try:
-            parts = bd_display.split(".")
-            if len(parts) == 3:
-                if birth_vis == "год":
-                    bd_display = f"{parts[2]} год"
-                elif birth_vis == "месяц":
-                    bd_display = f"{parts[1]}.{parts[2]}"
-                else:
-                    bd_display = f"{parts[0]}.{parts[1]}.{parts[2]}"
-        except Exception:
-            pass
-        lines.append(f"🗓 Дата рождения: <b>{html_escape_text(bd_display)}</b>")
-    else:
-        lines.append("🗓 Дата рождения: <i>не указана</i>")
-
-    if city:
-        lines.append(f"🏙 Город: <b>{html_escape_text(str(city))}</b>")
-    else:
-        lines.append("🏙 Город: <i>не указан</i>")
-
-    day, week, month, total = get_activity_extended_global(user_id)
-    lines.append(
-        f"📊 Активность (день|нед|мес|всего): "
-        f"<b>{_fmt_activity_num(day)}</b> | "
-        f"<b>{_fmt_activity_num(week)}</b> | "
-        f"<b>{_fmt_activity_num(month)}</b> | "
-        f"<b>{_fmt_activity_num(total)}</b>"
-    )
-
-    rank_text = get_user_rank_text(user_id, chat_id)
-    if rank_text:
-        lines.append(f"✨ Звание: <b>{rank_text}</b>")
-
-    if show_citizenship and cit:
-        cit_chat_id, cit_date = cit
-        try:
-            d2 = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
-            date_str2 = d2.strftime("%d.%m.%Y")
-        except Exception:
-            date_str2 = cit_date[:10]
-        duration2 = format_citizenship_duration(cit_date)
-        try:
-            cc2 = await bot.get_chat(cit_chat_id)
-            cc_title2 = cc2.title or "чат"
-        except Exception:
-            cc_title2 = "чат"
-
-        if cit_chat_id != chat_id and not is_staff and not is_self:
-            try:
-                m = await bot.get_chat_member(chat_id, user_id)
-                in_this_chat = m.status in ("member", "administrator", "creator", "restricted")
-            except Exception:
-                in_this_chat = False
-            if not in_this_chat:
-                lines.append(
-                    f"🏠 Гражданин чата «***» (не в каталоге): "
-                    f"<b>{duration2}</b> (с {date_str2})"
-                )
-            else:
-                lines.append(
-                    f"🏠 Гражданин чата «{cc_title2}»: "
-                    f"<b>{duration2}</b> (с {date_str2})"
-                )
-        else:
-            lines.append(
-                f"🏠 Гражданин чата «{cc_title2}»: "
-                f"<b>{duration2}</b> (с {date_str2})"
-            )
-
-    if motto:
-        lines.append(f"💭 Девиз: {motto}")
-
-    about = get_user_about(user_id)
-    if about:
-        lines.append(f"\n📝 <b>О себе:</b>\n{about}")
-
-    return "\n".join(lines)
-
-
-# ================= VIP =================
-def get_vip_price(chat_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT price FROM vip_settings WHERE chat_id = ?", (chat_id,))
-        r = c.fetchone()
-        if not r:
-            c.execute("INSERT INTO vip_settings (chat_id, price) VALUES (?, 100)", (chat_id,))
-            conn.commit()
-            return 100
-        return r[0]
-
-
-def set_vip_price(chat_id, price):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO vip_settings (chat_id, price) VALUES (?, ?)", (chat_id, price))
-        conn.commit()
-
-
-def get_vip(user_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT expires_at, emoji FROM vip_users WHERE user_id = ?", (user_id,))
-        r = c.fetchone()
-        if not r: return None
-        expires_at, emoji = r
-        try:
-            exp_dt = _parse_dt(expires_at)
-            if exp_dt < datetime.now():
-                c.execute("DELETE FROM vip_users WHERE user_id = ?", (user_id,))
-                conn.commit()
-                return None
-        except Exception as e:
-            pass
-        return (expires_at, emoji)
-
-
-def add_vip_months(user_id, months):
-    current = get_vip(user_id)
-    if current:
-        try:
-            exp_dt = _parse_dt(current[0])
-            if exp_dt < datetime.now(): exp_dt = datetime.now()
-        except Exception as e:
-            exp_dt = datetime.now()
-        emoji = current[1]
-    else:
-        exp_dt = datetime.now()
-        emoji = None
-    new_exp = exp_dt + timedelta(days=30 * months)
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO vip_users (user_id, expires_at, emoji) VALUES (?, ?, ?)",
-                  (user_id, _fmt_dt(new_exp), emoji))
-        conn.commit()
-    return new_exp
-
-
-def set_vip_emoji(user_id, emoji):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("UPDATE vip_users SET emoji = ? WHERE user_id = ?", (emoji, user_id))
-        conn.commit()
-
-
-def get_vip_days_left(user_id):
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT expires_at FROM vip_users WHERE user_id = ?", (user_id,))
-        r = c.fetchone()
-        if not r: return 0
-        try:
-            exp_dt = _parse_dt(r[0])
-            delta = exp_dt - datetime.now()
-            if delta.total_seconds() < 0: return 0
-            return int(delta.total_seconds() // 86400)
-        except Exception as e:
-            return 0
-
-
-def get_vip_emoji(user_id):
-    v = get_vip(user_id)
-    if v and v[1]: return v[1]
-      
-      # ================= СЕТКА — БД =================
+# ================= СЕТКА — БД =================
 def create_grid(name, creator_id):
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -4134,7 +3329,436 @@ def format_marriage_duration(married_at_str, extra_days=0):
     if months > 0: parts.append(f"{months} мес.")
     if remaining_days > 0 or not parts: parts.append(f"{remaining_days} дн.")
     return " ".join(parts)
-  
+
+
+# ================= ГРАЖДАНСТВО =================
+def get_citizenship_info(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT chat_id, became_at FROM citizenship WHERE user_id = ?", (user_id,))
+        r = c.fetchone()
+        return r if r else None
+
+
+def set_citizenship(user_id, chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO citizenship (user_id, chat_id, became_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                  (user_id, chat_id))
+        conn.commit()
+
+
+def remove_citizenship(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM citizenship WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+
+def get_chat_citizens(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT user_id, became_at FROM citizenship WHERE chat_id = ? ORDER BY became_at ASC", (chat_id,))
+        return c.fetchall()
+
+
+def format_citizenship_duration(became_at_str):
+    if not became_at_str: return "только что"
+    try:
+        became_at = datetime.strptime(became_at_str[:19], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        try: became_at = datetime.strptime(became_at_str[:10], "%Y-%m-%d")
+        except Exception: return "только что"
+    delta = (datetime.now() - became_at).total_seconds()
+    if delta < 0: delta = 0
+
+    def _plural(n, one, few, many):
+        n10, n100 = n % 10, n % 100
+        if n10 == 1 and n100 != 11: return one
+        if 2 <= n10 <= 4 and not (12 <= n100 <= 14): return few
+        return many
+
+    if delta < 60: return "только что"
+    if delta < 3600:
+        n = int(delta // 60)
+        return f"{n} {_plural(n, 'минуту', 'минуты', 'минут')} назад"
+    if delta < 86400:
+        n = int(delta // 3600)
+        return f"{n} {_plural(n, 'час', 'часа', 'часов')} назад"
+    if delta < 86400 * 30:
+        n = int(delta // 86400)
+        return f"{n} {_plural(n, 'день', 'дня', 'дней')}"
+    if delta < 86400 * 365:
+        n = int(delta // (86400 * 30))
+        return f"{n} {_plural(n, 'месяц', 'месяца', 'месяцев')}"
+    n = int(delta // (86400 * 365))
+    return f"{n} {_plural(n, 'год', 'года', 'лет')}"
+
+
+# ================= ПРОФИЛЬ =================
+def get_user_nick(user_id, chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT nick FROM user_nicks WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        r = c.fetchone()
+        return r[0] if r else None
+
+
+def set_user_nick(user_id, chat_id, nick):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO user_nicks (user_id, chat_id, nick) VALUES (?, ?, ?)", (user_id, chat_id, nick))
+        conn.commit()
+
+
+def remove_user_nick(user_id, chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM user_nicks WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        conn.commit()
+
+
+def get_user_about(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT text FROM user_about WHERE user_id = ?", (user_id,))
+        r = c.fetchone()
+        return r[0] if r else None
+
+
+def set_user_about(user_id, text):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO user_about (user_id, text) VALUES (?, ?)", (user_id, text))
+        conn.commit()
+
+
+def remove_user_about(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM user_about WHERE user_id = ?", (user_id,))
+        conn.commit()
+
+
+def get_user_rank_text(user_id, chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT rank FROM user_ranks WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        r = c.fetchone()
+        return r[0] if r else None
+
+
+def set_user_rank_text(user_id, chat_id, rank):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO user_ranks (user_id, chat_id, rank) VALUES (?, ?, ?)", (user_id, chat_id, rank))
+        conn.commit()
+
+
+def remove_user_rank_text(user_id, chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM user_ranks WHERE user_id = ? AND chat_id = ?", (user_id, chat_id))
+        conn.commit()
+
+
+# ================= ПРАВИЛА =================
+def get_chat_rules(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT text FROM chat_rules WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        return r[0] if r else None
+
+
+def set_chat_rules(chat_id, text, updated_by):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO chat_rules (chat_id, text, updated_by, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+                  (chat_id, text, updated_by))
+        conn.commit()
+
+
+def reset_chat_rules(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM chat_rules WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+
+
+# ================= АНКЕТА =================
+def get_user_profile(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT gender, birth_date, city, bio, is_hidden, birth_visibility, motto, show_citizenship FROM user_profiles WHERE user_id = ?", (user_id,))
+        r = c.fetchone()
+        if not r:
+            c.execute("INSERT INTO user_profiles (user_id) VALUES (?)", (user_id,))
+            conn.commit()
+            return (None, None, None, None, 1, 'месяц', None, 1)
+        return r
+
+
+def update_user_profile(user_id, field, value):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO user_profiles (user_id) VALUES (?)", (user_id,))
+        c.execute(f"UPDATE user_profiles SET {field} = ? WHERE user_id = ?", (value, user_id))
+        conn.commit()
+
+
+def _get_profile_field(profile, index, default=None):
+    try:
+        if profile and len(profile) > index:
+            val = profile[index]
+            return val if val is not None else default
+    except Exception:
+        pass
+    return default
+
+
+def _fmt_activity_num(n: int) -> str:
+    n = int(n or 0)
+    if n < 1000: return str(n)
+    if n < 10000:
+        v = n / 1000
+        s = f"{v:.1f}".rstrip("0").rstrip(".")
+        return s.replace(".", ",") + "k"
+    if n < 100000: return f"{n // 1000}k"
+    if n < 1000000:
+        v = n / 1000
+        return f"{v:.0f}k"
+    v = n / 1000000
+    s = f"{v:.1f}".rstrip("0").rstrip(".")
+    return s.replace(".", ",") + "M"
+
+
+def _owner_status_line(user_id: int) -> str:
+    if user_id == OWNER_ID: return "⚜️ Владелец бота"
+    if is_coowner(user_id): return "⚜️ Совладелец бота"
+    if is_agent(user_id): return "🛡 Агент поддержки Mos"
+    return ""
+
+
+async def _build_anketa_text(target, chat_id: int, viewer_id: int = None) -> str:
+    user_id = target.id
+    profile = get_user_profile(user_id)
+    if not profile:
+        return "❌ Анкета не найдена."
+
+    gender = _get_profile_field(profile, 0)
+    birth_date = _get_profile_field(profile, 1)
+    city = _get_profile_field(profile, 2)
+    bio = _get_profile_field(profile, 3)
+    is_hidden = _get_profile_field(profile, 4, 1)
+    birth_vis = _get_profile_field(profile, 5, 'месяц')
+    motto = _get_profile_field(profile, 6)
+    show_citizenship = _get_profile_field(profile, 7, 1)
+
+    is_self = (viewer_id == user_id) if viewer_id else True
+    is_staff = False
+    if viewer_id:
+        is_staff = (viewer_id == OWNER_ID or is_coowner(viewer_id) or has_agent_rank(viewer_id, 1))
+
+    if is_hidden and not is_self and not is_staff:
+        return (
+            f"🔒 <b>Анкета скрыта</b>\n\n"
+            f"👤 {mention(target)} закрыл(а) свою анкету.\n"
+            f"<i>Он(а) может открыть её командой <code>+анкета</code>.</i>"
+        )
+
+    display_name = html_escape_text(target.first_name or "Пользователь")
+    if getattr(target, "username", None):
+        display_name = f'<a href="https://t.me/{target.username}">{display_name}</a>'
+    else:
+        display_name = f'<a href="tg://user?id={user_id}">{display_name}</a>'
+
+    lines = []
+    last_seen_raw = get_last_seen_in_chat(user_id, chat_id)
+    last_seen_str = format_last_seen(last_seen_raw) if last_seen_raw else None
+    suffix = f" (был {last_seen_str})" if last_seen_str and last_seen_str != "нет данных" else ""
+    lines.append(f"👤 <b>Это {display_name}{suffix}</b>")
+
+    status_line = _owner_status_line(user_id)
+    id_line = f"🆔 <code>{user_id}</code>"
+    if status_line:
+        lines.append(f"{id_line} · {status_line}")
+    else:
+        lines.append(id_line)
+    lines.append("")
+
+    cit = get_citizenship_info(user_id)
+    if show_citizenship and cit:
+        cit_chat_id, cit_date = cit
+        try:
+            d = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
+            date_str = d.strftime("%d.%m.%Y")
+        except Exception:
+            date_str = cit_date[:10]
+        duration = format_citizenship_duration(cit_date)
+        lines.append(f"🕰 Во вселенной <b>Mos</b>: с {date_str} ({duration})")
+
+    if gender:
+        lines.append(f"🙂‍↔️ Пол: <b>{html_escape_text(str(gender).lower())}</b>")
+    else:
+        lines.append("🙂‍↔️ Пол: <i>не указан</i>")
+
+    if birth_date:
+        bd_display = str(birth_date)
+        try:
+            parts = bd_display.split(".")
+            if len(parts) == 3:
+                if birth_vis == "год":
+                    bd_display = f"{parts[2]} год"
+                elif birth_vis == "месяц":
+                    bd_display = f"{parts[1]}.{parts[2]}"
+                else:
+                    bd_display = f"{parts[0]}.{parts[1]}.{parts[2]}"
+        except Exception:
+            pass
+        lines.append(f"🗓 Дата рождения: <b>{html_escape_text(bd_display)}</b>")
+    else:
+        lines.append("🗓 Дата рождения: <i>не указана</i>")
+
+    if city:
+        lines.append(f"🏙 Город: <b>{html_escape_text(str(city))}</b>")
+    else:
+        lines.append("🏙 Город: <i>не указан</i>")
+
+    day, week, month, total = get_activity_extended_global(user_id)
+    lines.append(
+        f"📊 Активность (день|нед|мес|всего): "
+        f"<b>{_fmt_activity_num(day)}</b> | "
+        f"<b>{_fmt_activity_num(week)}</b> | "
+        f"<b>{_fmt_activity_num(month)}</b> | "
+        f"<b>{_fmt_activity_num(total)}</b>"
+    )
+
+    rank_text = get_user_rank_text(user_id, chat_id)
+    if rank_text:
+        lines.append(f"✨ Звание: <b>{rank_text}</b>")
+
+    if show_citizenship and cit:
+        cit_chat_id, cit_date = cit
+        try:
+            d2 = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
+            date_str2 = d2.strftime("%d.%m.%Y")
+        except Exception:
+            date_str2 = cit_date[:10]
+        duration2 = format_citizenship_duration(cit_date)
+        try:
+            cc2 = await bot.get_chat(cit_chat_id)
+            cc_title2 = cc2.title or "чат"
+        except Exception:
+            cc_title2 = "чат"
+
+        if cit_chat_id != chat_id and not is_staff and not is_self:
+            try:
+                m = await bot.get_chat_member(chat_id, user_id)
+                in_this_chat = m.status in ("member", "administrator", "creator", "restricted")
+            except Exception:
+                in_this_chat = False
+            if not in_this_chat:
+                lines.append(f"🏠 Гражданин чата «***» (не в каталоге): <b>{duration2}</b> (с {date_str2})")
+            else:
+                lines.append(f"🏠 Гражданин чата «{cc_title2}»: <b>{duration2}</b> (с {date_str2})")
+        else:
+            lines.append(f"🏠 Гражданин чата «{cc_title2}»: <b>{duration2}</b> (с {date_str2})")
+
+    if motto:
+        lines.append(f"💭 Девиз: {motto}")
+
+    about = get_user_about(user_id)
+    if about:
+        lines.append(f"\n📝 <b>О себе:</b>\n{about}")
+
+    return "\n".join(lines)
+
+
+# ================= VIP =================
+def get_vip_price(chat_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT price FROM vip_settings WHERE chat_id = ?", (chat_id,))
+        r = c.fetchone()
+        if not r:
+            c.execute("INSERT INTO vip_settings (chat_id, price) VALUES (?, 100)", (chat_id,))
+            conn.commit()
+            return 100
+        return r[0]
+
+
+def set_vip_price(chat_id, price):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO vip_settings (chat_id, price) VALUES (?, ?)", (chat_id, price))
+        conn.commit()
+
+
+def get_vip(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT expires_at, emoji FROM vip_users WHERE user_id = ?", (user_id,))
+        r = c.fetchone()
+        if not r: return None
+        expires_at, emoji = r
+        try:
+            exp_dt = _parse_dt(expires_at)
+            if exp_dt < datetime.now():
+                c.execute("DELETE FROM vip_users WHERE user_id = ?", (user_id,))
+                conn.commit()
+                return None
+        except Exception as e:
+            pass
+        return (expires_at, emoji)
+
+
+def add_vip_months(user_id, months):
+    current = get_vip(user_id)
+    if current:
+        try:
+            exp_dt = _parse_dt(current[0])
+            if exp_dt < datetime.now(): exp_dt = datetime.now()
+        except Exception as e:
+            exp_dt = datetime.now()
+        emoji = current[1]
+    else:
+        exp_dt = datetime.now()
+        emoji = None
+    new_exp = exp_dt + timedelta(days=30 * months)
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO vip_users (user_id, expires_at, emoji) VALUES (?, ?, ?)",
+                  (user_id, _fmt_dt(new_exp), emoji))
+        conn.commit()
+    return new_exp
+
+
+def set_vip_emoji(user_id, emoji):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("UPDATE vip_users SET emoji = ? WHERE user_id = ?", (emoji, user_id))
+        conn.commit()
+
+
+def get_vip_days_left(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT expires_at FROM vip_users WHERE user_id = ?", (user_id,))
+        r = c.fetchone()
+        if not r: return 0
+        try:
+            exp_dt = _parse_dt(r[0])
+            delta = exp_dt - datetime.now()
+            if delta.total_seconds() < 0: return 0
+            return int(delta.total_seconds() // 86400)
+        except Exception as e:
+            return 0
+
+
+def get_vip_emoji(user_id):
+    v = get_vip(user_id)
+    if v and v[1]: return v[1]
     return ""# ================= ПОГОДА =================
 def get_weather(city: str):
     try:
@@ -4168,33 +3792,6 @@ def get_weather_emoji(code: int):
     elif code in [85, 86]: return "❄️ Снегопад"
     elif code in [95, 96, 99]: return "⛈️ Гроза"
     else: return "🌡️ Погода"
-
-
-# ================= ССЫЛКИ =================
-LINK_PATTERN = re.compile(r'\[([^\]]+)\]\((https?://[^\s\)]+)\)|\{(https?://[^\s\}]+)\}')
-PLACEHOLDER = "[ссылка на проверке]"
-
-
-def extract_links_from_text(text: str):
-    if not text: return text, []
-    protected = []
-    def _protect(match):
-        protected.append(match.group(0))
-        return f"\x00LINKPROT{len(protected)-1}\x00"
-    text = re.sub(r'<(tg-emoji|a|b|i|u|s|code|pre|blockquote|tg-spoiler)\b[^>]*>.*?</\1>',
-                  _protect, text, flags=re.DOTALL)
-    links = []
-    def replacer(match):
-        if match.group(1) and match.group(2):
-            link_text = match.group(1); link_url = match.group(2)
-        else:
-            link_url = match.group(3); link_text = link_url
-        links.append({"text": link_text, "url": link_url})
-        return PLACEHOLDER
-    cleaned = LINK_PATTERN.sub(replacer, text)
-    for i, p in enumerate(protected):
-        cleaned = cleaned.replace(f"\x00LINKPROT{i}\x00", p)
-    return cleaned, links
 
 
 # ================= ПРАЗДНИКИ =================
@@ -4296,7 +3893,6 @@ async def _measure_ping():
         tg_ping = int((datetime.now() - start).total_seconds() * 1000)
     except:
         tg_ping = -1
-
     start = datetime.now()
     try:
         test = await bot.send_message(OWNER_ID, "🏓", disable_notification=True)
@@ -4305,7 +3901,6 @@ async def _measure_ping():
         except: pass
     except:
         api_ping = -1
-
     return tg_ping, api_ping
 
 
@@ -4323,16 +3918,13 @@ async def mos_cmd(message: types.Message):
     t0 = datetime.now()
     sent = await message.reply("🏓 <b>Мос на месте!</b>\n⏳ <i>измеряю пинг...</i>", parse_mode="HTML", **_reply_kwargs(message))
     response_ping = int((datetime.now() - t0).total_seconds() * 1000)
-
     tg_ping, api_ping = await _measure_ping()
-
     text = (
         f"🏓 <b>Мос на месте!</b>\n\n"
         f"⚡ <b>Пинг:</b> <code>{api_ping} мс</code> {_ping_status(api_ping)}\n"
         f"🌐 <b>Telegram API:</b> <code>{tg_ping} мс</code> {_ping_status(tg_ping)}\n"
         f"⏱ <b>Ответ бота:</b> <code>{response_ping} мс</code>"
     )
-
     try:
         await sent.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
     except:
@@ -4360,19 +3952,14 @@ async def start_cmd(message: types.Message):
         f"🔗 <a href='{TELETYPE_URL}'>Mos-command</a>\n\n"
         f"🛡 <b>Агенты:</b>\n"
     )
-
     hidden_agents = set(get_hidden_agents())
-
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("""SELECT a.user_id, COALESCE(r.rank, 1) FROM agents a
                      LEFT JOIN agent_ranks r ON r.user_id = a.user_id
                      ORDER BY COALESCE(r.rank, 1) DESC LIMIT 50""")
         agents = c.fetchall()
-
-    visible_agents = [(uid, rank) for uid, rank in agents if uid not in hidden_agents]
-    visible_agents = visible_agents[:20]
-
+    visible_agents = [(uid, rank) for uid, rank in agents if uid not in hidden_agents][:20]
     if visible_agents:
         for uid, rank in visible_agents:
             try:
@@ -4382,22 +3969,17 @@ async def start_cmd(message: types.Message):
             except: pass
     else:
         text += "  <i>пока нет</i>\n"
-
     text += (
         f"\n📄 <b>Соглашение:</b> <a href='{TERMS_URL}'>Прочитать</a>\n\n"
         f"{em('sos', '🆘')} <b>Поддержка:</b> {SUPPORT_CHAT_LINK}"
     )
-
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить бота в чат", url=add_url)],
         [InlineKeyboardButton(text="🍬 Купить mos-конфетки", callback_data="buy_candies_menu")],
-        [
-            InlineKeyboardButton(text="🆘 Поддержка", url=SUPPORT_CHAT_LINK),
-            InlineKeyboardButton(text="📢 Канал", url=SUPPORT_CHANNEL_LINK)
-        ],
+        [InlineKeyboardButton(text="🆘 Поддержка", url=SUPPORT_CHAT_LINK),
+         InlineKeyboardButton(text="📢 Канал", url=SUPPORT_CHANNEL_LINK)],
         [InlineKeyboardButton(text="📄 Пользовательское соглашение", url=TERMS_URL)]
     ])
-
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=keyboard)
 
 
@@ -4467,7 +4049,6 @@ async def help_cmd(message: types.Message):
                 agents_text += f"  • {user_link(uid, user.first_name, user.username)} — <i>{status}</i>\n"
             except:
                 agents_text += f"  • ID: <code>{uid}</code> — <i>{statuses.get(uid, '')}</i>\n"
-
     help_text = (
         f"{em('sos', '🆘')} <b>Помощь по боту {BOT_NAME}</b>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n{agents_text}\n━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -4536,10 +4117,8 @@ async def info_cmd(message: types.Message):
     chat_title = message.chat.title or "Без названия"
     code = get_chat_code(chat_id)
     link = await get_chat_link(chat_id)
-    if link:
-        link_text = f'<a href="{link}">Чат-ссылка</a>'
-    else:
-        link_text = "Ссылка недоступна"
+    if link: link_text = f'<a href="{link}">Чат-ссылка</a>'
+    else: link_text = "Ссылка недоступна"
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         today = datetime.now().date().isoformat()
@@ -4584,10 +4163,7 @@ async def weather_cmd(message: types.Message):
 
 
 # ================= ПЕРЕВОДЧИК =================
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!+-]?\s*(перевод|translate)\s+\S+',
-    m.text.strip(), re.IGNORECASE
-))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*(перевод|translate)\s+\S+', m.text.strip(), re.IGNORECASE))
 async def translate_cmd(message: types.Message):
     txt = message.text.strip()
     body = re.sub(r'^[.\/!+-]?\s*(перевод|translate)\s+', '', txt, count=1, flags=re.IGNORECASE).strip()
@@ -4599,64 +4175,35 @@ async def translate_cmd(message: types.Message):
             "🌍 Коды: <code>en, ru, de, fr, es, it, uk, pl, tr, zh, ja, ko, ar</code>",
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
-
     parts = body.split(maxsplit=1)
     if len(parts) < 2:
-        return await message.reply(
-            "📌 Формат: <code>.перевод en текст</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply("📌 Формат: <code>.перевод en текст</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     lang = parts[0].lower().strip()
     text_to_translate = parts[1].strip()[:1500]
-
     if len(lang) > 5 or not lang.isalpha():
-        lang = "ru"
-        text_to_translate = body[:1500]
-
+        lang = "ru"; text_to_translate = body[:1500]
     msg = await message.reply("🌐 Перевожу...", **_reply_kwargs(message))
-
     try:
         url = "https://translate.googleapis.com/translate_a/single"
-        params = {
-            "client": "gtx",
-            "sl": "auto",
-            "tl": lang,
-            "dt": "t",
-            "q": text_to_translate,
-        }
+        params = {"client": "gtx", "sl": "auto", "tl": lang, "dt": "t", "q": text_to_translate}
         async with aiohttp.ClientSession() as session:
             async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
-                    return await msg.edit_text(
-                        f"{em('cross', '❌')} Ошибка перевода (код {resp.status})",
-                        parse_mode="HTML"
-                    )
+                    return await msg.edit_text(f"{em('cross', '❌')} Ошибка перевода (код {resp.status})", parse_mode="HTML")
                 data = await resp.json()
-
         translated = "".join(chunk[0] for chunk in data[0] if chunk and chunk[0])
         detected_src = data[2] if len(data) > 2 else "?"
-
-        flags = {
-            "ru": "🇷🇺", "en": "🇬🇧", "de": "🇩🇪", "fr": "🇫🇷", "es": "🇪🇸",
-            "it": "🇮🇹", "uk": "🇺🇦", "pl": "🇵🇱", "tr": "🇹🇷", "zh": "🇨🇳",
-            "ja": "🇯🇵", "ko": "🇰🇷", "ar": "🇸🇦", "pt": "🇵🇹", "nl": "🇳🇱",
-        }
-        src_flag = flags.get(detected_src, "🌐")
-        dst_flag = flags.get(lang, "🌐")
-
+        flags = {"ru":"🇷🇺","en":"🇬🇧","de":"🇩🇪","fr":"🇫🇷","es":"🇪🇸","it":"🇮🇹","uk":"🇺🇦","pl":"🇵🇱","tr":"🇹🇷","zh":"🇨🇳","ja":"🇯🇵","ko":"🇰🇷","ar":"🇸🇦","pt":"🇵🇹","nl":"🇳🇱"}
+        src_flag = flags.get(detected_src, "🌐"); dst_flag = flags.get(lang, "🌐")
         out = (
             f"🌐 <b>Перевод</b>\n\n"
-            f"{src_flag} <b>Оригинал:</b>\n"
-            f"<i>{html_escape_text(text_to_translate)}</i>\n\n"
-            f"{dst_flag} <b>Перевод ({lang}):</b>\n"
-            f"<b>{html_escape_text(translated)}</b>"
+            f"{src_flag} <b>Оригинал:</b>\n<i>{html_escape_text(text_to_translate)}</i>\n\n"
+            f"{dst_flag} <b>Перевод ({lang}):</b>\n<b>{html_escape_text(translated)}</b>"
         )
         try:
             await msg.edit_text(out, parse_mode="HTML", disable_web_page_preview=True)
         except Exception:
             await message.reply(out, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     except asyncio.TimeoutError:
         await msg.edit_text(f"{em('cross', '❌')} Таймаут. Попробуй позже.", parse_mode="HTML")
     except Exception as e:
@@ -4665,91 +4212,59 @@ async def translate_cmd(message: types.Message):
 
 
 # ================= КАЛЬКУЛЯТОР =================
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!+-]?\s*(калькулятор|кальк|calc)\s+(.+)$',
-    m.text.strip(), re.IGNORECASE
-))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*(калькулятор|кальк|calc)\s+(.+)$', m.text.strip(), re.IGNORECASE))
 async def calc_cmd(message: types.Message):
     txt = message.text.strip()
     expr = re.sub(r'^[.\/!+-]?\s*(калькулятор|кальк|calc)\s+', '', txt, count=1, flags=re.IGNORECASE).strip()
-
     if not expr:
         return await message.reply(
             "🧮 <b>Калькулятор</b>\n\n"
             "📌 <code>.кальк 2+2*2</code>\n"
             "📌 <code>.кальк (5+3)/2</code>\n"
-            "📌 <code>.кальк sqrt(16)</code>\n\n"
-            "<i>Поддержка: + - * / ** % sqrt() abs() round() sin() cos() tan() log() log10()</i>",
+            "📌 <code>.кальк sqrt(16)</code>",
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
-
     safe_expr = expr.replace(",", ".").replace("^", "**")
     allowed = re.match(r'^[0-9+\-*/().\s%^*]*$', safe_expr)
-
     math_funcs_used = re.findall(r'\b(sqrt|abs|round|sin|cos|tan|log|log10|pi|e)\b', safe_expr)
     if not allowed and not math_funcs_used:
-        return await message.reply(
-            f"{em('cross', '❌')} Недопустимые символы.\nРазрешено: цифры, + - * / ( ) . ^ % и функции sqrt/abs/round/sin/cos/tan/log",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"{em('cross', '❌')} Недопустимые символы.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     dangerous = ["__", "import", "exec", "eval", "open", "os.", "sys.", "subprocess", "lambda"]
     for bad in dangerous:
         if bad in safe_expr.lower():
             return await message.reply(f"{em('cross', '❌')} Запрещено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     try:
         import math
-        safe_globals = {
-            "__builtins__": {},
-            "sqrt": math.sqrt, "abs": abs, "round": round,
-            "sin": math.sin, "cos": math.cos, "tan": math.tan,
-            "log": math.log, "log10": math.log10,
-            "pi": math.pi, "e": math.e,
-        }
+        safe_globals = {"__builtins__": {}, "sqrt": math.sqrt, "abs": abs, "round": round,
+                        "sin": math.sin, "cos": math.cos, "tan": math.tan,
+                        "log": math.log, "log10": math.log10, "pi": math.pi, "e": math.e}
         result = eval(safe_expr, safe_globals, {})
         result_str = str(result)
-        if len(result_str) > 500:
-            result_str = result_str[:500] + "..."
-
+        if len(result_str) > 500: result_str = result_str[:500] + "..."
         await message.reply(
-            f"🧮 <b>Калькулятор</b>\n\n"
-            f"📝 Пример: <code>{html_escape_text(expr)}</code>\n"
-            f"✅ Ответ: <b>{html_escape_text(result_str)}</b>",
+            f"🧮 <b>Калькулятор</b>\n\n📝 Пример: <code>{html_escape_text(expr)}</code>\n✅ Ответ: <b>{html_escape_text(result_str)}</b>",
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     except ZeroDivisionError:
         await message.reply(f"{em('cross', '❌')} Деление на ноль.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        await message.reply(
-            f"{em('cross', '❌')} Не смог посчитать.\n<code>{html_escape_text(str(e))}</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        await message.reply(f"{em('cross', '❌')} Не смог посчитать.\n<code>{html_escape_text(str(e))}</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= КУРСЫ ВАЛЮТ =================
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!+-]?\s*курс(\s+\S+)?\s*$',
-    m.text.strip(), re.IGNORECASE
-))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*курс(\s+\S+)?\s*$', m.text.strip(), re.IGNORECASE))
 async def currency_cmd(message: types.Message):
     args = message.text.split()
     msg = await message.reply("💱 Загружаю курсы...", **_reply_kwargs(message))
-
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "https://open.er-api.com/v6/latest/USD",
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
+            async with session.get("https://open.er-api.com/v6/latest/USD", timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
                     return await msg.edit_text(f"{em('cross', '❌')} Не удалось загрузить курсы.", parse_mode="HTML")
                 data = await resp.json()
-
         rates = data.get("rates", {})
         if not rates:
             return await msg.edit_text(f"{em('cross', '❌')} Пустой ответ API.", parse_mode="HTML")
-
         if len(args) == 1:
             popular = ["USD", "EUR", "GBP", "CNY", "JPY", "UAH", "KZT", "BYN", "TRY", "PLN"]
             base = "RUB"
@@ -4764,42 +4279,23 @@ async def currency_cmd(message: types.Message):
                     text += f"• 1 {cur} = <b>{val:.2f}</b> ₽\n"
             text += f"\n📌 <code>.курс usd rub 100</code> — конвертер"
             return await msg.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
-
         try:
             from_cur = args[1].upper()
             to_cur = args[2].upper() if len(args) >= 3 else "RUB"
             amount = float(args[3].replace(",", ".")) if len(args) >= 4 else 1.0
         except (IndexError, ValueError):
-            return await msg.edit_text(
-                "📌 <b>Формат:</b>\n"
-                "<code>.курс usd rub 100</code>\n"
-                "<code>.курс eur</code>\n"
-                "<code>.курс</code> — популярные",
-                parse_mode="HTML"
-            )
-
+            return await msg.edit_text("📌 <b>Формат:</b>\n<code>.курс usd rub 100</code>", parse_mode="HTML")
         if from_cur not in rates:
             return await msg.edit_text(f"{em('cross', '❌')} Валюта <code>{from_cur}</code> не найдена.", parse_mode="HTML")
         if to_cur not in rates:
             return await msg.edit_text(f"{em('cross', '❌')} Валюта <code>{to_cur}</code> не найдена.", parse_mode="HTML")
-
         result = amount * (rates[to_cur] / rates[from_cur])
-
-        symbols = {
-            "USD": "$", "EUR": "€", "GBP": "£", "RUB": "₽", "JPY": "¥",
-            "CNY": "¥", "UAH": "₴", "KZT": "₸", "BYN": "Br", "TRY": "₺",
-            "PLN": "zł", "CHF": "₣", "CAD": "C$", "AUD": "A$",
-        }
-        s_from = symbols.get(from_cur, "")
-        s_to = symbols.get(to_cur, "")
-
+        symbols = {"USD":"$","EUR":"€","GBP":"£","RUB":"₽","JPY":"¥","CNY":"¥","UAH":"₴","KZT":"₸","BYN":"Br","TRY":"₺","PLN":"zł","CHF":"₣","CAD":"C$","AUD":"A$"}
+        s_from = symbols.get(from_cur, ""); s_to = symbols.get(to_cur, "")
         await msg.edit_text(
-            f"💱 <b>Конвертер валют</b>\n\n"
-            f"<b>{amount:g}</b> {s_from}{from_cur} = <b>{result:.4f}</b> {s_to}{to_cur}\n\n"
-            f"<i>Источник: open.er-api.com</i>",
+            f"💱 <b>Конвертер валют</b>\n\n<b>{amount:g}</b> {s_from}{from_cur} = <b>{result:.4f}</b> {s_to}{to_cur}\n\n<i>Источник: open.er-api.com</i>",
             parse_mode="HTML", disable_web_page_preview=True
         )
-
     except asyncio.TimeoutError:
         await msg.edit_text(f"{em('cross', '❌')} Таймаут. Попробуй позже.", parse_mode="HTML")
     except Exception as e:
@@ -4808,44 +4304,16 @@ async def currency_cmd(message: types.Message):
 
 
 # ================= КРИПТА =================
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!+-]?\s*(крипта|крипт|crypto)\s+\S+',
-    m.text.strip(), re.IGNORECASE
-))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*(крипта|крипт|crypto)\s+\S+', m.text.strip(), re.IGNORECASE))
 async def crypto_cmd(message: types.Message):
     args = message.text.split()
     if len(args) < 2:
-        return await message.reply(
-            "₿ <b>Крипта</b>\n\n"
-            "📌 <code>.крипта btc</code>\n"
-            "📌 <code>.крипта eth</code>\n"
-            "📌 <code>.крипта btc usd</code>\n\n"
-            "<i>Популярные: btc, eth, ton, sol, xrp, doge, bnb, ada, dot, matic</i>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply("₿ <b>Крипта</b>\n\n📌 <code>.крипта btc</code>\n📌 <code>.крипта eth</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     coin = args[1].lower()
     currency = args[2].lower() if len(args) >= 3 else "usd"
-
     msg = await message.reply("💎 Загружаю...", **_reply_kwargs(message))
-
-    coin_map = {
-        "btc": "bitcoin", "bitcoin": "bitcoin",
-        "eth": "ethereum", "ethereum": "ethereum",
-        "ton": "the-open-network", "toncoin": "the-open-network",
-        "sol": "solana", "solana": "solana",
-        "xrp": "ripple", "ripple": "ripple",
-        "doge": "dogecoin", "dogecoin": "dogecoin",
-        "bnb": "binancecoin", "ada": "cardano",
-        "dot": "polkadot", "matic": "matic-network",
-        "usdt": "tether", "usdc": "usd-coin",
-        "trx": "tron", "ltc": "litecoin",
-        "shib": "shiba-inu", "avax": "avalanche-2",
-        "link": "chainlink", "atom": "cosmos",
-    }
-
+    coin_map = {"btc":"bitcoin","bitcoin":"bitcoin","eth":"ethereum","ethereum":"ethereum","ton":"the-open-network","toncoin":"the-open-network","sol":"solana","solana":"solana","xrp":"ripple","ripple":"ripple","doge":"dogecoin","dogecoin":"dogecoin","bnb":"binancecoin","ada":"cardano","dot":"polkadot","matic":"matic-network","usdt":"tether","usdc":"usd-coin","trx":"tron","ltc":"litecoin","shib":"shiba-inu","avax":"avalanche-2","link":"chainlink","atom":"cosmos"}
     coin_id = coin_map.get(coin, coin)
-
     try:
         url = "https://api.coingecko.com/api/v3/simple/price"
         params = {"ids": coin_id, "vs_currencies": currency, "include_24hr_change": "true"}
@@ -4854,48 +4322,25 @@ async def crypto_cmd(message: types.Message):
                 if resp.status != 200:
                     return await msg.edit_text(f"{em('cross', '❌')} Не удалось получить курс.", parse_mode="HTML")
                 data = await resp.json()
-
         if not data or coin_id not in data:
-            return await msg.edit_text(
-                f"{em('cross', '❌')} Монета <code>{coin}</code> не найдена.",
-                parse_mode="HTML"
-            )
-
+            return await msg.edit_text(f"{em('cross', '❌')} Монета <code>{coin}</code> не найдена.", parse_mode="HTML")
         info = data[coin_id]
         price = info.get(currency)
         change = info.get(f"{currency}_24h_change")
-
         if price is None:
             return await msg.edit_text(f"{em('cross', '❌')} Нет цены в {currency.upper()}.", parse_mode="HTML")
-
-        if price >= 1000:
-            price_str = f"{price:,.2f}".replace(",", " ")
-        elif price >= 1:
-            price_str = f"{price:.2f}"
-        elif price >= 0.01:
-            price_str = f"{price:.4f}"
-        else:
-            price_str = f"{price:.8f}"
-
+        if price >= 1000: price_str = f"{price:,.2f}".replace(",", " ")
+        elif price >= 1: price_str = f"{price:.2f}"
+        elif price >= 0.01: price_str = f"{price:.4f}"
+        else: price_str = f"{price:.8f}"
         change_str = ""
         if change is not None:
             arrow = "📈" if change >= 0 else "📉"
             sign = "+" if change >= 0 else ""
             change_str = f"\n{arrow} Изм. 24ч: <b>{sign}{change:.2f}%</b>"
-
-        coins_emoji = {
-            "btc": "₿", "eth": "Ξ", "ton": "💎", "sol": "◎",
-            "doge": "🐕", "xrp": "💧", "bnb": "🟡", "ada": "🔷",
-        }
+        coins_emoji = {"btc":"₿","eth":"Ξ","ton":"💎","sol":"◎","doge":"🐕","xrp":"💧","bnb":"🟡","ada":"🔷"}
         icon = coins_emoji.get(coin, "💰")
-
-        await msg.edit_text(
-            f"{icon} <b>{coin.upper()}</b> / {currency.upper()}\n\n"
-            f"💵 Цена: <b>{price_str}</b> {currency.upper()}"
-            f"{change_str}",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-
+        await msg.edit_text(f"{icon} <b>{coin.upper()}</b> / {currency.upper()}\n\n💵 Цена: <b>{price_str}</b> {currency.upper()}{change_str}", parse_mode="HTML", disable_web_page_preview=True)
     except asyncio.TimeoutError:
         await msg.edit_text(f"{em('cross', '❌')} Таймаут.", parse_mode="HTML")
     except Exception as e:
@@ -4904,16 +4349,12 @@ async def crypto_cmd(message: types.Message):
 
 
 # ================= ВНУТРЕННИЙ КУРС =================
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!+-]?\s*(курс коинов|курс ирисок|биржа)\s*$',
-    m.text.strip(), re.IGNORECASE
-))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*(курс коинов|курс ирисок|биржа)\s*$', m.text.strip(), re.IGNORECASE))
 async def internal_rates_cmd(message: types.Message):
     chat_coins = get_chat_coins(message.chat.id)
     text = (
         "💱 <b>Внутренний курс Mos</b>\n\n"
-        "🪙 1 🍬 = <b>100</b> i¢\n"
-        "🍬 100 i¢ = <b>1</b> 🍬\n\n"
+        "🪙 1 🍬 = <b>100</b> i¢\n🍬 100 i¢ = <b>1</b> 🍬\n\n"
         f"🏦 Счёт этого чата: <b>{chat_coins}</b> i¢\n"
         f"💰 В mos-конфетках: ≈ <b>{chat_coins // 100}</b> 🍬\n\n"
         "📌 Обмен: <code>.купить коины 10</code> — 10 🍬 → 1000 i¢\n"
@@ -4923,125 +4364,62 @@ async def internal_rates_cmd(message: types.Message):
 
 
 # ================= WIKIPEDIA =================
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!+-]?\s*(вики|wiki)\s+\S+',
-    m.text.strip(), re.IGNORECASE
-))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*(вики|wiki)\s+\S+', m.text.strip(), re.IGNORECASE))
 async def wiki_cmd(message: types.Message):
     txt = message.text.strip()
     body = re.sub(r'^[.\/!+-]?\s*(вики|wiki)\s+', '', txt, count=1, flags=re.IGNORECASE).strip()
     if not body:
-        return await message.reply(
-            "📖 <b>Википедия</b>\n\n"
-            "📌 <code>.вики Москва</code>\n"
-            "📌 <code>.вики Python</code>\n"
-            "📌 <code>.вики ру Эйнштейн</code>\n"
-            "📌 <code>.вики en Moscow</code>\n\n"
-            "<i>Языки: ру (по умолчанию), en, de, fr, es, it, uk, pl, tr, ja, zh</i>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply("📖 <b>Википедия</b>\n\n📌 <code>.вики Москва</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     parts = body.split(maxsplit=1)
-    lang = "ru"
-    query = body
+    lang = "ru"; query = body
     if len(parts) >= 2 and len(parts[0]) == 2 and parts[0].isalpha():
-        lang = parts[0].lower()
-        query = parts[1].strip()
-
+        lang = parts[0].lower(); query = parts[1].strip()
     if not query:
         return await message.reply("❌ Пустой запрос.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     msg = await message.reply(f"🔎 Ищу в Википедии: <b>{html_escape_text(query)}</b>...", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     try:
         search_url = f"https://{lang}.wikipedia.org/w/api.php"
-        search_params = {
-            "action": "query",
-            "list": "search",
-            "srsearch": query,
-            "format": "json",
-            "srlimit": 1,
-            "utf8": 1,
-        }
+        search_params = {"action": "query", "list": "search", "srsearch": query, "format": "json", "srlimit": 1, "utf8": 1}
         headers = {"User-Agent": "MosBot/1.0 (Telegram bot)"}
-
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(search_url, params=search_params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
-                    return await msg.edit_text(
-                        f"{em('cross', '❌')} Википедия не отвечает (код {resp.status})",
-                        parse_mode="HTML"
-                    )
+                    return await msg.edit_text(f"{em('cross', '❌')} Википедия не отвечает.", parse_mode="HTML")
                 search_data = await resp.json()
-
         results = search_data.get("query", {}).get("search", [])
         if not results:
-            return await msg.edit_text(
-                f"{em('cross', '❌')} По запросу <b>{html_escape_text(query)}</b> ничего не найдено.",
-                parse_mode="HTML"
-            )
-
+            return await msg.edit_text(f"{em('cross', '❌')} Ничего не найдено.", parse_mode="HTML")
         page_title = results[0]["title"]
-
         summary_url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote(page_title)}"
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(summary_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
-                    return await msg.edit_text(
-                        f"{em('cross', '❌')} Не удалось загрузить статью.",
-                        parse_mode="HTML"
-                    )
+                    return await msg.edit_text(f"{em('cross', '❌')} Не удалось загрузить статью.", parse_mode="HTML")
                 summary_data = await resp.json()
-
         extract = summary_data.get("extract", "").strip()
         if not extract:
-            return await msg.edit_text(
-                f"{em('cross', '❌')} Пустая статья.",
-                parse_mode="HTML"
-            )
-
-        if len(extract) > 1000:
-            extract = extract[:1000].rsplit(" ", 1)[0] + "..."
-
-        flags = {
-            "ru": "🇷🇺", "en": "🇬🇧", "de": "🇩🇪", "fr": "🇫🇷", "es": "🇪🇸",
-            "it": "🇮🇹", "uk": "🇺🇦", "pl": "🇵🇱", "tr": "🇹🇷", "ja": "🇯🇵",
-            "zh": "🇨🇳", "ko": "🇰🇷", "ar": "🇸🇦", "pt": "🇵🇹", "nl": "🇳🇱",
-        }
+            return await msg.edit_text(f"{em('cross', '❌')} Пустая статья.", parse_mode="HTML")
+        if len(extract) > 1000: extract = extract[:1000].rsplit(" ", 1)[0] + "..."
+        flags = {"ru":"🇷🇺","en":"🇬🇧","de":"🇩🇪","fr":"🇫🇷","es":"🇪🇸","it":"🇮🇹","uk":"🇺🇦","pl":"🇵🇱","tr":"🇹🇷","ja":"🇯🇵","zh":"🇨🇳","ko":"🇰🇷","ar":"🇸🇦","pt":"🇵🇹","nl":"🇳🇱"}
         flag = flags.get(lang, "🌐")
-
-        page_url = summary_data.get("content_urls", {}).get("desktop", {}).get("page")
-        if not page_url:
-            page_url = f"https://{lang}.wikipedia.org/wiki/{quote(page_title)}"
-
+        page_url = summary_data.get("content_urls", {}).get("desktop", {}).get("page") or f"https://{lang}.wikipedia.org/wiki/{quote(page_title)}"
         thumbnail = summary_data.get("thumbnail", {}).get("source")
-
-        out = (
-            f"📖 <b>{html_escape_text(page_title)}</b>\n"
-            f"{flag} <i>Википедия ({lang})</i>\n\n"
-            f"{html_escape_text(extract)}\n\n"
-            f"🔗 <a href='{page_url}'>Читать полностью</a>"
-        )
-
+        out = f"📖 <b>{html_escape_text(page_title)}</b>\n{flag} <i>Википедия ({lang})</i>\n\n{html_escape_text(extract)}\n\n🔗 <a href='{page_url}'>Читать полностью</a>"
         if thumbnail:
             try:
-                kb = InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="📖 Читать в Википедии", url=page_url)
-                ]])
+                kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📖 Читать в Википедии", url=page_url)]])
                 try: await msg.delete()
                 except: pass
                 await message.reply_photo(photo=thumbnail, caption=out, parse_mode="HTML", reply_markup=kb, **_reply_kwargs(message))
                 return
             except Exception:
                 pass
-
         try:
             await msg.edit_text(out, parse_mode="HTML", disable_web_page_preview=False)
         except Exception:
             try: await msg.delete()
             except: pass
             await message.reply(out, parse_mode="HTML", disable_web_page_preview=False, **_reply_kwargs(message))
-
     except asyncio.TimeoutError:
         await msg.edit_text(f"{em('cross', '❌')} Таймаут. Попробуй позже.", parse_mode="HTML")
     except Exception as e:
@@ -5132,18 +4510,10 @@ async def add_holiday_cmd(message: types.Message):
         return await message.reply(f"{em('cross', '❌')} Только владелец/совладелец/агент 3+.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     m = re.match(r'^\s*[.\/!+-]?\s*праздник\s+добавить\s+(\d{1,2})[.\-](\d{1,2})\s*\|\s*(.+?)\s*\|\s*(\S+)\s*$', message.text.strip(), re.IGNORECASE)
     day, month = int(m.group(1)), int(m.group(2))
-    name = m.group(3).strip()
-    category = m.group(4).strip().lower()
-    cat_map = {
-        "глобальные": "global", "глобальный": "global", "global": "global",
-        "народные": "folk", "народный": "folk", "folk": "folk",
-        "праздники": "local", "праздник": "local", "local": "local",
-        "профессиональные": "prof", "профессия": "prof", "prof": "prof",
-        "забавные": "fun", "забавный": "fun", "fun": "fun",
-        "церковные": "church", "церковный": "church", "church": "church",
-    }
+    name = m.group(3).strip(); category = m.group(4).strip().lower()
+    cat_map = {"глобальные":"global","глобальный":"global","global":"global","народные":"folk","народный":"folk","folk":"folk","праздники":"local","праздник":"local","local":"local","профессиональные":"prof","профессия":"prof","prof":"prof","забавные":"fun","забавный":"fun","fun":"fun","церковные":"church","церковный":"church","church":"church"}
     if category not in cat_map:
-        return await message.reply("❌ Категория не найдена. Допустимые: <code>глобальные народные праздники профессиональные забавные церковные</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+        return await message.reply("❌ Категория не найдена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     date_mm_dd = f"{month:02d}-{day:02d}"
     if add_holiday(date_mm_dd, name, cat_map[category], message.from_user.id):
         await message.reply(f"{em('check', '✅')} Праздник добавлен!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -5179,10 +4549,7 @@ async def list_holidays_cmd(message: types.Message):
 
 
 # ================= АВТОУДАЛЕНИЕ ПРИВЕТСТВИЙ =================
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!+-]?\s*\+?\s*автоудаление\s+приветствий\b',
-    m.text.strip(), re.IGNORECASE
-))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+?\s*автоудаление\s+приветствий\b', m.text.strip(), re.IGNORECASE))
 async def set_greeting_autodelete_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -5196,48 +4563,25 @@ async def set_greeting_autodelete_cmd(message: types.Message):
     if not is_creator and not has_permission(chat_id, user_id, 3):
         if not await is_tg_admin(chat_id, user_id):
             return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
-    args = re.sub(r'^[.\/!+-]?\s*\+?\s*автоудаление\s+приветствий\s*',
-                  '', message.text.strip(), count=1, flags=re.IGNORECASE).strip()
-
+    args = re.sub(r'^[.\/!+-]?\s*\+?\s*автоудаление\s+приветствий\s*', '', message.text.strip(), count=1, flags=re.IGNORECASE).strip()
     if not args:
         current = get_greeting_autodelete(chat_id)
         if current > 0:
-            return await message.reply(
-                f"🧹 <b>Автоудаление приветствий</b>: <b>{_humanize_seconds(current)}</b>\n\n"
-                f"📌 Изменить: <code>+Автоудаление приветствий 30с</code>\n"
-                f"📌 Отключить: <code>-Автоудаление приветствий</code>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
-        return await message.reply(
-            "🧹 <b>Автоудаление приветствий</b>: 🔴 выключено\n\n"
-            "📌 Включить: <code>+Автоудаление приветствий 30с</code>\n"
-            "⏱ Максимальный срок: <b>1 день</b>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+            return await message.reply(f"🧹 <b>Автоудаление приветствий</b>: <b>{_humanize_seconds(current)}</b>\n\n📌 Изменить: <code>+Автоудаление приветствий 30с</code>\n📌 Отключить: <code>-Автоудаление приветствий</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+        return await message.reply("🧹 <b>Автоудаление приветствий</b>: 🔴 выключено\n\n📌 Включить: <code>+Автоудаление приветствий 30с</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     seconds, human = parse_autodelete_duration(args)
     if seconds is False:
-        return await message.reply(
-            "❌ Не понял срок.\nПримеры: <code>30с</code>, <code>5 мин</code>, <code>2 часа</code>, <code>1 день</code>\n"
-            "⏱ Максимум: <b>1 день</b>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply("❌ Не понял срок.\nПримеры: <code>30с</code>, <code>5 мин</code>, <code>2 часа</code>, <code>1 день</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if seconds == 0:
         set_greeting_autodelete(chat_id, 0)
         return await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     set_greeting_autodelete(chat_id, seconds)
-    await message.reply(
-        f"{em('check', '✅')} <b>Автоудаление приветствий включено!</b>\n\n⏱ Удаление через <b>{human}</b>",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Автоудаление приветствий включено!</b>\n\n⏱ Удаление через <b>{human}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-автоудаление приветствий")
 async def disable_greeting_autodelete_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]:
-        return
+    if message.chat.type not in ["group", "supergroup"]: return
     user_id = message.from_user.id; chat_id = message.chat.id
     is_creator = False
     try:
@@ -5256,8 +4600,7 @@ async def disable_greeting_autodelete_cmd(message: types.Message):
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*срок\s+приветствия\b', m.text.strip(), re.IGNORECASE))
 async def greeting_autodelete_alias_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]:
-        return
+    if message.chat.type not in ["group", "supergroup"]: return
     user_id = message.from_user.id; chat_id = message.chat.id
     is_creator = False
     try:
@@ -5268,19 +4611,15 @@ async def greeting_autodelete_alias_cmd(message: types.Message):
     if not is_creator and not has_permission(chat_id, user_id, 3):
         if not await is_tg_admin(chat_id, user_id):
             return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
-    args = re.sub(r'^[.\/!+-]?\s*срок\s+приветствия\s*',
-                  '', message.text.strip(), count=1, flags=re.IGNORECASE).strip()
-
+    args = re.sub(r'^[.\/!+-]?\s*срок\s+приветствия\s*', '', message.text.strip(), count=1, flags=re.IGNORECASE).strip()
     if not args:
         current = get_greeting_autodelete(chat_id)
         if current > 0:
             return await message.reply(f"🧹 Автоудаление приветствий: <b>{_humanize_seconds(current)}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-        return await message.reply("🧹 Автоудаление приветствий: 🔴 выключено\n\n📌 <code>/срок приветствия 30с</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
+        return await message.reply("🧹 Автоудаление приветствий: 🔴 выключено", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     seconds, human = parse_autodelete_duration(args)
     if seconds is False:
-        return await message.reply("❌ Не понял срок. Примеры: <code>30с</code>, <code>5 мин</code>, <code>1 час</code>, <code>1 день</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+        return await message.reply("❌ Не понял срок.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if seconds == 0:
         set_greeting_autodelete(chat_id, 0)
         return await message.reply(f"{em('cross', '❌')} Автоудаление приветствий выключено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -5306,17 +4645,12 @@ async def enable_short_about_cmd(message: types.Message):
     if is_short_about_enabled(chat_id):
         return await message.reply("ℹ️ Уже включено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_short_about_enabled(chat_id, True)
-    await message.reply(
-        f"{em('check', '✅')} <b>Карточка «Коротко про» включена!</b>\n\n"
-        f"📇 Будет отправляться после приветствия нового участника.",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Карточка «Коротко про» включена!</b>\n\n📇 Будет отправляться после приветствия нового участника.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["-коротко про", "-короткопро"])
 async def disable_short_about_cmd(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]:
-        return
+    if message.chat.type not in ["group", "supergroup"]: return
     user_id = message.from_user.id; chat_id = message.chat.id
     is_creator = False
     try:
@@ -5335,10 +4669,7 @@ async def disable_short_about_cmd(message: types.Message):
 async def set_gender_cmd(message: types.Message):
     parts = message.text.strip().split(maxsplit=2)
     if len(parts) < 3:
-        return await message.reply(
-            "📌 <code>мой пол М</code> или <code>мой пол Ж</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply("📌 <code>мой пол М</code> или <code>мой пол Ж</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     v = parts[2].strip().lower()
     if v in ["м", "муж", "мужской"]: v = "Мужской"
     elif v in ["ж", "жен", "женский"]: v = "Женский"
@@ -5386,7 +4717,7 @@ async def remove_city_cmd(message: types.Message):
     await message.reply("✅ Удалён.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
-# ================= АНКЕТА (КОМАНДЫ) =================
+# ================= АНКЕТА =================
 @cmd("анкета", allow_args=True, args_pattern=r"^(@\S+|\d+)$")
 async def anketa_cmd(message: types.Message):
     target = None
@@ -5410,39 +4741,24 @@ async def anketa_cmd(message: types.Message):
                         c.execute("SELECT user_id FROM users WHERE user_id = ?", (int(arg) if arg.lstrip("-").isdigit() else 0,))
                     row = c.fetchone()
                 if row:
-                    try:
-                        target = await bot.get_chat(row[0])
-                    except Exception:
-                        target = _FakeUser(row[0], f"ID {row[0]}")
+                    try: target = await bot.get_chat(row[0])
+                    except Exception: target = _FakeUser(row[0], f"ID {row[0]}")
                 else:
-                    return await message.reply(
-                        f"{em('cross', '❌')} Пользователь <code>{arg}</code> не найден.\n"
-                        f"📌 Формат: <code>.анкета</code>, <code>.анкета @user</code>, <code>.анкета 123456789</code>",
-                        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-                    )
+                    return await message.reply(f"{em('cross', '❌')} Пользователь <code>{arg}</code> не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not target:
         target = message.from_user
 
     text = await _build_anketa_text(target, message.chat.id, viewer_id=message.from_user.id)
-
     chart_buf = None
-    try:
-        chart_buf = generate_user_activity_chart(target.id, days=30)
-    except Exception as e:
-        print(f"⚠️ График анкеты: {e}")
+    try: chart_buf = generate_user_activity_chart(target.id, days=30)
+    except Exception as e: print(f"⚠️ График анкеты: {e}")
 
     if chart_buf:
         try:
-            await message.reply_photo(
-                photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
-                caption=text,
-                parse_mode="HTML",
-                **_reply_kwargs(message)
-            )
+            await message.reply_photo(photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
+                caption=text, parse_mode="HTML", **_reply_kwargs(message))
             return
-        except Exception:
-            pass
-
+        except Exception: pass
     try:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception:
@@ -5453,25 +4769,15 @@ async def anketa_cmd(message: types.Message):
 @cmd("моя профиль")
 async def my_anketa_cmd(message: types.Message):
     text = await _build_anketa_text(message.from_user, message.chat.id, viewer_id=message.from_user.id)
-
     chart_buf = None
-    try:
-        chart_buf = generate_user_activity_chart(message.from_user.id, days=30)
-    except Exception as e:
-        print(f"⚠️ График анкеты: {e}")
-
+    try: chart_buf = generate_user_activity_chart(message.from_user.id, days=30)
+    except Exception as e: print(f"⚠️ График анкеты: {e}")
     if chart_buf:
         try:
-            await message.reply_photo(
-                photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
-                caption=text,
-                parse_mode="HTML",
-                **_reply_kwargs(message)
-            )
+            await message.reply_photo(photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
+                caption=text, parse_mode="HTML", **_reply_kwargs(message))
             return
-        except Exception:
-            pass
-
+        except Exception: pass
     try:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception:
@@ -5488,56 +4794,31 @@ async def your_anketa_cmd(message: types.Message):
         if len(args) >= 2:
             arg = args[1]
             try:
-                if arg.startswith("@"):
-                    target = await bot.get_chat(arg)
-                elif arg.lstrip("-").isdigit():
-                    target = await bot.get_chat(int(arg))
+                if arg.startswith("@"): target = await bot.get_chat(arg)
+                elif arg.lstrip("-").isdigit(): target = await bot.get_chat(int(arg))
             except Exception:
                 with sqlite3.connect(DATABASE_PATH) as conn:
                     c = conn.cursor()
-                    if arg.startswith("@"):
-                        c.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (arg[1:],))
-                    else:
-                        c.execute("SELECT user_id FROM users WHERE user_id = ?", (int(arg) if arg.lstrip("-").isdigit() else 0,))
+                    if arg.startswith("@"): c.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (arg[1:],))
+                    else: c.execute("SELECT user_id FROM users WHERE user_id = ?", (int(arg) if arg.lstrip("-").isdigit() else 0,))
                     row = c.fetchone()
                 if row:
-                    try:
-                        target = await bot.get_chat(row[0])
-                    except Exception:
-                        target = _FakeUser(row[0], f"ID {row[0]}")
+                    try: target = await bot.get_chat(row[0])
+                    except Exception: target = _FakeUser(row[0], f"ID {row[0]}")
                 else:
-                    return await message.reply(
-                        f"{em('cross', '❌')} Пользователь <code>{arg}</code> не найден.",
-                        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-                    )
+                    return await message.reply(f"{em('cross', '❌')} Пользователь <code>{arg}</code> не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not target:
-        return await message.reply(
-            "📌 <b>Формат:</b>\n"
-            "• Ответь на сообщение: <code>.твоя анкета</code>\n"
-            "• Или: <code>.твоя анкета @user</code>\n"
-            "• Или: <code>.твоя анкета 123456789</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply("📌 <b>Формат:</b>\n• <code>.твоя анкета</code> (ответом)\n• <code>.твоя анкета @user</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = await _build_anketa_text(target, message.chat.id, viewer_id=message.from_user.id)
-
     chart_buf = None
-    try:
-        chart_buf = generate_user_activity_chart(target.id, days=30)
-    except Exception as e:
-        print(f"⚠️ График анкеты: {e}")
-
+    try: chart_buf = generate_user_activity_chart(target.id, days=30)
+    except Exception as e: print(f"⚠️ График анкеты: {e}")
     if chart_buf:
         try:
-            await message.reply_photo(
-                photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
-                caption=text,
-                parse_mode="HTML",
-                **_reply_kwargs(message)
-            )
+            await message.reply_photo(photo=types.BufferedInputFile(chart_buf.getvalue(), filename="anketa.png"),
+                caption=text, parse_mode="HTML", **_reply_kwargs(message))
             return
-        except Exception:
-            pass
-
+        except Exception: pass
     try:
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception:
@@ -5580,42 +4861,28 @@ async def profile_cmd(message: types.Message):
         if len(args) >= 2:
             arg_raw = args[1].strip()
             try:
-                if arg_raw.startswith("@"):
-                    target = await bot.get_chat(arg_raw)
-                elif arg_raw.lstrip("-").isdigit():
-                    target = await bot.get_chat(int(arg_raw))
+                if arg_raw.startswith("@"): target = await bot.get_chat(arg_raw)
+                elif arg_raw.lstrip("-").isdigit(): target = await bot.get_chat(int(arg_raw))
             except Exception:
-                return await message.reply(
-                    f"{em('cross', '❌')} Пользователь <code>{arg_raw}</code> не найден.",
-                    parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-                )
+                return await message.reply(f"{em('cross', '❌')} Пользователь <code>{arg_raw}</code> не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not target:
         target = message.from_user
 
     chat_id = message.chat.id
     user_id = target.id
-
     register_user(user_id, target.first_name, target.username or "")
-
     rank = get_rank(chat_id, user_id)
     rank_name = rank_display(chat_id, rank)
 
-    member_status_icon = "🟢"
-    member_status_text = "Состоит в чате"
+    member_status_icon = "🟢"; member_status_text = "Состоит в чате"
     try:
         m = await bot.get_chat_member(chat_id, user_id)
-        if m.status == "creator":
-            member_status_icon, member_status_text = "👑", "Создатель чата"
-        elif m.status == "administrator":
-            member_status_icon, member_status_text = "🛡", "Администратор"
-        elif m.status == "restricted":
-            member_status_icon, member_status_text = "🔇", "Ограничен"
-        elif m.status == "left":
-            member_status_icon, member_status_text = "⚪", "Вышел из чата"
-        elif m.status == "kicked":
-            member_status_icon, member_status_text = "🚫", "Забанен"
-    except Exception:
-        pass
+        if m.status == "creator": member_status_icon, member_status_text = "👑", "Создатель чата"
+        elif m.status == "administrator": member_status_icon, member_status_text = "🛡", "Администратор"
+        elif m.status == "restricted": member_status_icon, member_status_text = "🔇", "Ограничен"
+        elif m.status == "left": member_status_icon, member_status_text = "⚪", "Вышел из чата"
+        elif m.status == "kicked": member_status_icon, member_status_text = "🚫", "Забанен"
+    except Exception: pass
 
     in_antispam = is_in_antispam(user_id)
     in_ignore = is_ignored(chat_id, user_id)
@@ -5633,18 +4900,14 @@ async def profile_cmd(message: types.Message):
         cit_chat_id, cit_date = cit
         short = format_citizenship_short(cit_date)
         try:
-            d = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S")
-            date_str = d.strftime("%d.%m.%Y")
-        except Exception:
-            date_str = cit_date[:10]
+            d = datetime.strptime(cit_date[:19], "%Y-%m-%d %H:%M:%S"); date_str = d.strftime("%d.%m.%Y")
+        except Exception: date_str = cit_date[:10]
         if cit_chat_id == chat_id:
             cit_line = f"🏠 Гражданство беседы: {date_str} ({short})"
         else:
             try:
-                cc = await bot.get_chat(cit_chat_id)
-                cc_title = cc.title or "другой чат"
-            except Exception:
-                cc_title = "другой чат"
+                cc = await bot.get_chat(cit_chat_id); cc_title = cc.title or "другой чат"
+            except Exception: cc_title = "другой чат"
             cit_line = f"🏠 Гражданство «{cc_title}»: {date_str} ({short})"
     else:
         cit_line = "🏠 Гражданство беседы: нет"
@@ -5652,58 +4915,33 @@ async def profile_cmd(message: types.Message):
     last_seen = get_last_seen_in_chat(user_id, chat_id)
     last_seen_str = format_last_seen(last_seen)
     last_line = f"⏰ Последний актив: {last_seen_str}"
-
     day, week, month, total = get_activity_extended(user_id, chat_id)
     activity_line = f"📊 Актив (д|н|м|весь): {day} | {week} | {month} | {total}"
 
     nick = get_user_nick(user_id, chat_id)
-    if nick:
-        display_name = nick
-    else:
-        display_name = html_escape_text(target.first_name or "Пользователь")
-
+    display_name = nick if nick else html_escape_text(target.first_name or "Пользователь")
     if getattr(target, "username", None):
         profile_link = f'<a href="https://t.me/{target.username}">{display_name}</a>'
     else:
         profile_link = f'<a href="tg://user?id={user_id}">{display_name}</a>'
 
-    header_line = f"👤 Это пользователь {profile_link}"
-
-    lines = [header_line]
-    lines.append(f"{member_status_icon} {member_status_text}")
-
+    lines = [f"👤 Это пользователь {profile_link}", f"{member_status_icon} {member_status_text}"]
     status_line = _owner_status_line(user_id)
-    if status_line:
-        lines.append(status_line)
-
+    if status_line: lines.append(status_line)
     lines.append("")
     lines.append(f"👑 Ранг: <b>[{rank}]</b> {rank_name}")
-    lines.append(warn_line)
-    lines.append(cit_line)
-    lines.append(last_line)
-    lines.append(activity_line)
-
-    if as_line:
-        lines.append(as_line)
-    elif in_ignore:
-        lines.append(f"{em('mute', '🔇')} В игноре")
+    lines.append(warn_line); lines.append(cit_line); lines.append(last_line); lines.append(activity_line)
+    if as_line: lines.append(as_line)
+    elif in_ignore: lines.append(f"{em('mute', '🔇')} В игноре")
 
     text = "\n".join(lines)
-
     chart_buf = None
-    try:
-        chart_buf = generate_user_chat_activity_chart(user_id, chat_id, days=30)
-    except Exception as e:
-        print(f"⚠️ График профиля: {e}")
-
+    try: chart_buf = generate_user_chat_activity_chart(user_id, chat_id, days=30)
+    except Exception as e: print(f"⚠️ График профиля: {e}")
     if chart_buf:
         try:
-            await message.reply_photo(
-                photo=types.BufferedInputFile(chart_buf.getvalue(), filename="profile.png"),
-                caption=text,
-                parse_mode="HTML",
-                **_reply_kwargs(message)
-            )
+            await message.reply_photo(photo=types.BufferedInputFile(chart_buf.getvalue(), filename="profile.png"),
+                caption=text, parse_mode="HTML", **_reply_kwargs(message))
         except Exception:
             await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     else:
@@ -5765,18 +5003,12 @@ async def top_cmd(message: types.Message):
     try:
         if message.chat.type not in ["group", "supergroup"]:
             return await message.reply("📊 Топ работает только в группах.", parse_mode="HTML", **_reply_kwargs(message))
-
         args = message.text.strip().split()
         if args and args[0] and args[0][0] in ".!/+-":
             args[0] = args[0][1:]
-
-        period = "24h"
-        period_name = "за последние 24 часа"
-        period_icon = "🕐"
-
+        period = "24h"; period_name = "за последние 24 часа"; period_icon = "🕐"
         if len(args) >= 2:
             p = args[1].lower().strip()
-
             if p in ["24ч", "24h", "день", "сутки", "д", "today", "day"]:
                 period, period_name, period_icon = "24h", "за последние 24 часа", "🕐"
             elif p in ["неделя", "неделю", "нед", "н", "7д", "7d", "week"]:
@@ -5785,50 +5017,34 @@ async def top_cmd(message: types.Message):
                 period, period_name, period_icon = "30d", "за месяц", "🗓"
             elif p in ["вся", "всё", "все", "всё время", "all", "*"]:
                 period, period_name, period_icon = "all", "за всё время", "🏆"
-
         top_users = get_top_users(message.chat.id, period, limit=10)
-
         header = (
             f"{em('stats', '📊')} <b>Топ {period_icon} {period_name}</b>\n"
             f"<i>Чат:</i> {message.chat.title or 'личка'}\n"
             f"<i>Обновлено:</i> {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
         )
-
         if not top_users:
-            return await message.reply(
-                header + "📭 <i>Пока нет данных за этот период.</i>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
-
+            return await message.reply(header + "📭 <i>Пока нет данных за этот период.</i>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         total_msgs = sum(cnt or 0 for _, cnt in top_users)
-
         text = header
         medals = ["🥇", "🥈", "🥉"]
         max_count = top_users[0][1] or 1
-
         for i, (user_id, count) in enumerate(top_users, 1):
             try:
                 user = await bot.get_chat(user_id)
                 name = user_link(user_id, user.first_name, user.username)
-            except:
-                name = f"<code>{user_id}</code>"
-
+            except: name = f"<code>{user_id}</code>"
             medal = medals[i-1] if i <= 3 else f"<b>{i}.</b>"
-
             bar_len = 10
             filled = int((count / max_count) * bar_len) if max_count else 0
             bar = "▰" * filled + "▱" * (bar_len - filled)
-
-            text += f"{medal} {name}\n"
-            text += f"    <code>{bar}</code> <b>{count}</b>\n\n"
-
+            text += f"{medal} {name}\n    <code>{bar}</code> <b>{count}</b>\n\n"
         text += (
             f"━━━━━━━━━━━━━━━\n"
             f"📈 Всего сообщений: <b>{total_msgs}</b>\n"
             f"👥 Участников: <b>{len(top_users)}</b>\n"
             f"🕐 Живая статистика <b>24/7</b>"
         )
-
         await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
         print(f"❌ top_cmd ошибка: {traceback.format_exc()}")
@@ -5908,12 +5124,9 @@ async def refresh_chat_cmd(message: types.Message):
         link_text = f"<a href='{link}'>ссылка</a>" if link else "—"
         text = (
             f"{em('check', '✅')} <b>Чат обновлён!</b>\n\n"
-            f"📛 <b>Название:</b> {title}\n"
-            f"🆔 <b>ID:</b> <code>{message.chat.id}</code>\n"
-            f"🔑 <b>Код:</b> <code>{code}</code>\n"
-            f"🔗 <b>Ссылка:</b> {link_text}\n"
-            f"👑 <b>Бот админ:</b> {admin_icon}\n"
-            f"📝 <b>Описание:</b> {description[:200] or '—'}"
+            f"📛 <b>Название:</b> {title}\n🆔 <b>ID:</b> <code>{message.chat.id}</code>\n"
+            f"🔑 <b>Код:</b> <code>{code}</code>\n🔗 <b>Ссылка:</b> {link_text}\n"
+            f"👑 <b>Бот админ:</b> {admin_icon}\n📝 <b>Описание:</b> {description[:200] or '—'}"
         )
         try: await status_msg.edit_text(text, parse_mode="HTML", disable_web_page_preview=True)
         except: await status_msg.edit_text(text)
@@ -5942,8 +5155,7 @@ async def dk_main_cmd(message: types.Message):
         return await message.reply(f"{em('check', '✅')} Все ДК сброшены.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if len(args) < 3:
         return await message.reply(
-            "📌 <b>Формат:</b>\n<code>.дк бан 3</code>\n<code>.дк бан все</code>\n"
-            "<code>.дк бан выкл</code>\n<code>.дк бан создатель</code>\n<code>.дк сброс</code>",
+            "📌 <b>Формат:</b>\n<code>.дк бан 3</code>\n<code>.дк бан все</code>\n<code>.дк бан выкл</code>\n<code>.дк бан создатель</code>\n<code>.дк сброс</code>",
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     cmd_name = args[1].lower().strip()
@@ -5962,14 +5174,10 @@ async def dk_main_cmd(message: types.Message):
             return await message.reply(f"{em('cross', '❌')} Нельзя выше своего.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_command_access(chat_id, cmd_name, new_rank)
     level_names = {
-        -2: "👑 Только создатель",
-        -1: "🔒 Отключено",
+        -2: "👑 Только создатель", -1: "🔒 Отключено",
         0: f"🌐 {get_moderator_title(chat_id, 0, 'nom')}",
-        1: rank_display(chat_id, 1),
-        2: rank_display(chat_id, 2),
-        3: rank_display(chat_id, 3),
-        4: rank_display(chat_id, 4),
-        5: rank_display(chat_id, 5),
+        1: rank_display(chat_id, 1), 2: rank_display(chat_id, 2), 3: rank_display(chat_id, 3),
+        4: rank_display(chat_id, 4), 5: rank_display(chat_id, 5),
     }
     return await message.reply(
         f"{em('check', '✅')} ДК обновлён\n📌 <code>{cmd_name}</code>\n🔒 {level_names.get(new_rank, str(new_rank))}",
@@ -5984,14 +5192,9 @@ async def _show_dk_list(message: types.Message):
     for cmd_name, rank in access.items():
         if rank in groups: groups[rank].append(cmd_name)
     level_names = {
-        -2: "👑 Только создатель",
-        -1: "🔒 Отключено",
-        0: "🌐 Все",
-        1: rank_display(chat_id, 1),
-        2: rank_display(chat_id, 2),
-        3: rank_display(chat_id, 3),
-        4: rank_display(chat_id, 4),
-        5: rank_display(chat_id, 5),
+        -2: "👑 Только создатель", -1: "🔒 Отключено", 0: "🌐 Все",
+        1: rank_display(chat_id, 1), 2: rank_display(chat_id, 2), 3: rank_display(chat_id, 3),
+        4: rank_display(chat_id, 4), 5: rank_display(chat_id, 5),
     }
     text = f"{em('shield', '🛡')} <b>Доступы к командам (ДК)</b>\n\n"
     for level in [-2, -1, 0, 1, 2, 3, 4, 5]:
@@ -6086,18 +5289,9 @@ async def ban_cmd(message: types.Message):
         else:
             await bot.ban_chat_member(message.chat.id, target.id)
             add_chat_ban(message.chat.id, target.id, reason or "без причины", message.from_user.id, None)
-
         auto_added = auto_add_to_antispam_if_needed(target.id)
         extra = "☢️ Автоматически добавлен в антиспам!" if auto_added else None
-        response = mod_action_text(
-            action_emoji="🚫",
-            action_title="Бан",
-            target_mention=mention(target),
-            moderator_mention=mention(message.from_user),
-            duration=duration_text,
-            reason=reason,
-            extra=extra,
-        )
+        response = mod_action_text("🚫", "Бан", mention(target), mention(message.from_user), duration_text, reason, extra)
         await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
         await message.reply(mod_error_text("Ошибка бана", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -6118,12 +5312,7 @@ async def unban_cmd(message: types.Message):
             can_add_web_page_previews=True, can_send_polls=True, can_invite_users=True))
     except: pass
     clear_chat_ban(message.chat.id, target.id)
-    response = mod_action_text(
-        action_emoji="✅",
-        action_title="Разбан",
-        target_mention=mention(target),
-        moderator_mention=mention(message.from_user),
-    )
+    response = mod_action_text("✅", "Разбан", mention(target), mention(message.from_user))
     await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
@@ -6156,18 +5345,9 @@ async def mute_cmd(message: types.Message):
     try:
         until = datetime.now() + timedelta(seconds=duration_seconds)
         await bot.restrict_chat_member(message.chat.id, target.id,
-            permissions=types.ChatPermissions(can_send_messages=False),
-            until_date=until)
+            permissions=types.ChatPermissions(can_send_messages=False), until_date=until)
         add_chat_mute(message.chat.id, target.id, reason or "без причины", message.from_user.id, until.isoformat())
-
-        response = mod_action_text(
-            action_emoji="🔇",
-            action_title="Мут",
-            target_mention=mention(target),
-            moderator_mention=mention(message.from_user),
-            duration=duration_text,
-            reason=reason,
-        )
+        response = mod_action_text("🔇", "Мут", mention(target), mention(message.from_user), duration_text, reason)
         await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
         await message.reply(mod_error_text("Ошибка мута", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -6184,12 +5364,7 @@ async def unmute_cmd(message: types.Message):
         await bot.restrict_chat_member(message.chat.id, target.id, permissions=types.ChatPermissions(
             can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True))
         clear_chat_mute(message.chat.id, target.id)
-        response = mod_action_text(
-            action_emoji="🔈",
-            action_title="Размут",
-            target_mention=mention(target),
-            moderator_mention=mention(message.from_user),
-        )
+        response = mod_action_text("🔈", "Размут", mention(target), mention(message.from_user))
         await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
         await message.reply(mod_error_text("Ошибка размута", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -6208,12 +5383,7 @@ async def kick_cmd(message: types.Message):
     try:
         await bot.ban_chat_member(message.chat.id, target.id)
         await bot.unban_chat_member(message.chat.id, target.id)
-        response = mod_action_text(
-            action_emoji="👢",
-            action_title="Кик",
-            target_mention=mention(target),
-            moderator_mention=mention(message.from_user),
-        )
+        response = mod_action_text("👢", "Кик", mention(target), mention(message.from_user))
         await message.reply(response, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
         await message.reply(mod_error_text("Ошибка кика", f"<code>{e}</code>"), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -6279,138 +5449,69 @@ async def unpin_message_cmd(message: types.Message):
 
 
 # ================= НАСТРОЙКИ ВАРНОВ =================
-@dp.message(lambda m: m.text and re.match(
-    r'^\s*[.\/!+-]?\s*варн\s+(лимит|исход|наказание|настройки|статус|инфо|settings)\b',
-    m.text.strip(), re.IGNORECASE))
+@dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*варн\s+(лимит|исход|наказание|настройки|статус|инфо|settings)\b', m.text.strip(), re.IGNORECASE))
 async def warn_settings_cmd(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-
+    chat_id = message.chat.id; user_id = message.from_user.id
     is_creator = False
     try:
         m = await bot.get_chat_member(chat_id, user_id)
         is_creator = (m.status == "creator")
     except: pass
-
-    is_allowed = (
-        is_creator
-        or user_id == OWNER_ID
-        or is_coowner(user_id)
-        or has_agent_rank(user_id, 1)
-        or has_permission(chat_id, user_id, 3)
-        or await is_tg_admin(chat_id, user_id)
-    )
+    is_allowed = (is_creator or user_id == OWNER_ID or is_coowner(user_id) or has_agent_rank(user_id, 1)
+                  or has_permission(chat_id, user_id, 3) or await is_tg_admin(chat_id, user_id))
     if not is_allowed:
-        return await message.reply(
-            f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ или агент.",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ или агент.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     args = message.text.split(maxsplit=2)
-    if len(args) < 2:
-        return
+    if len(args) < 2: return
     sub = args[1].lower().strip()
-
     if sub in ["лимит", "limit"]:
         if len(args) < 3 or not args[2].strip().isdigit():
             limit, action, dur_text, dur_sec = get_warn_settings(chat_id)
-            return await message.reply(
-                f"📌 <b>Формат:</b> <code>.варн лимит 5</code>\n"
-                f"📊 Сейчас: <b>{limit}</b>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
+            return await message.reply(f"📌 <b>Формат:</b> <code>.варн лимит 5</code>\n📊 Сейчас: <b>{limit}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         new_limit = int(args[2].strip())
         if new_limit < 1 or new_limit > 20:
             return await message.reply("❌ Лимит от <b>1</b> до <b>20</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         set_warn_setting(chat_id, "warn_limit", new_limit)
-        return await message.reply(
-            f"{em('check', '✅')} <b>Лимит варнов:</b> <b>{new_limit}</b>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"{em('check', '✅')} <b>Лимит варнов:</b> <b>{new_limit}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if sub in ["исход", "наказание"]:
         rest = message.text.split(maxsplit=3)
         if len(rest) < 3:
             limit, action, dur_text, dur_sec = get_warn_settings(chat_id)
             action_name = {"mute": "🔇 Мут", "ban": "🚫 Бан", "kick": "👢 Кик"}.get(action, action)
             return await message.reply(
-                f"⚙️ <b>Исход варнов</b>\n\n"
-                f"📊 Лимит: <b>{limit}</b>\n"
-                f"⚔️ Сейчас: <b>{action_name}</b> на <b>{dur_text}</b>\n\n"
-                f"📌 <b>Формат:</b>\n"
-                f"<code>.варн исход мут 30 минут</code>\n"
-                f"<code>.варн исход бан 1 час</code>\n"
-                f"<code>.варн исход мут навсегда</code>\n"
-                f"<code>.варн исход бан навсегда</code>\n"
-                f"<code>.варн исход кик</code>",
+                f"⚙️ <b>Исход варнов</b>\n\n📊 Лимит: <b>{limit}</b>\n⚔️ Сейчас: <b>{action_name}</b> на <b>{dur_text}</b>\n\n"
+                f"📌 <b>Формат:</b>\n<code>.варн исход мут 30 минут</code>\n<code>.варн исход бан 1 час</code>\n<code>.варн исход мут навсегда</code>\n<code>.варн исход бан навсегда</code>\n<code>.варн исход кик</code>",
                 parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
-
         action_raw = rest[2].lower().strip()
-
         if action_raw in ["кик", "kick"]:
             set_warn_setting(chat_id, "action", "kick")
             set_warn_setting(chat_id, "duration_text", "кик")
             set_warn_setting(chat_id, "duration_seconds", 0)
-            return await message.reply(
-                f"{em('check', '✅')} Исход варнов: <b>👢 Кик</b>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
-
+            return await message.reply(f"{em('check', '✅')} Исход варнов: <b>👢 Кик</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         action_map = {"мут": "mute", "mute": "mute", "бан": "ban", "ban": "ban"}
         if action_raw not in action_map:
-            return await message.reply(
-                "❌ Действие: <code>мут</code>, <code>бан</code> или <code>кик</code>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
-
+            return await message.reply("❌ Действие: <code>мут</code>, <code>бан</code> или <code>кик</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if len(rest) < 4:
-            return await message.reply(
-                "📌 Укажи время или <code>навсегда</code>:\n"
-                "<code>.варн исход мут 30 минут</code>\n"
-                "<code>.варн исход бан навсегда</code>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
-
+            return await message.reply("📌 Укажи время или <code>навсегда</code>:\n<code>.варн исход мут 30 минут</code>\n<code>.варн исход бан навсегда</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         action_db = action_map[action_raw]
         duration_text = rest[3].strip()
-
         seconds, text = parse_warn_duration(duration_text)
         if seconds is False:
-            return await message.reply(
-                "❌ Не понял время.\n"
-                "Примеры: <code>30 минут</code>, <code>1 час</code>, <code>2 дня</code>, <code>1 неделя</code>, <code>навсегда</code>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
-
+            return await message.reply("❌ Не понял время.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         set_warn_setting(chat_id, "action", action_db)
         set_warn_setting(chat_id, "duration_text", text)
-        if seconds is None:
-            set_warn_setting(chat_id, "duration_seconds", 0)
-        else:
-            set_warn_setting(chat_id, "duration_seconds", seconds)
-
+        if seconds is None: set_warn_setting(chat_id, "duration_seconds", 0)
+        else: set_warn_setting(chat_id, "duration_seconds", seconds)
         action_name = "🔇 Мут" if action_db == "mute" else "🚫 Бан"
-        return await message.reply(
-            f"{em('check', '✅')} Исход варнов: <b>{action_name}</b> на <b>{text}</b>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"{em('check', '✅')} Исход варнов: <b>{action_name}</b> на <b>{text}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if sub in ["настройки", "статус", "инфо", "settings"]:
         limit, action, dur_text, dur_sec = get_warn_settings(chat_id)
         action_name = {"mute": "🔇 Мут", "ban": "🚫 Бан", "kick": "👢 Кик"}.get(action, action)
-        if action == "kick":
-            outcome = f"<b>{action_name}</b>"
-        else:
-            outcome = f"<b>{action_name}</b> на <b>{dur_text}</b>"
+        outcome = f"<b>{action_name}</b>" if action == "kick" else f"<b>{action_name}</b> на <b>{dur_text}</b>"
         return await message.reply(
-            f"⚙️ <b>Настройки варнов</b>\n\n"
-            f"📊 Лимит: <b>{limit}</b>\n"
-            f"⚔️ Исход: {outcome}\n\n"
-            f"📌 <code>.варн лимит 5</code>\n"
-            f"📌 <code>.варн исход мут 30 минут</code>\n"
-            f"📌 <code>.варн исход бан навсегда</code>\n"
-            f"📌 <code>.варн исход кик</code>",
+            f"⚙️ <b>Настройки варнов</b>\n\n📊 Лимит: <b>{limit}</b>\n⚔️ Исход: {outcome}\n\n"
+            f"📌 <code>.варн лимит 5</code>\n📌 <code>.варн исход мут 30 минут</code>\n📌 <code>.варн исход бан навсегда</code>\n📌 <code>.варн исход кик</code>",
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
@@ -6428,74 +5529,41 @@ async def warn_cmd(message: types.Message):
     target_rank = get_rank(message.chat.id, target.id)
     if actor_rank < 5 and target_rank >= actor_rank:
         return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     reason = None
     parts = message.text.split('\n', 1)
     if len(parts) > 1:
         r = parts[1].strip()
         if r: reason = r
-
     add_warn(target.id, message.chat.id, reason or "без причины", actor_id)
     warns_count = count_warns(target.id, message.chat.id)
-
     warn_limit, action, dur_text, dur_sec = get_warn_settings(message.chat.id)
-
-    first_msg = (
-        f"❗️ <b>Выдано предупреждение {warns_count}/{warn_limit}</b>\n\n"
-        f"🎯 Кому: {mention(target)}\n"
-    )
-    if reason:
-        first_msg += f"💬 Причина: <i>{reason}</i>\n"
+    first_msg = f"❗️ <b>Выдано предупреждение {warns_count}/{warn_limit}</b>\n\n🎯 Кому: {mention(target)}\n"
+    if reason: first_msg += f"💬 Причина: <i>{reason}</i>\n"
     first_msg += f"👮 От: {mention(message.from_user)}"
-
     await message.reply(first_msg, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     if warns_count >= warn_limit:
         try:
             if action == "mute":
                 until = datetime.now() + timedelta(seconds=dur_sec) if dur_sec and dur_sec > 0 else None
                 await bot.restrict_chat_member(message.chat.id, target.id,
-                    permissions=types.ChatPermissions(can_send_messages=False),
-                    until_date=until)
-
-                punishment = (
-                    f"🔇 <b>Мут</b>\n\n"
-                    f"👤 Пользователь: {mention(target)}\n"
-                    f"⏱ Срок: <b>{dur_text}</b>\n"
-                    f"📝 Причина: <i>лимит варнов</i>\n"
-                    f"👮 Модератор: {mention(message.from_user)}"
-                )
-
+                    permissions=types.ChatPermissions(can_send_messages=False), until_date=until)
+                punishment = (f"🔇 <b>Мут</b>\n\n👤 Пользователь: {mention(target)}\n⏱ Срок: <b>{dur_text}</b>\n"
+                              f"📝 Причина: <i>лимит варнов</i>\n👮 Модератор: {mention(message.from_user)}")
             elif action == "ban":
                 until = datetime.now() + timedelta(seconds=dur_sec) if dur_sec and dur_sec > 0 else None
                 await bot.ban_chat_member(message.chat.id, target.id, until_date=until)
                 add_chat_ban(message.chat.id, target.id, "лимит варнов", actor_id, until.isoformat() if until else None)
-
-                punishment = (
-                    f"🚫 <b>Бан</b>\n\n"
-                    f"👤 Пользователь: {mention(target)}\n"
-                    f"⏱ Срок: <b>{dur_text}</b>\n"
-                    f"📝 Причина: <i>лимит варнов</i>\n"
-                    f"👮 Модератор: {mention(message.from_user)}"
-                )
-
+                punishment = (f"🚫 <b>Бан</b>\n\n👤 Пользователь: {mention(target)}\n⏱ Срок: <b>{dur_text}</b>\n"
+                              f"📝 Причина: <i>лимит варнов</i>\n👮 Модератор: {mention(message.from_user)}")
             elif action == "kick":
                 await bot.ban_chat_member(message.chat.id, target.id)
                 await bot.unban_chat_member(message.chat.id, target.id)
-
-                punishment = (
-                    f"👢 <b>Кик</b>\n\n"
-                    f"👤 Пользователь: {mention(target)}\n"
-                    f"📝 Причина: <i>лимит варнов</i>\n"
-                    f"👮 Модератор: {mention(message.from_user)}"
-                )
+                punishment = (f"👢 <b>Кик</b>\n\n👤 Пользователь: {mention(target)}\n"
+                              f"📝 Причина: <i>лимит варнов</i>\n👮 Модератор: {mention(message.from_user)}")
             else:
                 punishment = f"⚔️ <b>{action}</b> — {mention(target)}"
-
             clear_warns(target.id, message.chat.id)
-
             await message.reply(punishment, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
         except Exception as e:
             print(f"⚠️ варн-исход ошибка: {e}")
 
@@ -6548,20 +5616,12 @@ async def clear_warns_cmd(message: types.Message):
 async def show_punishments(message: types.Message):
     chat_id = message.chat.id
     actor_id = message.from_user.id
-
     is_allowed = (
-        actor_id == OWNER_ID
-        or is_coowner(actor_id)
-        or has_agent_rank(actor_id, 1)
-        or await is_tg_admin(chat_id, actor_id)
-        or has_permission(chat_id, actor_id, 2)
+        actor_id == OWNER_ID or is_coowner(actor_id) or has_agent_rank(actor_id, 1)
+        or await is_tg_admin(chat_id, actor_id) or has_permission(chat_id, actor_id, 2)
     )
     if not is_allowed:
-        return await message.reply(
-            f"{em('cross', '❌')} Нужен <b>Ст. Модератор (2+)</b>, ТГ-админ или агент Mos.",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"{em('cross', '❌')} Нужен <b>Ст. Модератор (2+)</b>, ТГ-админ или агент Mos.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target, _ = await resolve_target(message)
     if not target:
         return await message.reply(f"{em('cross', '❌')} Ответьте.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -6578,10 +5638,7 @@ async def show_punishments(message: types.Message):
         info = get_antispam_info(user_id)
         if info:
             reason, added_by, added_at = info
-            blocks.append(
-                f"{em('shield', '🛡')} <b>В антиспаме MOS</b>\n"
-                f"📝 Причина: <i>{reason}</i>"
-            )
+            blocks.append(f"{em('shield', '🛡')} <b>В антиспаме MOS</b>\n📝 Причина: <i>{reason}</i>")
     if not blocks:
         return await message.reply(f"{em('check', '✅')} {mention(target)} чист.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"{em('calendar', '🗓')} <b>Наказания {mention(target)}</b>\n\n" + "\n\n".join(blocks)
@@ -6613,42 +5670,25 @@ async def show_bans(message: types.Message):
             reason, added_by, added_at = info
             if added_by and added_by != 0:
                 try:
-                    u = await bot.get_chat(added_by)
-                    who = user_link(added_by, u.first_name, u.username)
-                except:
-                    who = f"<code>{added_by}</code>"
-            else:
-                who = "<i>автоматически</i>"
-            text += (
-                f"☢️ <b>В АНТИСПАМЕ</b>\n"
-                f"📝 Причина: <i>{reason}</i>\n"
-                f"👮 Добавил: {who}\n"
-                f"🗓 Когда: <b>{_fmt_added_dt(added_at)}</b>\n\n"
-            )
-
+                    u = await bot.get_chat(added_by); who = user_link(added_by, u.first_name, u.username)
+                except: who = f"<code>{added_by}</code>"
+            else: who = "<i>автоматически</i>"
+            text += (f"☢️ <b>В АНТИСПАМЕ</b>\n📝 Причина: <i>{reason}</i>\n"
+                     f"👮 Добавил: {who}\n🗓 Когда: <b>{_fmt_added_dt(added_at)}</b>\n\n")
         history = get_antispam_history(user_id, limit=10)
         if history:
             text += f"📜 <b>История антиспама:</b>\n"
             for h_action, h_reason, h_admin, h_at in history:
-                if h_action == "add":
-                    icon = "➕"
-                    label = "Добавлен"
-                else:
-                    icon = "➖"
-                    label = "Снят"
+                icon = "➕" if h_action == "add" else "➖"
+                label = "Добавлен" if h_action == "add" else "Снят"
                 if h_admin and h_admin != 0:
                     try:
-                        u2 = await bot.get_chat(h_admin)
-                        h_who = user_link(h_admin, u2.first_name, u2.username)
-                    except:
-                        h_who = f"<code>{h_admin}</code>"
-                else:
-                    h_who = "<i>авто</i>"
+                        u2 = await bot.get_chat(h_admin); h_who = user_link(h_admin, u2.first_name, u2.username)
+                    except: h_who = f"<code>{h_admin}</code>"
+                else: h_who = "<i>авто</i>"
                 text += f"{icon} {label}: {h_who} — <b>{_fmt_added_dt(h_at)}</b>\n"
-                if h_reason:
-                    text += f"    📝 <i>{h_reason}</i>\n"
+                if h_reason: text += f"    📝 <i>{h_reason}</i>\n"
             text += "\n"
-
     elif was_antispam_ever:
         text += f"☢️ <b>Ранее в антиспаме</b> (уже снят)\n"
         history = get_antispam_history(user_id, limit=10)
@@ -6659,12 +5699,9 @@ async def show_bans(message: types.Message):
                 label = "Добавлен" if h_action == "add" else "Снят"
                 if h_admin and h_admin != 0:
                     try:
-                        u2 = await bot.get_chat(h_admin)
-                        h_who = user_link(h_admin, u2.first_name, u2.username)
-                    except:
-                        h_who = f"<code>{h_admin}</code>"
-                else:
-                    h_who = "<i>авто</i>"
+                        u2 = await bot.get_chat(h_admin); h_who = user_link(h_admin, u2.first_name, u2.username)
+                    except: h_who = f"<code>{h_admin}</code>"
+                else: h_who = "<i>авто</i>"
                 text += f"{icon} {label}: {h_who} — <b>{_fmt_added_dt(h_at)}</b>\n"
             text += "\n"
     else:
@@ -6675,45 +5712,27 @@ async def show_bans(message: types.Message):
     for i, b in enumerate(bans[:10], 1):
         chat_id, reason, banned_by, banned_at, until_date = b[0], b[1], b[2], b[3], b[4]
         was_as = b[5] if len(b) > 5 else 0
-
         try:
             if banned_by and banned_by != 0:
-                u2 = await bot.get_chat(banned_by)
-                bwho = user_link(banned_by, u2.first_name, u2.username)
-            else:
-                bwho = "<i>авто</i>"
-        except:
-            bwho = f"<code>{banned_by}</code>"
-
+                u2 = await bot.get_chat(banned_by); bwho = user_link(banned_by, u2.first_name, u2.username)
+            else: bwho = "<i>авто</i>"
+        except: bwho = f"<code>{banned_by}</code>"
         as_tag = " ☢️" if was_as else ""
-
         if until_date:
             try:
                 until_dt = datetime.fromisoformat(until_date.replace("Z", ""))
                 if until_dt > datetime.now():
                     dur = int((until_dt - datetime.now()).total_seconds())
-                    if dur >= 86400:
-                        dur_str = f"ещё {dur // 86400} дн."
-                    elif dur >= 3600:
-                        dur_str = f"ещё {dur // 3600} ч."
-                    elif dur >= 60:
-                        dur_str = f"ещё {dur // 60} мин."
-                    else:
-                        dur_str = f"ещё {dur} сек."
+                    if dur >= 86400: dur_str = f"ещё {dur // 86400} дн."
+                    elif dur >= 3600: dur_str = f"ещё {dur // 3600} ч."
+                    elif dur >= 60: dur_str = f"ещё {dur // 60} мин."
+                    else: dur_str = f"ещё {dur} сек."
                     until_str = f" | ⏱ {dur_str}"
-                else:
-                    until_str = " | <i>истёк</i>"
-            except:
-                until_str = ""
-        else:
-            until_str = " | <i>навсегда</i>"
-
-        text += (
-            f"<b>{i}.</b> 📝 {reason}{as_tag}\n"
-            f"   👮 {bwho}\n"
-            f"   {em('calendar', '🗓')} {_fmt_added_dt(banned_at)}{until_str}\n\n"
-        )
-
+                else: until_str = " | <i>истёк</i>"
+            except: until_str = ""
+        else: until_str = " | <i>навсегда</i>"
+        text += (f"<b>{i}.</b> 📝 {reason}{as_tag}\n   👮 {bwho}\n"
+                 f"   {em('calendar', '🗓')} {_fmt_added_dt(banned_at)}{until_str}\n\n")
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
@@ -6728,7 +5747,6 @@ async def _check_as_perms(message) -> bool:
 async def _parse_as_command(message):
     txt = message.text.strip()
     body = re.sub(r'^[.\/!+-]?\s*\+ас\b', '', txt, flags=re.IGNORECASE).strip()
-
     mode = "as"
     if re.match(r'^кик\s+игнор\b', body, re.IGNORECASE):
         body = re.sub(r'^кик\s+игнор\b', '', body, count=1, flags=re.IGNORECASE).strip()
@@ -6739,7 +5757,6 @@ async def _parse_as_command(message):
     elif re.match(r'^игнор\b', body, re.IGNORECASE):
         body = re.sub(r'^игнор\b', '', body, count=1, flags=re.IGNORECASE).strip()
         mode = "ignore"
-
     target = None
     rest_for_reason = body
     if message.reply_to_message:
@@ -6750,10 +5767,8 @@ async def _parse_as_command(message):
             first = parts[0]
             if first.startswith('@') or first.lstrip('-').isdigit():
                 try:
-                    if first.startswith('@'):
-                        target = await bot.get_chat(first)
-                    else:
-                        target = await bot.get_chat(int(first))
+                    if first.startswith('@'): target = await bot.get_chat(first)
+                    else: target = await bot.get_chat(int(first))
                 except:
                     with sqlite3.connect(DATABASE_PATH) as conn:
                         c = conn.cursor()
@@ -6774,8 +5789,7 @@ async def _parse_as_command(message):
 def _as_nick_link(target) -> str:
     name = html_escape_text(target.first_name or "Пользователь")
     username = getattr(target, "username", None)
-    if username:
-        return f'<a href="https://t.me/{username}">{name}</a>'
+    if username: return f'<a href="https://t.me/{username}">{name}</a>'
     return f'<a href="tg://user?id={target.id}">{name}</a>'
 
 
@@ -6798,15 +5812,11 @@ async def as_command_handler(message: types.Message):
             return await message.reply(f"{em('cross', '❌')} Нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if getattr(target, "is_bot", False):
             return await message.reply(f"{em('cross', '❌')} Нельзя на бота.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
         register_user(target.id, target.first_name, getattr(target, "username", "") or "")
         actor_id = message.from_user.id
-
         add_user_to_antispam(target.id, reason, actor_id)
-
         kicked_chats = []
         ign_chats = []
-
         if mode in ("kick", "kick_ignore"):
             if is_antispam_enabled(message.chat.id):
                 try:
@@ -6816,23 +5826,17 @@ async def as_command_handler(message: types.Message):
                     kicked_chats.append(message.chat.id)
                 except Exception as e:
                     print(f"⚠️ +ас кик в текущем чате: {e}")
-
             for cid in get_all_known_chats():
-                if cid == message.chat.id:
-                    continue
+                if cid == message.chat.id: continue
                 try:
-                    if not is_antispam_enabled(cid):
-                        continue
-                except:
-                    continue
+                    if not is_antispam_enabled(cid): continue
+                except: continue
                 try:
                     until = datetime.now() + timedelta(seconds=90)
                     await bot.ban_chat_member(cid, target.id, until_date=until)
                     add_chat_ban(cid, target.id, f"АС: {reason}", actor_id, until.isoformat(), was_antispam=1)
                     kicked_chats.append(cid)
-                except:
-                    pass
-
+                except: pass
         if mode in ("ignore", "kick_ignore"):
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
@@ -6841,50 +5845,28 @@ async def as_command_handler(message: types.Message):
                         c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)",
                                   (target.id, cid, "АС+игнор", actor_id))
                         ign_chats.append(cid)
-                    except:
-                        pass
+                    except: pass
                 c.execute("INSERT OR REPLACE INTO ignore_list (user_id, chat_id, reason, added_by) VALUES (?, ?, ?, ?)",
                           (target.id, message.chat.id, "АС+игнор", actor_id))
                 conn.commit()
             add_bot_ignore(target.id, actor_id)
-
         nick = _as_nick_link(target)
-
         if mode == "as":
-            lines = [
-                f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b>",
-                "",
-                f"💬 Причина: <i>{reason}</i>",
-            ]
+            lines = [f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b>", "", f"💬 Причина: <i>{reason}</i>"]
         elif mode == "ignore":
-            lines = [
-                f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> + <b>игнор</b>",
-                "🚷 <b>Бот полностью игнорирует пользователя</b> (в чатах и в ЛС)",
-                "",
-                f"💬 Причина: <i>{reason}</i>",
-            ]
+            lines = [f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> + <b>игнор</b>",
+                     "🚷 <b>Бот полностью игнорирует пользователя</b> (в чатах и в ЛС)", "", f"💬 Причина: <i>{reason}</i>"]
         elif mode == "kick":
-            lines = [
-                f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> (кик)",
-                f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов",
-                "",
-                f"💬 Причина: <i>{reason}</i>",
-            ]
-            if not kicked_chats:
-                lines.append("\n⚠️ Не удалось кикнуть ни из одного чата (проверь права бота)")
+            lines = [f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> (кик)",
+                     f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов", "", f"💬 Причина: <i>{reason}</i>"]
+            if not kicked_chats: lines.append("\n⚠️ Не удалось кикнуть ни из одного чата (проверь права бота)")
         else:
-            lines = [
-                f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> (кик + игнор)",
-                f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов",
-                "🚷 <b>Бот полностью игнорирует пользователя</b> (в чатах и в ЛС)",
-                "",
-                f"💬 Причина: <i>{reason}</i>",
-            ]
-            if not kicked_chats:
-                lines.append("\n⚠️ Не удалось кикнуть ни из одного чата (проверь права бота)")
-
+            lines = [f"{em('check', '✅')} {nick} занесён в базу <b>антиспам-Mos</b> (кик + игнор)",
+                     f"👢 Кикнут из <b>{len(kicked_chats)}</b> чатов",
+                     "🚷 <b>Бот полностью игнорирует пользователя</b> (в чатах и в ЛС)",
+                     "", f"💬 Причина: <i>{reason}</i>"]
+            if not kicked_chats: lines.append("\n⚠️ Не удалось кикнуть ни из одного чата (проверь права бота)")
         await message.reply("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     except Exception as e:
         print(f"❌ +АС ошибка: {traceback.format_exc()}")
         try:
@@ -6896,13 +5878,11 @@ async def as_command_handler(message: types.Message):
 async def as_remove_handler(message: types.Message):
     try:
         if not await _check_as_perms(message): return
-
         body = re.sub(r'^[.\/!+-]?\s*-ас\b', '', message.text.strip(), flags=re.IGNORECASE).strip()
         mode = "as"
         if re.match(r'^игнор\b', body, re.IGNORECASE):
             mode = "as_ignore"
             body = body[5:].strip()
-
         target = None
         if message.reply_to_message:
             target = message.reply_to_message.from_user
@@ -6924,7 +5904,6 @@ async def as_remove_handler(message: types.Message):
                     if row:
                         try: target = await bot.get_chat(row[0])
                         except: target = _FakeUser(row[0], f"ID {row[0]}")
-
         if not target:
             return await message.reply(
                 "📌 <b>Формат:</b>\n"
@@ -6934,21 +5913,14 @@ async def as_remove_handler(message: types.Message):
                 "• <code>-ас 123456789</code>",
                 parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
-
         actor_id = message.from_user.id
         was_in_antispam = is_in_antispam(target.id)
-
         if mode == "as":
             removed = remove_user_from_antispam(target.id, removed_by=actor_id)
             if not was_in_antispam:
-                return await message.reply(
-                    f"ℹ️ {mention(target)} не был(а) в антиспаме.",
-                    parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-                )
+                return await message.reply(f"ℹ️ {mention(target)} не был(а) в антиспаме.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
             await message.reply(
-                f"✅ <b>Снят с антиспама</b>\n\n"
-                f"👤 Пользователь: {mention(target)}\n"
-                f"👮 Агент: {mention(message.from_user)}",
+                f"✅ <b>Снят с антиспама</b>\n\n👤 Пользователь: {mention(target)}\n👮 Агент: {mention(message.from_user)}",
                 parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
         elif mode == "as_ignore":
@@ -6959,9 +5931,7 @@ async def as_remove_handler(message: types.Message):
                 conn.commit()
             remove_user_from_antispam(target.id, removed_by=actor_id)
             await message.reply(
-                f"✅ <b>Снят с антиспама и игнора</b>\n\n"
-                f"👤 Пользователь: {mention(target)}\n"
-                f"👮 Агент: {mention(message.from_user)}",
+                f"✅ <b>Снят с антиспама и игнора</b>\n\n👤 Пользователь: {mention(target)}\n👮 Агент: {mention(message.from_user)}",
                 parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
             )
     except Exception as e:
@@ -6975,28 +5945,21 @@ async def as_remove_handler(message: types.Message):
 async def enable_antispam_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-    user_id = message.from_user.id
-    chat_id = message.chat.id
+    user_id = message.from_user.id; chat_id = message.chat.id
     is_creator = False
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         is_creator = (member.status == "creator")
-    except:
-        pass
-    if user_id == OWNER_ID or is_coowner(user_id):
-        is_creator = True
+    except: pass
+    if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
     if not is_creator and not has_permission(chat_id, user_id, 3) and not has_agent_rank(user_id, 1):
         if not await is_tg_admin(chat_id, user_id):
-            return await message.reply(
-                f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ, агент или создатель чата.",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
+            return await message.reply(f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ, агент или создатель чата.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if is_antispam_enabled(chat_id):
         return await message.reply("ℹ️ Антиспам уже включён в этом чате.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_antispam_enabled(chat_id, True)
     await message.reply(
-        f"{em('check', '✅')} <b>Антиспам включён!</b>\n\n"
-        f"☢️ Теперь при входе в чат пользователей из антиспама — они будут <b>автоматически выкидываться</b>.",
+        f"{em('check', '✅')} <b>Антиспам включён!</b>\n\n☢️ Теперь при входе в чат пользователей из антиспама — они будут <b>автоматически выкидываться</b>.",
         parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
@@ -7005,27 +5968,19 @@ async def enable_antispam_cmd(message: types.Message):
 async def disable_antispam_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-    user_id = message.from_user.id
-    chat_id = message.chat.id
+    user_id = message.from_user.id; chat_id = message.chat.id
     is_creator = False
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         is_creator = (member.status == "creator")
-    except:
-        pass
-    if user_id == OWNER_ID or is_coowner(user_id):
-        is_creator = True
+    except: pass
+    if user_id == OWNER_ID or is_coowner(user_id): is_creator = True
     if not is_creator and not has_permission(chat_id, user_id, 3) and not has_agent_rank(user_id, 1):
         if not await is_tg_admin(chat_id, user_id):
-            return await message.reply(
-                f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ, агент или создатель чата.",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
+            return await message.reply(f"{em('cross', '❌')} Нужен <b>Мл. Админ (3+)</b>, ТГ-админ, агент или создатель чата.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not is_antispam_enabled(chat_id):
         return await message.reply("ℹ️ Антиспам уже выключен в этом чате.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     set_antispam_enabled(chat_id, False)
-
     unban_count = 0
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -7040,7 +5995,6 @@ async def disable_antispam_cmd(message: types.Message):
             clear_chat_ban(chat_id, uid)
             unban_count += 1
         except: pass
-
     await message.reply(
         f"{em('cross', '❌')} <b>Антиспам выключен!</b>\n\n"
         f"👥 Теперь пользователи из антиспама <b>могут заходить</b> в чат (бот не будет их выкидывать)."
@@ -7058,8 +6012,7 @@ async def antispam_status_cmd(message: types.Message):
     status = "🟢 включён" if enabled else "🔴 выключен"
     await message.reply(
         f"☢️ <b>Антиспам</b> в этом чате: {status}\n\n"
-        f"📌 Включить: <code>+антиспам</code>\n"
-        f"📌 Выключить: <code>-антиспам</code>",
+        f"📌 Включить: <code>+антиспам</code>\n📌 Выключить: <code>-антиспам</code>",
         parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
@@ -7077,24 +6030,14 @@ async def as_list_cmd(message: types.Message):
     text = f"☢️ <b>Антиспам</b> ({len(rows)}):\n\n"
     for i, (uid, reason, added_by, added_at) in enumerate(rows, 1):
         try:
-            u = await bot.get_chat(uid)
-            name = user_link(uid, u.first_name, u.username)
-        except:
-            name = f"<code>{uid}</code>"
+            u = await bot.get_chat(uid); name = user_link(uid, u.first_name, u.username)
+        except: name = f"<code>{uid}</code>"
         if added_by and added_by != 0:
             try:
-                u2 = await bot.get_chat(added_by)
-                who = user_link(added_by, u2.first_name, u2.username)
-            except:
-                who = f"<code>{added_by}</code>"
-        else:
-            who = "<i>авто</i>"
-        text += (
-            f"{i}. {name}\n"
-            f"    📝 <i>{reason}</i>\n"
-            f"    👮 {who}\n"
-            f"    🗓 {_fmt_added_dt(added_at)}\n\n"
-        )
+                u2 = await bot.get_chat(added_by); who = user_link(added_by, u2.first_name, u2.username)
+            except: who = f"<code>{added_by}</code>"
+        else: who = "<i>авто</i>"
+        text += f"{i}. {name}\n    📝 <i>{reason}</i>\n    👮 {who}\n    🗓 {_fmt_added_dt(added_at)}\n\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
@@ -7102,14 +6045,9 @@ async def as_list_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("+агент"))
 async def add_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
-    if actor_id != OWNER_ID and not is_coowner(actor_id) and not has_agent_rank(actor_id, 4):
-        return
-
+    if actor_id != OWNER_ID and not is_coowner(actor_id) and not has_agent_rank(actor_id, 4): return
     args = message.text.split()
-    rank = 1
-    target_arg = None
-    target_from_reply = None
-
+    rank = 1; target_arg = None; target_from_reply = None
     if message.reply_to_message and message.reply_to_message.from_user:
         target_from_reply = message.reply_to_message.from_user
         for a in args[1:]:
@@ -7120,70 +6058,40 @@ async def add_agent_cmd(message: types.Message):
             clean = a.strip().rstrip('.,;:!?')
             if not clean: continue
             if clean.isdigit() and 1 <= int(clean) <= 4 and len(clean) <= 2:
-                rank = int(clean)
-                continue
-            if target_arg is None:
-                target_arg = clean
-
+                rank = int(clean); continue
+            if target_arg is None: target_arg = clean
     if target_from_reply:
         target = target_from_reply
     elif target_arg:
         try:
-            if target_arg.startswith('@'):
-                target = await bot.get_chat(target_arg)
+            if target_arg.startswith('@'): target = await bot.get_chat(target_arg)
             elif target_arg.lstrip('-').isdigit():
                 if len(target_arg.lstrip('-')) < 6:
-                    return await message.reply(
-                        f"{em('cross', '❌')} <b>Слишком короткий ID.</b>\n"
-                        f"📌 Формат: <code>+агент @user 2</code> или ответом на сообщение",
-                        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-                    )
+                    return await message.reply(f"{em('cross', '❌')} <b>Слишком короткий ID.</b>\n📌 Формат: <code>+агент @user 2</code> или ответом", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
                 target = await bot.get_chat(int(target_arg))
         except Exception:
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
-                if target_arg.startswith('@'):
-                    c.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (target_arg[1:],))
-                else:
-                    c.execute("SELECT user_id FROM users WHERE user_id = ?", (int(target_arg),))
+                if target_arg.startswith('@'): c.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (target_arg[1:],))
+                else: c.execute("SELECT user_id FROM users WHERE user_id = ?", (int(target_arg),))
                 row = c.fetchone()
             if row:
-                try:
-                    target = await bot.get_chat(row[0])
-                except Exception:
-                    target = _FakeUser(row[0], f"ID {row[0]}")
-            else:
-                target = None
-    else:
-        target = None
-
+                try: target = await bot.get_chat(row[0])
+                except Exception: target = _FakeUser(row[0], f"ID {row[0]}")
+            else: target = None
+    else: target = None
     if not target:
-        return await message.reply(
-            "📌 <b>Формат:</b>\n"
-            "• Ответом на сообщение: <code>+агент 2</code>\n"
-            "• Или: <code>+агент @user 2</code>\n"
-            "• Или: <code>+агент 123456789 2</code>\n\n"
-            "🔢 Ранг: <b>1-4</b> (по умолчанию 1)",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply("📌 <b>Формат:</b>\n• <code>+агент 2</code> (ответом)\n• <code>+агент @user 2</code>\n• <code>+агент 123456789 2</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if target.id == OWNER_ID: return
-
     if rank not in [1, 2, 3, 4]:
         return await message.reply(f"{em('cross', '❌')} Ранг 1-4.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     register_user(target.id, target.first_name, getattr(target, "username", "") or "")
     set_agent_rank(target.id, rank, actor_id)
     rank_name = AGENT_RANKS.get(rank, "🛡 Агент")
     try:
-        await bot.send_message(
-            target.id,
-            f"🛡 <b>Вам выдана должность агента Mos!</b>\n\n"
-            f"👤 Вы: {mention(target)}\n"
-            f"🎖 Ранг: <b>{rank_name}</b>\n"
-            f"👮 Выдал: {mention(message.from_user)}",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
+        await bot.send_message(target.id,
+            f"🛡 <b>Вам выдана должность агента Mos!</b>\n\n👤 Вы: {mention(target)}\n🎖 Ранг: <b>{rank_name}</b>\n👮 Выдал: {mention(message.from_user)}",
+            parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
         print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
     await message.reply(f"{em('check', '✅')} {mention(target)} теперь <b>{rank_name}</b>!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -7192,41 +6100,29 @@ async def add_agent_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().strip().startswith("-агент"))
 async def remove_agent_cmd(message: types.Message):
     actor_id = message.from_user.id
-    if actor_id != OWNER_ID and not is_coowner(actor_id) and not has_agent_rank(actor_id, 4):
-        return
-
+    if actor_id != OWNER_ID and not is_coowner(actor_id) and not has_agent_rank(actor_id, 4): return
     if message.reply_to_message and message.reply_to_message.from_user:
         target = message.reply_to_message.from_user
     else:
-        args = message.text.split()
-        target = None
+        args = message.text.split(); target = None
         if len(args) >= 2:
             clean = args[1].strip().rstrip('.,;:!?')
             try:
-                if clean.startswith('@'):
-                    target = await bot.get_chat(clean)
-                elif clean.lstrip('-').isdigit() and len(clean.lstrip('-')) >= 6:
-                    target = await bot.get_chat(int(clean))
+                if clean.startswith('@'): target = await bot.get_chat(clean)
+                elif clean.lstrip('-').isdigit() and len(clean.lstrip('-')) >= 6: target = await bot.get_chat(int(clean))
             except Exception:
                 with sqlite3.connect(DATABASE_PATH) as conn:
                     c = conn.cursor()
-                    if clean.startswith('@'):
-                        c.execute("SELECT user_id, first_name, username FROM users WHERE LOWER(username) = LOWER(?)", (clean[1:],))
-                    else:
-                        c.execute("SELECT user_id, first_name, username FROM users WHERE user_id = ?", (int(clean) if clean.lstrip('-').isdigit() else 0,))
+                    if clean.startswith('@'): c.execute("SELECT user_id, first_name, username FROM users WHERE LOWER(username) = LOWER(?)", (clean[1:],))
+                    else: c.execute("SELECT user_id, first_name, username FROM users WHERE user_id = ?", (int(clean) if clean.lstrip('-').isdigit() else 0,))
                     row = c.fetchone()
-                if row:
-                    target = _FakeUser(row[0], row[1], row[2])
-
-    if not target:
-        return
+                if row: target = _FakeUser(row[0], row[1], row[2])
+    if not target: return
     remove_agent(target.id)
     try:
-        await bot.send_message(
-            target.id,
+        await bot.send_message(target.id,
             f"{em('cross', '❌')} <b>Вы больше не агент Mos.</b>\n\n👮 Снял: {mention(message.from_user)}",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
+            parse_mode="HTML", disable_web_page_preview=True)
     except: pass
     await message.reply(f"{em('cross', '❌')} {mention(target)} не агент.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
@@ -7234,35 +6130,23 @@ async def remove_agent_cmd(message: types.Message):
 @cmd("агенты")
 async def list_agents_cmd(message: types.Message):
     user_id = message.from_user.id
-    if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
-        return
-
+    if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1): return
     hidden_agents = set(get_hidden_agents())
-
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("""SELECT a.user_id, COALESCE(r.rank, 1) FROM agents a
                      LEFT JOIN agent_ranks r ON r.user_id = a.user_id
                      ORDER BY COALESCE(r.rank, 1) DESC""")
         rows = c.fetchall()
-
-    if user_id == OWNER_ID or is_coowner(user_id):
-        visible_rows = rows
-    else:
-        visible_rows = [(uid, rank) for uid, rank in rows if uid not in hidden_agents]
-
+    visible_rows = rows if (user_id == OWNER_ID or is_coowner(user_id)) else [(uid, rank) for uid, rank in rows if uid not in hidden_agents]
     if not visible_rows:
         return await message.reply("📭 Нет агентов.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     text = f"{em('shield', '🛡')} <b>Агенты Mos:</b>\n\n"
     for uid, rank in visible_rows:
         try:
-            u = await bot.get_chat(uid)
-            name = user_link(uid, u.first_name, u.username)
+            u = await bot.get_chat(uid); name = user_link(uid, u.first_name, u.username)
         except: name = f"ID {uid}"
-        hidden_mark = ""
-        if (user_id == OWNER_ID or is_coowner(user_id)) and uid in hidden_agents:
-            hidden_mark = " 🙈"
+        hidden_mark = " 🙈" if ((user_id == OWNER_ID or is_coowner(user_id)) and uid in hidden_agents) else ""
         text += f"{AGENT_RANKS.get(rank, '🛡 Агент')} — {name}{hidden_mark}\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
@@ -7270,8 +6154,7 @@ async def list_agents_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().strip() == "-помощь")
 async def hide_from_help_cmd(message: types.Message):
     user_id = message.from_user.id
-    if not is_agent(user_id) and user_id != OWNER_ID and not is_coowner(user_id):
-        return
+    if not is_agent(user_id) and user_id != OWNER_ID and not is_coowner(user_id): return
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("INSERT OR IGNORE INTO hidden_agents (user_id) VALUES (?)", (user_id,))
@@ -7282,8 +6165,7 @@ async def hide_from_help_cmd(message: types.Message):
 @dp.message(lambda m: m.text and m.text.lower().strip() == "+помощь")
 async def show_in_help_cmd(message: types.Message):
     user_id = message.from_user.id
-    if not is_agent(user_id) and user_id != OWNER_ID and not is_coowner(user_id):
-        return
+    if not is_agent(user_id) and user_id != OWNER_ID and not is_coowner(user_id): return
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("DELETE FROM hidden_agents WHERE user_id = ?", (user_id,))
@@ -7294,19 +6176,12 @@ async def show_in_help_cmd(message: types.Message):
 # ================= СОВЛАДЕЛЕЦ =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+совладелец\b', m.text.strip(), re.IGNORECASE))
 async def add_coowner_cmd(message: types.Message):
-    if message.from_user.id != OWNER_ID:
-        return
+    if message.from_user.id != OWNER_ID: return
     target, arg = await resolve_target(message)
     if not target:
         args = message.text.split()
-        hint = f"\n\n⚠️ Не удалось найти: <code>{args[1]}</code>\n💡 Юзер должен хотя бы раз написать боту в ЛС или в общий чат." if len(args) >= 2 else ""
-        return await message.reply(
-            "📌 <b>Формат:</b>\n"
-            "• Ответь на сообщение юзера: <code>+совладелец</code>\n"
-            "• Или по ID: <code>+совладелец 123456789</code>\n"
-            "• Или по юзернейму: <code>+совладелец @username</code>" + hint,
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        hint = f"\n\n⚠️ Не удалось найти: <code>{args[1]}</code>" if len(args) >= 2 else ""
+        return await message.reply("📌 <b>Формат:</b>\n• <code>+совладелец</code> (ответом)\n• <code>+совладелец ID</code>\n• <code>+совладелец @username</code>" + hint, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if target.id == OWNER_ID:
         return await message.reply(f"{em('cross', '❌')} Владелец и так владелец.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if getattr(target, "is_bot", False):
@@ -7316,62 +6191,39 @@ async def add_coowner_cmd(message: types.Message):
     register_user(target.id, target.first_name, getattr(target, "username", "") or "")
     add_coowner(target.id, message.from_user.id)
     try:
-        await bot.send_message(
-            target.id,
-            f"⚜️ <b>Вы теперь совладелец бота Mos!</b>\n\n"
-            f"👤 Вы: {mention(target)}\n"
-            f"👮 Назначил: {mention(message.from_user)}\n\n"
-            f"🔓 Вам доступны <b>все команды владельца бота</b>.\n"
-            f"⚠️ Используйте аккуратно.",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-    except Exception as e:
-        print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
-    await message.reply(
-        f"{em('check', '✅')} <b>Назначен совладелец!</b>\n\n👤 {mention(target)}\n⚜️ Теперь у него <b>все права владельца бота</b>.",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+        await bot.send_message(target.id,
+            f"⚜️ <b>Вы теперь совладелец бота Mos!</b>\n\n👤 Вы: {mention(target)}\n👮 Назначил: {mention(message.from_user)}\n\n🔓 Вам доступны <b>все команды владельца бота</b>.",
+            parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e: print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
+    await message.reply(f"{em('check', '✅')} <b>Назначен совладелец!</b>\n\n👤 {mention(target)}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*-совладелец\b', m.text.strip(), re.IGNORECASE))
 async def remove_coowner_cmd(message: types.Message):
-    if message.from_user.id != OWNER_ID:
-        return
+    if message.from_user.id != OWNER_ID: return
     target, arg = await resolve_target(message)
     if not target:
-        args = message.text.split()
-        hint = f"\n\n⚠️ Не удалось найти: <code>{args[1]}</code>" if len(args) >= 2 else ""
-        return await message.reply(
-            "📌 <b>Формат:</b>\n• <code>-совладелец</code> ответом\n• <code>-совладелец ID</code>\n• <code>-совладелец @username</code>" + hint,
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply("📌 <b>Формат:</b>\n• <code>-совладелец</code> (ответом)\n• <code>-совладелец ID</code>\n• <code>-совладелец @username</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if target.id == OWNER_ID:
         return await message.reply(f"{em('cross', '❌')} Владельца снять нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not remove_coowner(target.id):
         return await message.reply(f"ℹ️ {mention(target)} не является совладельцем.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
-        await bot.send_message(
-            target.id,
-            f"{em('cross', '❌')} <b>Вы больше не совладелец бота Mos.</b>\n\n👮 Снял: {mention(message.from_user)}",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-    except Exception as e:
-        print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
+        await bot.send_message(target.id, f"{em('cross', '❌')} <b>Вы больше не совладелец бота Mos.</b>\n\n👮 Снял: {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e: print(f"⚠️ Не смог написать в ЛС {target.id}: {e}")
     await message.reply(f"{em('check', '✅')} {mention(target)} больше не совладелец.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("совладельцы")
 async def list_coowners_cmd(message: types.Message):
-    if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        return
+    if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id): return
     rows = get_coowners()
     if not rows:
         return await message.reply("📭 Нет совладельцев.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = "⚜️ <b>Совладельцы бота:</b>\n\n"
     for i, (uid, added_at) in enumerate(rows, 1):
         try:
-            u = await bot.get_chat(uid)
-            name = user_link(uid, u.first_name, u.username)
+            u = await bot.get_chat(uid); name = user_link(uid, u.first_name, u.username)
         except: name = f"<code>{uid}</code>"
         text += f"{i}. {name} — <i>{_fmt_added_dt(added_at)}</i>\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -7380,78 +6232,56 @@ async def list_coowners_cmd(message: types.Message):
 # ================= ПОВЫСИТЬ / ПОНИЗИТЬ =================
 @cmd("повысить", allow_args=True)
 async def promote_cmd(message: types.Message):
-    chat_id = message.chat.id
-    actor_id = message.from_user.id
-
+    chat_id = message.chat.id; actor_id = message.from_user.id
     is_creator = False
     try:
         m = await bot.get_chat_member(chat_id, actor_id)
         is_creator = (m.status == "creator")
     except: pass
-
     actor_rank = get_rank(chat_id, actor_id)
-
     if not is_creator and actor_rank < 3:
         return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     target, _ = await resolve_target(message)
     if not target:
         return await message.reply("📌 <code>.повысить @user 3</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     if target.id == actor_id:
-        return await message.reply(
-            f"{em('cross', '❌')} <b>Нельзя повышать себя.</b>\n"
-            f"👤 Пусть это сделает создатель чата.",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"{em('cross', '❌')} <b>Нельзя повышать себя.</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     current_rank = get_rank(chat_id, target.id)
     args = message.text.split()
     new_rank = current_rank + 1
     for a in args[1:]:
         if a.isdigit(): new_rank = int(a); break
     if new_rank > 5: new_rank = 5
-
     if not is_creator and new_rank >= actor_rank:
         return await message.reply(f"{em('cross', '❌')} Нельзя ≥ твоего.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     set_rank(chat_id, target.id, new_rank, actor_id)
     await message.reply(f"🏆 {mention(target)}: {rank_display(chat_id, new_rank)}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("понизить", allow_args=True)
 async def demote_cmd(message: types.Message):
-    chat_id = message.chat.id
-    actor_id = message.from_user.id
-
+    chat_id = message.chat.id; actor_id = message.from_user.id
     is_creator = False
     try:
         m = await bot.get_chat_member(chat_id, actor_id)
         is_creator = (m.status == "creator")
     except: pass
-
     actor_rank = get_rank(chat_id, actor_id)
-
     if not is_creator and actor_rank < 3:
         return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     target, _ = await resolve_target(message)
     if not target:
         return await message.reply("📌 <code>.понизить @user 1</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     if target.id == actor_id:
         return await message.reply(f"{em('cross', '❌')} <b>Нельзя понижать себя.</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     current_rank = get_rank(chat_id, target.id)
     args = message.text.split()
     new_rank = current_rank - 1
     for a in args[1:]:
         if a.isdigit(): new_rank = int(a); break
     if new_rank < 0: new_rank = 0
-
     if not is_creator and new_rank >= actor_rank:
         return await message.reply(f"{em('cross', '❌')} Нельзя ≥ твоего.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     if new_rank == 0:
         remove_rank(chat_id, target.id)
         return await message.reply(f"📉 {mention(target)} разжалован.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -7462,27 +6292,19 @@ async def demote_cmd(message: types.Message):
 @cmd("разжаловать", allow_args=True)
 @cmd("снять", allow_args=True)
 async def demote_all_cmd(message: types.Message):
-    chat_id = message.chat.id
-    actor_id = message.from_user.id
-
+    chat_id = message.chat.id; actor_id = message.from_user.id
     is_creator = False
     try:
         m = await bot.get_chat_member(chat_id, actor_id)
         is_creator = (m.status == "creator")
     except: pass
-
     actor_rank = get_rank(chat_id, actor_id)
-
     if not is_creator and actor_rank < 3:
         return await message.reply(f"{em('cross', '❌')} Нет прав.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     target, _ = await resolve_target(message)
-    if not target:
-        return
-
+    if not target: return
     if target.id == actor_id:
         return await message.reply(f"{em('cross', '❌')} Себе нельзя.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     remove_rank(chat_id, target.id)
     await message.reply(f"{em('cross', '❌')} {mention(target)} разжалован.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
@@ -7494,50 +6316,33 @@ async def list_admins_cmd(message: types.Message):
     chat_id = message.chat.id
     admins = get_all_admins(chat_id)
     if not admins:
-        return await message.reply(
-            "📭 <b>Нет модераторов</b>\n\nНазначить: <code>.повысить @user 1</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply("📭 <b>Нет модераторов</b>\n\nНазначить: <code>.повысить @user 1</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     admins_sorted = sorted(admins, key=lambda x: (-x[1], x[0]))
-
     grouped = {}
     for user_id, rank in admins_sorted:
         grouped.setdefault(rank, []).append(user_id)
-
     header = get_moderators_header(chat_id)
     text = f"<b>{header}</b>\n"
-
     counter = 0
     for rank in sorted(grouped.keys(), reverse=True):
         title = get_moderator_title(chat_id, rank, "plu")
         icon = RANK_ICONS.get(rank, "👤")
         text += f"\n<b>[{rank}] {icon} {title}</b>\n"
-
         for user_id in grouped[rank]:
             counter += 1
             try:
-                user = await bot.get_chat(user_id)
-                name = user_link(user_id, user.first_name, user.username)
+                user = await bot.get_chat(user_id); name = user_link(user_id, user.first_name, user.username)
             except:
                 with sqlite3.connect(DATABASE_PATH) as conn:
                     c = conn.cursor()
                     c.execute("SELECT first_name, username FROM users WHERE user_id = ?", (user_id,))
                     r = c.fetchone()
-                if r:
-                    name = user_link(user_id, r[0] or f"ID {user_id}", r[1])
-                else:
-                    name = f"<b>ID {user_id}</b>"
-
-            agent_icon = ""
-            if is_agent(user_id):
-                agent_icon = "👨‍💻 "
-
+                if r: name = user_link(user_id, r[0] or f"ID {user_id}", r[1])
+                else: name = f"<b>ID {user_id}</b>"
+            agent_icon = "👨‍💻 " if is_agent(user_id) else ""
             vip_emoji = get_vip_emoji(user_id) or ""
             vip_str = f" {vip_emoji}" if vip_emoji else ""
-
             text += f"{counter}. {agent_icon}{name}{vip_str}\n"
-
     await message.reply(text.strip(), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
@@ -7549,21 +6354,16 @@ async def moderator_titles_cmd(message: types.Message):
     chat_id = message.chat.id
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только для групп.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     is_creator = False
     try:
         m = await bot.get_chat_member(chat_id, message.from_user.id)
         is_creator = (m.status == "creator")
-    except:
-        pass
+    except: pass
     if not is_creator and not has_permission(chat_id, message.from_user.id, 4) \
             and message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        return await message.reply(f"{em('cross', '❌')} Нужен <b>Ст. Админ (4+)</b> или создатель.",
-                                   parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
+        return await message.reply(f"{em('cross', '❌')} Нужен <b>Ст. Админ (4+)</b> или создатель.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     args = message.text.split(maxsplit=2)
     sub = args[1].lower().strip() if len(args) >= 2 else ""
-
     if not sub:
         titles = get_all_moderator_titles(chat_id)
         current_header = get_moderators_header(chat_id)
@@ -7583,59 +6383,34 @@ async def moderator_titles_cmd(message: types.Message):
             "📌 <b>Сброс:</b> <code>.модераторы сброс</code>"
         )
         return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     if sub in ["сброс", "reset"]:
-        reset_moderator_titles(chat_id)
-        reset_moderators_header(chat_id)
-        return await message.reply(f"{em('check', '✅')} Названия и заголовок сброшены к стандартным.",
-                                   parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
+        reset_moderator_titles(chat_id); reset_moderators_header(chat_id)
+        return await message.reply(f"{em('check', '✅')} Названия и заголовок сброшены к стандартным.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if sub in ["заголовок", "header"]:
         full_html = entities_to_html(message)
         m = re.match(r'^\s*[.\/!+-]?\s*модераторы\s+заголовок\s+(.+)$', full_html, re.IGNORECASE | re.DOTALL)
         if not m:
             current = get_moderators_header(chat_id)
-            return await message.reply(
-                f"📌 <b>Текущий заголовок:</b>\n{current}\n\n"
-                f"📌 <b>Установить:</b>\n<code>.модераторы заголовок ⭐️ Вайберы этой беседы</code>\n\n"
-                f"📌 <b>Сбросить:</b>\n<code>.модераторы заголовок сброс</code>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
+            return await message.reply(f"📌 <b>Текущий заголовок:</b>\n{current}\n\n📌 <b>Установить:</b>\n<code>.модераторы заголовок ⭐️ Название</code>\n\n📌 <b>Сбросить:</b>\n<code>.модераторы заголовок сброс</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         new_header = m.group(1).strip()
         if re.sub(r'<[^>]+>', '', new_header).strip().lower() in ["сброс", "reset"]:
             reset_moderators_header(chat_id)
-            return await message.reply(
-                f"{em('check', '✅')} Заголовок сброшен к стандартному:\n<code>{DEFAULT_MODERATORS_HEADER}</code>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
+            return await message.reply(f"{em('check', '✅')} Заголовок сброшен: <code>{DEFAULT_MODERATORS_HEADER}</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         set_moderators_header(chat_id, new_header[:128])
-        return await message.reply(
-            f"{em('check', '✅')} <b>Заголовок обновлён!</b>\n\n{new_header}",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"{em('check', '✅')} <b>Заголовок обновлён!</b>\n\n{new_header}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not sub.isdigit() or int(sub) not in range(6):
         return await message.reply("❌ Укажи ранг от 0 до 5.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     rank = int(sub)
     full_html = entities_to_html(message)
     m = re.match(r'^\s*[.\/!+-]?\s*модераторы\s+(\d)\s+(.+)$', full_html, re.IGNORECASE | re.DOTALL)
     if not m:
-        return await message.reply(
-            f"📌 <code>.модераторы {rank} и=...;р=...;д=...;т=...;мн=...</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply(f"📌 <code>.модераторы {rank} и=...;р=...;д=...;т=...;мн=...</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     template = m.group(2).strip()
     parsed = parse_title_template(template)
     if not parsed:
-        return await message.reply(
-            "❌ Не удалось распарсить шаблон.\nПример: <code>и=Власть;р=Власти;д=Власти;т=Властью;мн=Власти</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply("❌ Не удалось распарсить шаблон.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     for case, value in parsed.items():
         set_moderator_title(chat_id, rank, case, value[:64])
-
     titles = get_all_moderator_titles(chat_id)
     t = titles[rank]
     await message.reply(
@@ -7651,17 +6426,13 @@ async def moderator_titles_cmd(message: types.Message):
 async def resign_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-    user_id = message.from_user.id
-    chat_id = message.chat.id
+    user_id = message.from_user.id; chat_id = message.chat.id
     if user_id == OWNER_ID or is_coowner(user_id):
         return await message.reply(f"{em('cross', '❌')} Владелец/совладелец бота не может уйти в отставку.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         if member.status == "creator":
-            return await message.reply(
-                f"{em('cross', '❌')} Создатель чата не может уйти в отставку.",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
+            return await message.reply(f"{em('cross', '❌')} Создатель чата не может уйти в отставку.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except: pass
     current_rank = get_rank(chat_id, user_id)
     if current_rank == 0:
@@ -7670,10 +6441,7 @@ async def resign_cmd(message: types.Message):
     try: unmark_bot_promoted(user_id, chat_id)
     except: pass
     rank_name = rank_display(chat_id, current_rank)
-    await message.reply(
-        f"{em('check', '✅')} <b>Вы ушли в отставку</b>\n\n👤 {mention(message.from_user)}\n📉 Было: <b>{rank_name}</b>",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Вы ушли в отставку</b>\n\n👤 {mention(message.from_user)}\n📉 Было: <b>{rank_name}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("восстановить")
@@ -7708,25 +6476,16 @@ def _fmt_time(minutes):
 async def _check_automod_perms(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
-
-    if user_id == OWNER_ID or is_coowner(user_id):
-        return True
-    if has_agent_rank(user_id, 1):
-        return True
-
+    if user_id == OWNER_ID or is_coowner(user_id): return True
+    if has_agent_rank(user_id, 1): return True
     is_creator = False
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         is_creator = (member.status == "creator")
     except: pass
-
-    if is_creator:
-        return True
-    if has_permission(chat_id, user_id, 3):
-        return True
-    if await is_tg_admin(chat_id, user_id):
-        return True
-
+    if is_creator: return True
+    if has_permission(chat_id, user_id, 3): return True
+    if await is_tg_admin(chat_id, user_id): return True
     await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     return False
 
@@ -7878,6 +6637,62 @@ async def ast_mute_cmd(message): await _set_automod_time(message, "antisticker",
 
 
 # ================= АЧИВКИ =================
+def get_achievement_by_name(name):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, name, emoji, description FROM achievements WHERE LOWER(name) = LOWER(?)", (name,))
+        return c.fetchone()
+
+
+def create_achievement(name, emoji, description):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO achievements (name, emoji, description) VALUES (?, ?, ?)", (name, emoji, description))
+            conn.commit()
+            return c.lastrowid
+        except sqlite3.IntegrityError:
+            return None
+
+
+def get_user_achievements_all_chats(user_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""SELECT a.id, a.name, a.emoji, a.description, ua.given_at, ua.chat_id
+            FROM user_achievements ua
+            JOIN achievements a ON a.id = ua.achievement_id
+            WHERE ua.user_id = ?
+            ORDER BY ua.given_at DESC""", (user_id,))
+        return c.fetchall()
+
+
+def give_achievement(user_id, chat_id, achievement_id, given_by):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        try:
+            c.execute("INSERT INTO user_achievements (user_id, chat_id, achievement_id, given_by) VALUES (?, ?, ?, ?)",
+                      (user_id, chat_id, achievement_id, given_by))
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def remove_achievement(user_id, chat_id, achievement_id):
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM user_achievements WHERE user_id = ? AND chat_id = ? AND achievement_id = ?",
+                  (user_id, chat_id, achievement_id))
+        conn.commit()
+
+
+def get_all_achievements():
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, name, emoji, description FROM achievements ORDER BY id ASC")
+        return c.fetchall()
+
+
 @cmd("ачивки")
 @cmd("все ачивки")
 async def list_achievements_cmd(message: types.Message):
@@ -7896,17 +6711,12 @@ async def list_achievements_cmd(message: types.Message):
 async def my_achievements_cmd(message: types.Message):
     ach = get_user_achievements_all_chats(message.from_user.id)
     if not ach:
-        return await message.reply(
-            "📭 <b>У тебя пока нет ачивок.</b>\n\nИх выдают <b>агенты Mos</b> за активность, помощь и заслуги.",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply("📭 <b>У тебя пока нет ачивок.</b>\n\nИх выдают <b>агенты Mos</b> за активность, помощь и заслуги.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"🎖 <b>Твои ачивки</b> ({len(ach)}):\n\n"
     for aid, name, emoji, desc, given_at, chat_id in ach:
         try:
-            chat = await bot.get_chat(chat_id)
-            chat_title = chat.title or f"Чат {chat_id}"
-        except:
-            chat_title = f"Чат {chat_id}"
+            chat = await bot.get_chat(chat_id); chat_title = chat.title or f"Чат {chat_id}"
+        except: chat_title = f"Чат {chat_id}"
         text += f"{emoji} <b>{name}</b>"
         if desc: text += f" — <i>{desc}</i>"
         text += f"\n   🏠 {chat_title}\n   📅 {_fmt_added_dt(given_at)}\n"
@@ -7928,39 +6738,20 @@ async def your_achievements_cmd(message: types.Message):
             except:
                 return await message.reply(f"{em('cross', '❌')} Не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if not target:
-        return await message.reply(
-            "📌 <b>Формат:</b>\n"
-            "• Ответь на сообщение юзера: <code>.твои ачивки</code>\n"
-            "• Или: <code>.твои ачивки @user</code>\n"
-            "• Или: <code>.твои ачивки 123456789</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply("📌 <b>Формат:</b>\n• <code>.твои ачивки</code> (ответом)\n• <code>.твои ачивки @user</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     viewer_id = message.from_user.id
     is_self = (viewer_id == target.id)
     is_staff = (viewer_id == OWNER_ID or is_coowner(viewer_id) or has_agent_rank(viewer_id, 1))
-
     if are_achievements_hidden(target.id) and not is_self and not is_staff:
-        return await message.reply(
-            f"🔒 {mention(target)} <b>скрыл(а) свои ачивки</b>.\n\n"
-            f"<i>Он(а) может открыть их командой <code>+ачивки</code>.</i>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"🔒 {mention(target)} <b>скрыл(а) свои ачивки</b>.\n\n<i>Он(а) может открыть их командой <code>+ачивки</code>.</i>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     ach = get_user_achievements_all_chats(target.id)
     if not ach:
-        return await message.reply(
-            f"📭 У {mention(target)} пока нет ачивок.",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"📭 У {mention(target)} пока нет ачивок.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     text = f"🎖 <b>Ачивки {mention(target)}</b> ({len(ach)}):\n\n"
     for aid, name, emoji, desc, given_at, chat_id in ach:
         try:
-            chat = await bot.get_chat(chat_id)
-            chat_title = chat.title or f"Чат {chat_id}"
-        except:
-            chat_title = f"Чат {chat_id}"
+            chat = await bot.get_chat(chat_id); chat_title = chat.title or f"Чат {chat_id}"
+        except: chat_title = f"Чат {chat_id}"
         text += f"{emoji} <b>{name}</b>"
         if desc: text += f" — <i>{desc}</i>"
         text += f"\n   🏠 {chat_title}\n   📅 {_fmt_added_dt(given_at)}\n"
@@ -7973,12 +6764,7 @@ async def hide_achievements_cmd(message: types.Message):
     if are_achievements_hidden(user_id):
         return await message.reply("ℹ️ Твои ачивки уже скрыты.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     hide_achievements(user_id)
-    await message.reply(
-        f"{em('check', '✅')} <b>Твои ачивки теперь скрыты.</b>\n\n"
-        f"👁 Их видят только <b>агенты</b> и владелец.\n"
-        f"↩️ Вернуть: <code>+ачивки</code>",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Твои ачивки теперь скрыты.</b>\n\n👁 Их видят только <b>агенты</b> и владелец.\n↩️ Вернуть: <code>+ачивки</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() == "+ачивки")
@@ -7987,22 +6773,14 @@ async def show_achievements_cmd(message: types.Message):
     if not are_achievements_hidden(user_id):
         return await message.reply("ℹ️ Твои ачивки и так видны всем.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     show_achievements(user_id)
-    await message.reply(
-        f"{em('check', '✅')} <b>Твои ачивки снова видны всем.</b>\n\n"
-        f"🙈 Скрыть: <code>-ачивки</code>",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Твои ачивки снова видны всем.</b>\n\n🙈 Скрыть: <code>-ачивки</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*выдать\s+ачивку\b', m.text.strip(), re.IGNORECASE))
 async def give_achievement_cmd(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
+    chat_id = message.chat.id; user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
-        return await message.reply(
-            f"{em('cross', '❌')} Только <b>агенты Mos</b> могут выдавать ачивки.",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply(f"{em('cross', '❌')} Только <b>агенты Mos</b> могут выдавать ачивки.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target = None
     if message.reply_to_message:
         target = message.reply_to_message.from_user
@@ -8016,13 +6794,9 @@ async def give_achievement_cmd(message: types.Message):
                 try: target = await bot.get_chat(int(a)); break
                 except: pass
     if not target:
-        return await message.reply(
-            "📌 <b>Формат:</b>\n<code>.выдать ачивку @user Название</code>\nили ответом на сообщение:\n<code>.выдать ачивку Название</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply("📌 <b>Формат:</b>\n<code>.выдать ачивку @user Название</code>\nили ответом:\n<code>.выдать ачивку Название</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     raw = re.sub(r'^[.\/!+-]?\s*выдать\s+ачивку\s*', '', message.text.strip(), flags=re.IGNORECASE).strip()
-    if message.reply_to_message:
-        ach_name = raw
+    if message.reply_to_message: ach_name = raw
     else:
         parts = raw.split(maxsplit=1)
         ach_name = parts[1] if len(parts) > 1 else ""
@@ -8034,16 +6808,9 @@ async def give_achievement_cmd(message: types.Message):
         return await message.reply(f"{em('cross', '❌')} Ачивка <b>{ach_name}</b> не найдена.\n📌 Список: <code>.ачивки</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     ach_id, name, emoji, desc = ach
     if give_achievement(target.id, chat_id, ach_id, user_id):
-        await message.reply(
-            f"{em('check', '✅')} <b>Выдано!</b>\n\n👤 {mention(target)}\n{emoji} <b>{name}</b>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        await message.reply(f"{em('check', '✅')} <b>Выдано!</b>\n\n👤 {mention(target)}\n{emoji} <b>{name}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         try:
-            await bot.send_message(
-                target.id,
-                f"🎖 <b>Вам выдали ачивку!</b>\n\n{emoji} <b>{name}</b>" + (f"\n<i>{desc}</i>" if desc else ""),
-                parse_mode="HTML", disable_web_page_preview=True
-            )
+            await bot.send_message(target.id, f"🎖 <b>Вам выдали ачивку!</b>\n\n{emoji} <b>{name}</b>" + (f"\n<i>{desc}</i>" if desc else ""), parse_mode="HTML", disable_web_page_preview=True)
         except: pass
     else:
         await message.reply(f"{em('cross', '❌')} У {mention(target)} уже есть эта ачивка в этом чате.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -8051,13 +6818,11 @@ async def give_achievement_cmd(message: types.Message):
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*снять\s+ачивку\b', m.text.strip(), re.IGNORECASE))
 async def remove_achievement_cmd(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
+    chat_id = message.chat.id; user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
         return await message.reply(f"{em('cross', '❌')} Только <b>агенты Mos</b>.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     target = None
-    if message.reply_to_message:
-        target = message.reply_to_message.from_user
+    if message.reply_to_message: target = message.reply_to_message.from_user
     if not target:
         return await message.reply("📌 Ответь на сообщение юзера.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     raw = re.sub(r'^[.\/!+-]?\s*снять\s+ачивку\s*', '', message.text.strip(), flags=re.IGNORECASE).strip()
@@ -8075,28 +6840,20 @@ async def create_achievement_cmd(message: types.Message):
     user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_agent_rank(user_id, 1):
         return await message.reply(f"{em('cross', '❌')} Только <b>агенты Mos</b>.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     full_html = entities_to_html(message)
     raw = re.sub(r'^[.\/!+-]?\s*создать\s+ачивку\s*', '', full_html, count=1, flags=re.IGNORECASE).strip()
-
     parts = [p.strip() for p in raw.split("|")]
     if len(parts) < 1 or not parts[0]:
-        return await message.reply(
-            "📌 <b>Формат:</b>\n<code>.создать ачивку Название | 🏅 | Описание</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply("📌 <b>Формат:</b>\n<code>.создать ачивку Название | 🏅 | Описание</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     name_html = parts[0][:120]
     emoji_html = parts[1] if len(parts) > 1 and parts[1] else "🏅"
     desc_html = parts[2] if len(parts) > 2 else ""
-
     name_clean = re.sub(r'<[^>]+>', '', name_html).strip()[:60]
     if not name_clean:
         return await message.reply("❌ Пустое название.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     new_id = create_achievement(name_clean, emoji_html, desc_html)
     if not new_id:
         return await message.reply(f"{em('cross', '❌')} Ачивка с таким именем уже есть.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     await message.reply(
         f"{em('check', '✅')} Ачивка создана!\n\n{emoji_html} <b>{name_clean}</b>\n"
         + (f"<i>{desc_html}</i>\n" if desc_html else "")
@@ -8127,8 +6884,7 @@ async def add_candies_cmd(message: types.Message):
                 return await message.reply(f"{em('cross', '❌')} Пользователь не найден.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
             if args[2].lstrip("-").isdigit(): amount = int(args[2])
         elif len(args) == 2 and args[1].lstrip("-").isdigit():
-            target = message.from_user
-            amount = int(args[1])
+            target = message.from_user; amount = int(args[1])
     if not target:
         return await message.reply("📌 <code>.пополнить @user 100</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if amount is None or amount == 0:
@@ -8138,10 +6894,7 @@ async def add_candies_cmd(message: types.Message):
     add_candies(target.id, amount, message.from_user.id)
     new_balance = get_balance(target.id)
     sign = "+" if amount > 0 else ""
-    await message.reply(
-        f"{em('check', '✅')} <b>Пополнено!</b>\n\n👤 {mention(target)}\n💰 <b>{sign}{amount}</b> 🍬 mos-конфеток\n💼 Баланс: <b>{new_balance}</b> 🍬",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Пополнено!</b>\n\n👤 {mention(target)}\n💰 <b>{sign}{amount}</b> 🍬 mos-конфеток\n💼 Баланс: <b>{new_balance}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= ИРИСКИ =================
@@ -8171,8 +6924,7 @@ async def top_candies_cmd(message: types.Message):
     medals = ["🥇", "🥈", "🥉"]
     for i, (user_id, balance) in enumerate(top, 1):
         try:
-            user = await bot.get_chat(user_id)
-            name = user_link(user_id, user.first_name, user.username)
+            user = await bot.get_chat(user_id); name = user_link(user_id, user.first_name, user.username)
         except: name = f"ID: {user_id}"
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {name} — <b>{balance}</b> 🍬\n"
@@ -8189,8 +6941,7 @@ async def transfer_candies_cmd(message: types.Message):
     if message.reply_to_message and len(args) == 2:
         target = message.reply_to_message.from_user; amount_arg = args[1]
     else:
-        target_arg = args[1]
-        amount_arg = args[2] if len(args) >= 3 else None
+        target_arg = args[1]; amount_arg = args[2] if len(args) >= 3 else None
         if not amount_arg: return
         if target_arg.startswith('@'):
             try: target = await bot.get_chat(target_arg)
@@ -8211,10 +6962,7 @@ async def transfer_candies_cmd(message: types.Message):
         c.execute("INSERT OR IGNORE INTO candies (user_id, balance) VALUES (?, 0)", (target.id,))
         c.execute("UPDATE candies SET balance = balance + ? WHERE user_id = ?", (amount, target.id))
         conn.commit()
-    await message.reply(
-        f"{em('check', '✅')} <b>Перевод!</b>\n\n👤 Кому: {mention(target)}\n💰 Сумма: <b>{amount}</b> 🍬 mos-конфеток",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Перевод!</b>\n\n👤 Кому: {mention(target)}\n💰 Сумма: <b>{amount}</b> 🍬 mos-конфеток", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     try:
         await bot.send_message(target.id, f"🎁 <b>Вам перевели {amount} 🍬 mos-конфеток от {message.from_user.first_name}</b>", parse_mode="HTML")
     except: pass
@@ -8236,10 +6984,7 @@ async def block_transfer_cmd(message: types.Message):
     ok = add_transfer_block(blocker_id, target.id, blocker_id)
     if not ok:
         return await message.reply(f"ℹ️ {mention(target)} уже в списке запрещённых.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-    await message.reply(
-        f"{em('check', '✅')} <b>Готово!</b>\n\n🚫 {mention(target)} <b>больше не может</b> переводить mos-конфетки {mention(message.from_user)}.",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Готово!</b>\n\n🚫 {mention(target)} <b>больше не может</b> переводить mos-конфетки {mention(message.from_user)}.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*разрешить\s+переводы\b', m.text.strip(), re.IGNORECASE))
@@ -8264,8 +7009,7 @@ async def my_transfer_blocks_cmd(message: types.Message):
     text = f"🚫 <b>Запрет на переводы mos-конфеток вам</b> ({len(blocks)}):\n\n"
     for i, (blocked_id, added_at) in enumerate(blocks, 1):
         try:
-            u = await bot.get_chat(blocked_id)
-            name = user_link(blocked_id, u.first_name, u.username)
+            u = await bot.get_chat(blocked_id); name = user_link(blocked_id, u.first_name, u.username)
         except: name = f"<code>{blocked_id}</code>"
         text += f"{i}. {name} — <i>{_fmt_added_dt(added_at)}</i>\n"
     text += f"\n📌 Снять запрет: <code>.разрешить переводы @user</code>"
@@ -8352,8 +7096,7 @@ async def coins_top_cmd(message: types.Message):
     medals = ["🥇", "🥈", "🥉"]
     for i, (user_id, balance) in enumerate(top, 1):
         try:
-            user = await bot.get_chat(user_id)
-            name = user_link(user_id, user.first_name, user.username)
+            user = await bot.get_chat(user_id); name = user_link(user_id, user.first_name, user.username)
         except: name = f"ID: {user_id}"
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {name} — <b>{balance}</b> i¢\n"
@@ -8368,10 +7111,7 @@ async def buy_candies_stars_cmd(message: types.Message):
     args = message.text.split()
     if len(args) < 2 or not args[1].isdigit():
         price = get_stars_per_candy(message.chat.id)
-        return await message.reply(
-            f"🍬 <b>Покупка mos-конфеток</b>\n\n💰 Курс: <b>{price} ⭐ = 1 🍬</b>\n\n📌 <code>.купитьириски 10</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply(f"🍬 <b>Покупка mos-конфеток</b>\n\n💰 Курс: <b>{price} ⭐ = 1 🍬</b>\n\n📌 <code>.купитьириски 10</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     amount = int(args[1])
     if amount < 1 or amount > 10000: return
     price = get_stars_per_candy(message.chat.id); total_stars = amount * price
@@ -8402,10 +7142,7 @@ async def successful_payment_handler(message: types.Message):
     result = complete_stars_payment(payment_id)
     if not result: return
     user_id, chat_id, amount_candies, stars_paid = result
-    await message.reply(
-        f"{em('check', '✅')} <b>Покупка успешна!</b>\n\n🍬 +{amount_candies} mos-конфеток\n⭐ {stars_paid}",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )# ================= РЫБАЛКА — ПОМОЩЬ =================
+    await message.reply(f"{em('check', '✅')} <b>Покупка успешна!</b>\n\n🍬 +{amount_candies} mos-конфеток\n⭐ {stars_paid}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))# ================= РЫБАЛКА — ПОМОЩЬ =================
 def _fishing_help_text() -> str:
     return (
         "🎣 <b>Рыбалка — Mos</b>\n"
@@ -8464,12 +7201,7 @@ def _fishing_help_text() -> str:
 @cmd("рыбалка хелп")
 @cmd("рыбалка help")
 async def fishing_help_cmd(message: types.Message):
-    await message.reply(
-        _fishing_help_text(),
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-        **_reply_kwargs(message)
-    )
+    await message.reply(_fishing_help_text(), parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= РЫБАЛКА — ОСНОВНОЕ =================
@@ -8480,7 +7212,6 @@ async def fishing_cmd(message: types.Message):
     user_id = message.from_user.id
     chat_id = message.chat.id
 
-    # === Проверка подписки на @moskanalp ===
     if not await is_subscribed_to_fishing_channel(user_id):
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="📢 Подписаться на Mos", url=SUPPORT_CHANNEL_LINK)
@@ -8490,10 +7221,7 @@ async def fishing_cmd(message: types.Message):
             f"Чтобы рыбачить — подпишись на наш канал:\n"
             f"👉 <a href=\"{SUPPORT_CHANNEL_LINK}\">@moskanalp</a>\n\n"
             f"После подписки попробуй снова: <code>.рыбалка</code>",
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-            reply_markup=kb,
-            **_reply_kwargs(message)
+            parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb, **_reply_kwargs(message)
         )
 
     info = get_fishing(user_id)
@@ -8525,16 +7253,11 @@ async def fishing_cmd(message: types.Message):
         cd_min = user_cooldown // 60
         cd_hours = cd_min // 60
         cd_min = cd_min % 60
-        if cd_hours > 0:
-            cd_str = f"{cd_hours} ч. {cd_min} мин."
-        else:
-            cd_str = f"{cd_min} мин."
+        cd_str = f"{cd_hours} ч. {cd_min} мин." if cd_hours > 0 else f"{cd_min} мин."
 
         return await message.reply(
-            f"⏳ <b>Удочка не готова</b>\n\n"
-            f"<code>{bar}</code> {percent}%\n\n"
-            f"⏱ Осталось: <b>{time_str}</b>\n"
-            f"⚙️ Твой кулдаун: <b>{cd_str}</b> <i>(улучшай снасти!)</i>",
+            f"⏳ <b>Удочка не готова</b>\n\n<code>{bar}</code> {percent}%\n\n"
+            f"⏱ Осталось: <b>{time_str}</b>\n⚙️ Твой кулдаун: <b>{cd_str}</b> <i>(улучшай снасти!)</i>",
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
 
@@ -8552,9 +7275,7 @@ async def fishing_cmd(message: types.Message):
     chance = 55 + (level - 1) * 5 + 10
     bait_active = is_bait_active(bait_until)
     if bait_active: chance += 15
-
     gear_bonus, gear_flat, boat_level, legendary_bonus, rare_bonus, gear_info = get_fishing_gear_bonus(user_id)
-
     chance = int(chance * (1 + gear_bonus))
     chance = min(chance, 98)
     roll = random.randint(1, 100)
@@ -8583,20 +7304,16 @@ async def fishing_cmd(message: types.Message):
             update_fishing(user_id, level=new_level, xp=new_xp, total_caught=total_caught + 1)
             set_fishing_last_fish(user_id)
             log_fishing(user_id, chat_id, "caught", name, reward)
-            level_up_text = ""
-            if new_level > level: level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>"
+            level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>" if new_level > level else ""
             extra = ""
             if kind == "gear_bait": extra = "\n🍯 Тебе выпала <b>прикормка на 1 час</b>!"
             if kind == "gear_lucky": extra = "\n🪝 Тебе выпал <b>Крючок 1 ур.</b>!"
             if kind == "gear_float": extra = "\n🔮 Тебе выпал <b>Магический поплавок 1 ур.</b>!"
             await msg.edit_text(
-                f"🎣 <b>УЛОВ</b>\n\n"
-                f"{emoji} <b>{name}</b>\n"
-                f"💰 Награда: <b>+{reward}</b> 🍬\n"
+                f"🎣 <b>УЛОВ</b>\n\n{emoji} <b>{name}</b>\n💰 Награда: <b>+{reward}</b> 🍬\n"
                 f"✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
                 f"📊 Уровень: <b>{new_level}</b> | XP: <b>{new_xp}/{xp_needed_for_level(new_level)}</b>\n"
-                f"🐟 Всего поймано: <b>{total_caught + 1}</b>"
-                f"{level_up_text}{extra}{event_text}",
+                f"🐟 Всего поймано: <b>{total_caught + 1}</b>{level_up_text}{extra}{event_text}",
                 parse_mode="HTML"
             )
             return
@@ -8604,7 +7321,6 @@ async def fishing_cmd(message: types.Message):
         legendary_chance = 3 + legendary_bonus + location["legendary_chance"]
         legendary_chance = int(legendary_chance * rare_boost * event_bonus)
         is_legendary = random.randint(1, 100) <= legendary_chance
-
         if is_legendary:
             total_weight = sum(f[4] for f in LEGENDARY_FISH)
             pick = random.uniform(0, total_weight); cumulative = 0
@@ -8619,19 +7335,13 @@ async def fishing_cmd(message: types.Message):
             region = get_chat_region(chat_id)
             hour = datetime.now().hour
             time_of_day = "night" if (hour >= 22 or hour < 6) else "day"
-
             available = []
             for fish in FISH_LIST:
                 fname, femoji, fmin, fmax, fweight, fregion, ftime = fish
-                if fregion not in ("any", region):
-                    continue
-                if ftime not in ("any", time_of_day):
-                    continue
+                if fregion not in ("any", region): continue
+                if ftime not in ("any", time_of_day): continue
                 available.append(fish)
-
-            if not available:
-                available = FISH_LIST
-
+            if not available: available = FISH_LIST
             total_weight = sum(f[4] for f in available)
             pick = random.uniform(0, total_weight); cumulative = 0
             chosen = available[0]
@@ -8654,8 +7364,7 @@ async def fishing_cmd(message: types.Message):
         tour = get_active_tournament(chat_id)
         if tour: update_tournament_score(chat_id, user_id, 1)
         new_ach = check_fishing_achievements(user_id, chat_id)
-        ach_text = ""
-        if new_ach: ach_text = "\n\n🎖 <b>Новые ачивки:</b>\n" + "\n".join(f"  • {a}" for a in new_ach)
+        ach_text = "\n\n🎖 <b>Новые ачивки:</b>\n" + "\n".join(f"  • {a}" for a in new_ach) if new_ach else ""
 
         fish_price = get_fish_price(fish_name) + gear_flat
         xp_needed = xp_needed_for_level(new_level)
@@ -8667,39 +7376,25 @@ async def fishing_cmd(message: types.Message):
         for f in FISH_LIST:
             if f[0] == fish_name:
                 weight = f[4]; break
-        if weight is None:
-            rarity_icon = "💎"; rarity_name = "Легендарная"
-        elif weight >= 50:
-            rarity_icon = "⚪"; rarity_name = "Обычная"
-        elif weight >= 15:
-            rarity_icon = "🟢"; rarity_name = "Необычная"
-        elif weight >= 3:
-            rarity_icon = "🔵"; rarity_name = "Редкая"
-        elif weight >= 0.5:
-            rarity_icon = "🟣"; rarity_name = "Эпическая"
-        else:
-            rarity_icon = "🟠"; rarity_name = "Мифическая"
+        if weight is None: rarity_icon = "💎"; rarity_name = "Легендарная"
+        elif weight >= 50: rarity_icon = "⚪"; rarity_name = "Обычная"
+        elif weight >= 15: rarity_icon = "🟢"; rarity_name = "Необычная"
+        elif weight >= 3: rarity_icon = "🔵"; rarity_name = "Редкая"
+        elif weight >= 0.5: rarity_icon = "🟣"; rarity_name = "Эпическая"
+        else: rarity_icon = "🟠"; rarity_name = "Мифическая"
 
         hour = datetime.now().hour
         time_icon = "🌙" if (hour >= 22 or hour < 6) else ("🌅" if hour < 11 else ("☀️" if hour < 18 else "🌇"))
-
-        level_up_text = ""
-        if new_level > level:
-            level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>"
-
+        level_up_text = f"\n\n🎉 <b>УРОВЕНЬ ПОВЫШЕН!</b> Теперь <b>{new_level}</b>" if new_level > level else ""
         bait_text = "\n🍯 Прикормка активна" if bait_active else ""
         loc_text = f"\n{location['emoji']} Локация: {location['name']}"
 
         text = (
-            f"🎣 <b>УЛОВ</b> {time_icon}\n\n"
-            f"{fish_emoji} <b>{fish_name}</b>\n"
-            f"{rarity_icon} Редкость: <i>{rarity_name}</i>\n"
-            f"💵 Цена: <b>{fish_price}</b> 🍬\n"
+            f"🎣 <b>УЛОВ</b> {time_icon}\n\n{fish_emoji} <b>{fish_name}</b>\n"
+            f"{rarity_icon} Редкость: <i>{rarity_name}</i>\n💵 Цена: <b>{fish_price}</b> 🍬\n"
             f"✨ Опыт: <b>+{xp_gain}</b> XP\n\n"
-            f"📊 <b>Уровень {new_level}</b>\n"
-            f"<code>{xp_bar}</code> {new_xp}/{xp_needed}\n\n"
-            f"🐟 Всего поймано: <b>{total_caught + 1}</b>\n"
-            f"📦 Продай: <code>.продать</code>"
+            f"📊 <b>Уровень {new_level}</b>\n<code>{xp_bar}</code> {new_xp}/{xp_needed}\n\n"
+            f"🐟 Всего поймано: <b>{total_caught + 1}</b>\n📦 Продай: <code>.продать</code>"
             f"{level_up_text}{legendary_text}{bait_text}{loc_text}{event_text}{ach_text}"
         )
         await msg.edit_text(text, parse_mode="HTML")
@@ -8707,18 +7402,9 @@ async def fishing_cmd(message: types.Message):
         update_fishing(user_id, total_empty=total_empty + 1)
         set_fishing_last_fish(user_id)
         log_fishing(user_id, chat_id, "empty")
-        phrases = [
-            "🐟 Рыба ушла...",
-            "🌊 Ничего не поймал.",
-            "🪝 Пустой крючок...",
-            "💧 Только водоросли.",
-            "🎣 Попробуй ещё раз!",
-            "🦆 Утка утащила наживку!",
-            "🌧 Дождь спугнул рыбу...",
-            "🧦 Поймал старый носок...",
-            "👻 Тень мелькнула и исчезла...",
-            "🌪 Ветер унёс поплавок...",
-        ]
+        phrases = ["🐟 Рыба ушла...","🌊 Ничего не поймал.","🪝 Пустой крючок...","💧 Только водоросли.",
+                   "🎣 Попробуй ещё раз!","🦆 Утка утащила наживку!","🌧 Дождь спугнул рыбу...",
+                   "🧦 Поймал старый носок...","👻 Тень мелькнула и исчезла...","🌪 Ветер унёс поплавок..."]
         phrase = random.choice(phrases)
         xp_needed = xp_needed_for_level(level)
         bar_len = 10
@@ -8727,10 +7413,8 @@ async def fishing_cmd(message: types.Message):
         hour = datetime.now().hour
         time_icon = "🌙" if (hour >= 22 or hour < 6) else ("🌅" if hour < 11 else ("☀️" if hour < 18 else "🌇"))
         await msg.edit_text(
-            f"🎣 <b>ПУСТО</b> {time_icon}\n\n"
-            f"{phrase}\n\n"
-            f"📊 <b>Уровень {level}</b>\n"
-            f"<code>{xp_bar}</code> {xp}/{xp_needed}\n\n"
+            f"🎣 <b>ПУСТО</b> {time_icon}\n\n{phrase}\n\n"
+            f"📊 <b>Уровень {level}</b>\n<code>{xp_bar}</code> {xp}/{xp_needed}\n\n"
             f"📉 Пустых: <b>{total_empty + 1}</b>",
             parse_mode="HTML"
         )
@@ -8796,10 +7480,7 @@ async def sell_fish_cmd(message: types.Message):
     total_price = price * qty
     remove_fish_from_storage(user_id, matched_fish, qty)
     add_candies(user_id, total_price, 0)
-    await message.reply(
-        f"{em('check', '✅')} <b>Продано!</b>\n\n{emoji} <b>{matched_fish}</b> × <b>{qty}</b>\n💰 +{total_price} 🍬 mos-конфеток\n📊 Осталось: <b>{available - qty}</b>",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Продано!</b>\n\n{emoji} <b>{matched_fish}</b> × <b>{qty}</b>\n💰 +{total_price} 🍬 mos-конфеток\n📊 Осталось: <b>{available - qty}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("рыбтоп")
@@ -8811,8 +7492,7 @@ async def fishing_top_cmd(message: types.Message):
     medals = ["🥇", "🥈", "🥉"]
     for i, (user_id, caught, level) in enumerate(top, 1):
         try:
-            user = await bot.get_chat(user_id)
-            name = user_link(user_id, user.first_name, user.username)
+            user = await bot.get_chat(user_id); name = user_link(user_id, user.first_name, user.username)
         except: name = f"ID: {user_id}"
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {name} — <b>{caught}</b> 🐟 (ур. {level})\n"
@@ -8830,7 +7510,6 @@ async def fishing_stats_cmd(message: types.Message):
     bait_text = "✅ Активна" if bait_active else "❌ Нет"
     total = total_caught + total_empty
     success_rate = int(total_caught / total * 100) if total > 0 else 0
-
     user_cooldown = get_user_fish_cooldown(user_id)
     cooldown = format_fishing_cooldown(last_fish, user_cooldown)
     if cooldown > 0:
@@ -8840,45 +7519,29 @@ async def fishing_stats_cmd(message: types.Message):
         if mins > 0: parts.append(f"{mins} мин.")
         cooldown_text = "⏳ " + " ".join(parts)
     else: cooldown_text = "✅ Готово"
-
     cd_min = user_cooldown // 60
     cd_hours = cd_min // 60
     cd_min = cd_min % 60
-    if cd_hours > 0:
-        cd_full_str = f"{cd_hours} ч. {cd_min} мин."
-    else:
-        cd_full_str = f"{cd_min} мин."
-
+    cd_full_str = f"{cd_hours} ч. {cd_min} мин." if cd_hours > 0 else f"{cd_min} мин."
     bar_len = 12
     filled = min(bar_len, int((xp / xp_needed) * bar_len)) if xp_needed else 0
     xp_bar = "▰" * filled + "▱" * (bar_len - filled)
-
     region = get_chat_region(message.chat.id)
     region_names = {"river": "🏞 Река", "lake": "🌊 Озеро", "sea": "🌊 Море", "ocean": "🌌 Океан"}
     region_text = region_names.get(region, region)
-
     location_key = get_chat_location(message.chat.id)
     location = LOCATIONS.get(location_key, LOCATIONS["pier"])
-
     if level < 5: lvl_icon = "🟢"
     elif level < 15: lvl_icon = "🔵"
     elif level < 30: lvl_icon = "🟣"
     elif level < 60: lvl_icon = "🟠"
     else: lvl_icon = "🟡"
-
     await message.reply(
-        f"🎣 <b>Твоя рыбалка</b>\n\n"
-        f"{lvl_icon} Уровень: <b>{level}</b>\n"
-        f"<code>{xp_bar}</code> {xp}/{xp_needed} XP\n\n"
-        f"📍 Регион: {region_text}\n"
-        f"{location['emoji']} Локация: <b>{location['name']}</b>\n"
-        f"🐟 Поймано: <b>{total_caught}</b>\n"
-        f"📉 Пустых: <b>{total_empty}</b>\n"
-        f"🎯 Успешность: <b>{success_rate}%</b>\n"
-        f"💎 Легендарных: <b>{legendary or 0}</b>\n\n"
-        f"🍯 Прикормка: {bait_text}\n"
-        f"⚙️ Кулдаун: <b>{cd_full_str}</b> (улучшай снасти!)\n"
-        f"⏰ Готовность: {cooldown_text}",
+        f"🎣 <b>Твоя рыбалка</b>\n\n{lvl_icon} Уровень: <b>{level}</b>\n<code>{xp_bar}</code> {xp}/{xp_needed} XP\n\n"
+        f"📍 Регион: {region_text}\n{location['emoji']} Локация: <b>{location['name']}</b>\n"
+        f"🐟 Поймано: <b>{total_caught}</b>\n📉 Пустых: <b>{total_empty}</b>\n"
+        f"🎯 Успешность: <b>{success_rate}%</b>\n💎 Легендарных: <b>{legendary or 0}</b>\n\n"
+        f"🍯 Прикормка: {bait_text}\n⚙️ Кулдаун: <b>{cd_full_str}</b> (улучшай снасти!)\n⏰ Готовность: {cooldown_text}",
         parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
@@ -8905,31 +7568,19 @@ async def buy_bait_cmd(message: types.Message):
 async def fishing_shop_cmd(message: types.Message):
     user_id = message.from_user.id
     inv = get_fishing_inventory(user_id)
-
     text = "🛒 <b>Магазин снастей</b>\n\n"
-
     for key, gear in FISHING_GEAR.items():
         cur_level = inv.get(key, 0)
         if cur_level > 0:
             next_cost = int(gear["base_price"] * (cur_level + 1) * 0.6) if cur_level < gear["max_level"] else 0
             if cur_level >= gear["max_level"]:
-                text += (
-                    f"<b>{gear['name']}</b> — <b>УР. {cur_level}/{gear['max_level']} ✅ МАКС</b>\n"
-                    f"   <i>{gear['desc']}</i>\n\n"
-                )
+                text += f"<b>{gear['name']}</b> — <b>УР. {cur_level}/{gear['max_level']} ✅ МАКС</b>\n   <i>{gear['desc']}</i>\n\n"
             else:
-                text += (
-                    f"<b>{gear['name']}</b> — ур. <b>{cur_level}/{gear['max_level']}</b>\n"
-                    f"   <i>{gear['desc']}</i>\n"
-                    f"   ⬆️ Улучшить: <code>.улучшить {key}</code> ({next_cost} 🍬)\n\n"
-                )
+                text += (f"<b>{gear['name']}</b> — ур. <b>{cur_level}/{gear['max_level']}</b>\n"
+                         f"   <i>{gear['desc']}</i>\n   ⬆️ Улучшить: <code>.улучшить {key}</code> ({next_cost} 🍬)\n\n")
         else:
-            text += (
-                f"<b>{gear['name']}</b> — <b>{gear['base_price']}</b> 🍬\n"
-                f"   <i>{gear['desc']}</i>\n"
-                f"   Купить: <code>.купить {key}</code>\n\n"
-            )
-
+            text += (f"<b>{gear['name']}</b> — <b>{gear['base_price']}</b> 🍬\n"
+                     f"   <i>{gear['desc']}</i>\n   Купить: <code>.купить {key}</code>\n\n")
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
@@ -8940,36 +7591,27 @@ async def fishing_buy_cmd(message: types.Message):
     args = message.text.split()
     if len(args) < 2:
         return await message.reply("📌 <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     query = args[1].lower()
     gear_key = None
     for k, g in FISHING_GEAR.items():
         if query == k or query in g["name"].lower():
             gear_key = k; break
-
     if not gear_key:
         return await message.reply("❌ Снасть не найдена. <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     gear = FISHING_GEAR[gear_key]
     user_id = message.from_user.id
     inv = get_fishing_inventory(user_id)
-
     if inv.get(gear_key, 0) > 0:
         return await message.reply(f"⚠️ Уже есть <b>{gear['name']}</b>. Улучшить: <code>.улучшить {gear_key}</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     price = gear["base_price"]
     if get_balance(user_id) < price:
         return await message.reply(f"❌ Нужно <b>{price}</b> 🍬 mos-конфеток", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (price, user_id))
         conn.commit()
     add_to_fishing_inventory(user_id, gear_key, 1)
-    await message.reply(
-        f"{em('check', '✅')} <b>Куплено!</b>\n\n{gear['name']} — ур. 1/{gear['max_level']}\n<i>{gear['desc']}</i>",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Куплено!</b>\n\n{gear['name']} — ур. 1/{gear['max_level']}\n<i>{gear['desc']}</i>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*улучшить\s+\S+', m.text.strip(), re.IGNORECASE))
@@ -8977,25 +7619,17 @@ async def upgrade_gear_cmd(message: types.Message):
     args = message.text.split()
     if len(args) < 2:
         return await message.reply("📌 <code>.улучшить hook</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     query = args[1].lower()
     gear_key = None
     for k, g in FISHING_GEAR.items():
         if query == k or query in g["name"].lower():
             gear_key = k; break
-
     if not gear_key:
         return await message.reply("❌ Снасть не найдена. <code>.магазин снастей</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     ok, msg_text, new_level = upgrade_fishing_gear(message.from_user.id, gear_key)
     if ok:
         gear = FISHING_GEAR[gear_key]
-        await message.reply(
-            f"✅ <b>{gear['name']} улучшено!</b>\n\n"
-            f"⬆️ Теперь уровень: <b>{new_level}/{gear['max_level']}</b>\n"
-            f"{msg_text}",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        await message.reply(f"✅ <b>{gear['name']} улучшено!</b>\n\n⬆️ Теперь уровень: <b>{new_level}/{gear['max_level']}</b>\n{msg_text}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     else:
         await message.reply(f"❌ {msg_text}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
@@ -9006,33 +7640,24 @@ async def fishing_inventory_cmd(message: types.Message):
     user_id = message.from_user.id
     inv = get_fishing_inventory(user_id)
     text = "🎒 <b>Твой инвентарь</b>\n\n"
-    if not inv:
-        text += "<i>Пусто. <code>.магазин снастей</code></i>\n"
+    if not inv: text += "<i>Пусто. <code>.магазин снастей</code></i>\n"
     else:
         for key, level in inv.items():
             gear = FISHING_GEAR.get(key)
             if not gear: continue
             if isinstance(level, int) and level > 0:
-                text += f"{gear['name']} — ур. <b>{level}/{gear.get('max_level', 1)}</b>\n"
-                text += f"   <i>{gear['desc']}</i>\n"
-
+                text += f"{gear['name']} — ур. <b>{level}/{gear.get('max_level', 1)}</b>\n   <i>{gear['desc']}</i>\n"
     gear_bonus, gear_flat, boat_level, legendary_bonus, rare_bonus, gear_info = get_fishing_gear_bonus(user_id)
     text += f"\n📊 <b>Бонусы:</b>\n"
     text += f"• К улову: <b>+{int(gear_bonus*100)}%</b>\n"
     text += f"• К цене рыбы: <b>+{gear_flat}</b> 🍬\n"
-    if legendary_bonus:
-        text += f"• К шансу легендарки: <b>+{legendary_bonus}%</b>\n"
-    if rare_bonus:
-        text += f"• К шансу редкой: <b>+{rare_bonus}%</b>\n"
-
+    if legendary_bonus: text += f"• К шансу легендарки: <b>+{legendary_bonus}%</b>\n"
+    if rare_bonus: text += f"• К шансу редкой: <b>+{rare_bonus}%</b>\n"
     user_cooldown = get_user_fish_cooldown(user_id)
     cd_min = user_cooldown // 60
     cd_hours = cd_min // 60
     cd_min = cd_min % 60
-    if cd_hours > 0:
-        cd_str = f"{cd_hours} ч. {cd_min} мин."
-    else:
-        cd_str = f"{cd_min} мин."
+    cd_str = f"{cd_hours} ч. {cd_min} мин." if cd_hours > 0 else f"{cd_min} мин."
     text += f"\n⚙️ Твой кулдаун: <b>{cd_str}</b>"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
@@ -9059,35 +7684,20 @@ async def fishing_event_cmd(message: types.Message):
     chat_id = message.chat.id
     event = get_active_event(chat_id)
     if not event:
-        return await message.reply(
-            "☀️ <b>Сейчас штиль</b>\n\n"
-            "Следующее событие появится в течение <b>1.5 часа</b>.",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply("☀️ <b>Сейчас штиль</b>\n\nСледующее событие появится в течение <b>1.5 часа</b>.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     ev_key, bonus, expires = event
     ev_data = FISHING_EVENTS.get(ev_key, {})
     try:
         exp_dt = datetime.strptime(expires[:19], "%Y-%m-%d %H:%M:%S")
         left_seconds = int((exp_dt - datetime.now()).total_seconds())
-        if left_seconds < 0:
-            left_seconds = 0
+        if left_seconds < 0: left_seconds = 0
         left_min = left_seconds // 60
         left_hours = left_min // 60
         left_min = left_min % 60
-        if left_hours > 0:
-            left_str = f"{left_hours} ч. {left_min} мин."
-        else:
-            left_str = f"{left_min} мин."
-    except:
-        left_str = "?"
-
-    text = (
-        f"{ev_data.get('name', ev_key)}\n"
-        f"📈 Бонус: <b>×{bonus}</b>\n"
-        f"⏰ Осталось: <b>{left_str}</b>"
-    )
-    if ev_data.get("rare_boost"):
-        text += f"\n💎 Шанс редких ×{ev_data['rare_boost']}"
+        left_str = f"{left_hours} ч. {left_min} мин." if left_hours > 0 else f"{left_min} мин."
+    except: left_str = "?"
+    text = f"{ev_data.get('name', ev_key)}\n📈 Бонус: <b>×{bonus}</b>\n⏰ Осталось: <b>{left_str}</b>"
+    if ev_data.get("rare_boost"): text += f"\n💎 Шанс редких ×{ev_data['rare_boost']}"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
@@ -9096,65 +7706,34 @@ async def fishing_event_cmd(message: types.Message):
 async def location_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     current_key = get_chat_location(message.chat.id)
     current = LOCATIONS.get(current_key, LOCATIONS["pier"])
-
     args = message.text.split()
-
     if len(args) < 2:
         text = "🌊 <b>Локации рыбалки</b>\n\n"
         text += f"📍 <b>Сейчас:</b> {current['name']}\n\n"
-
         for key, loc in LOCATIONS.items():
             mark = "✅" if key == current_key else "•"
             vip = " 💎VIP" if loc["vip_required"] else ""
-            text += (
-                f"{mark} {loc['emoji']} <b>{loc['name']}</b>{vip}\n"
-                f"   <i>{loc['desc']}</i>\n"
-                f"   🔓 Мин. ур.: <b>{loc['min_level']}</b> | "
-                f"🟣 Редкая: <b>+{loc['rare_chance']}%</b> | "
-                f"💎 Легендарка: <b>+{loc['legendary_chance']}%</b> | "
-                f"💰 Сокровища: <b>+{loc['treasure_chance']}%</b>\n\n"
-            )
-
+            text += (f"{mark} {loc['emoji']} <b>{loc['name']}</b>{vip}\n   <i>{loc['desc']}</i>\n"
+                     f"   🔓 Мин. ур.: <b>{loc['min_level']}</b> | 🟣 Редкая: <b>+{loc['rare_chance']}%</b> | "
+                     f"💎 Легендарка: <b>+{loc['legendary_chance']}%</b> | 💰 Сокровища: <b>+{loc['treasure_chance']}%</b>\n\n")
         text += f"📌 Сменить: <code>.локация пирс</code> (и т.д.)"
         return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     query = args[1].lower()
-    mapping = {
-        "пирс": "pier", "pier": "pier",
-        "камни": "rocks", "rocks": "rocks", "камень": "rocks",
-        "мыс": "sunset_cape", "закатный": "sunset_cape", "sunset": "sunset_cape", "cape": "sunset_cape",
-        "бездна": "abyss", "abyss": "abyss",
-        "остров": "treasure_island", "island": "treasure_island", "сокровищ": "treasure_island",
-    }
-
+    mapping = {"пирс":"pier","pier":"pier","камни":"rocks","rocks":"rocks","камень":"rocks",
+               "мыс":"sunset_cape","закатный":"sunset_cape","sunset":"sunset_cape","cape":"sunset_cape",
+               "бездна":"abyss","abyss":"abyss","остров":"treasure_island","island":"treasure_island","сокровищ":"treasure_island"}
     if query not in mapping:
-        return await message.reply(
-            "❌ Доступные локации: <code>пирс</code>, <code>камни</code>, <code>закатный</code>, <code>бездна</code>, <code>остров</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
-    new_key = mapping[query]
-    new_loc = LOCATIONS[new_key]
-
+        return await message.reply("❌ Доступные локации: <code>пирс</code>, <code>камни</code>, <code>закатный</code>, <code>бездна</code>, <code>остров</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+    new_key = mapping[query]; new_loc = LOCATIONS[new_key]
     if not has_permission(message.chat.id, message.from_user.id, 3) and message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        return await message.reply(
-            f"❌ Только <b>Мл. Админ (3+)</b> может менять локацию.",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
-
+        return await message.reply(f"❌ Только <b>Мл. Админ (3+)</b> может менять локацию.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_chat_location(message.chat.id, new_key)
-
     await message.reply(
-        f"✅ <b>Локация изменена!</b>\n\n"
-        f"📍 Теперь: {new_loc['name']}\n"
-        f"   <i>{new_loc['desc']}</i>\n\n"
-        f"🔓 Мин. ур.: <b>{new_loc['min_level']}</b>\n"
-        f"🟣 Редкая: <b>+{new_loc['rare_chance']}%</b>\n"
-        f"💎 Легендарка: <b>+{new_loc['legendary_chance']}%</b>\n"
-        f"💰 Сокровища: <b>+{new_loc['treasure_chance']}%</b>",
+        f"✅ <b>Локация изменена!</b>\n\n📍 Теперь: {new_loc['name']}\n   <i>{new_loc['desc']}</i>\n\n"
+        f"🔓 Мин. ур.: <b>{new_loc['min_level']}</b>\n🟣 Редкая: <b>+{new_loc['rare_chance']}%</b>\n"
+        f"💎 Легендарка: <b>+{new_loc['legendary_chance']}%</b>\n💰 Сокровища: <b>+{new_loc['treasure_chance']}%</b>",
         parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
@@ -9164,47 +7743,25 @@ async def location_cmd(message: types.Message):
 async def region_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]:
         return await message.reply("⚠️ Только в группе.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     current = get_chat_region(message.chat.id)
-    region_names = {
-        "river": "🏞 Река",
-        "lake":  "🌊 Озеро",
-        "sea":   "🌊 Море",
-        "ocean": "🌌 Океан",
-    }
-
+    region_names = {"river": "🏞 Река", "lake": "🌊 Озеро", "sea": "🌊 Море", "ocean": "🌌 Океан"}
     args = message.text.split()
     if len(args) < 2:
         return await message.reply(
-            f"🗺 <b>Регион рыбалки</b>\n\n"
-            f"📍 Сейчас: <b>{region_names.get(current, current)}</b>\n\n"
+            f"🗺 <b>Регион рыбалки</b>\n\n📍 Сейчас: <b>{region_names.get(current, current)}</b>\n\n"
             f"📌 Сменить (ранг 3+): <code>.регион река|озеро|море|океан</code>",
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
-
     if not has_permission(message.chat.id, message.from_user.id, 3):
         return await message.reply(f"{em('cross', '❌')} Нужен Мл. Админ (3+).", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     sub = args[1].lower()
-    mapping = {
-        "река": "river", "river": "river", "рек": "river",
-        "озеро": "lake", "lake": "lake", "озер": "lake",
-        "море": "sea", "sea": "sea", "мор": "sea",
-        "океан": "ocean", "ocean": "ocean", "оке": "ocean",
-    }
+    mapping = {"река":"river","river":"river","рек":"river","озеро":"lake","lake":"lake","озер":"lake",
+               "море":"sea","sea":"sea","мор":"sea","океан":"ocean","ocean":"ocean","оке":"ocean"}
     if sub not in mapping:
-        return await message.reply(
-            "❌ Допустимые: <code>река</code>, <code>озеро</code>, <code>море</code>, <code>океан</code>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply("❌ Допустимые: <code>река</code>, <code>озеро</code>, <code>море</code>, <code>океан</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     new_region = mapping[sub]
     set_chat_region(message.chat.id, new_region)
-    await message.reply(
-        f"{em('check', '✅')} <b>Регион изменён!</b>\n\n"
-        f"📍 Теперь: <b>{region_names[new_region]}</b>\n"
-        f"👮 {mention(message.from_user)}",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Регион изменён!</b>\n\n📍 Теперь: <b>{region_names[new_region]}</b>\n👮 {mention(message.from_user)}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("турнир", allow_args=True)
@@ -9218,8 +7775,7 @@ async def fishing_tournament_cmd(message: types.Message):
         return await message.reply(f"{em('check', '✅')} Ты в турнире!", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if len(args) >= 2 and args[1].lower() in ["стоп", "end"]:
         is_admin = (message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
-                    or has_agent_rank(message.from_user.id, 1)
-                    or await is_tg_admin(chat_id, message.from_user.id))
+                    or has_agent_rank(message.from_user.id, 1) or await is_tg_admin(chat_id, message.from_user.id))
         if not is_admin:
             return await message.reply(f"{em('cross', '❌')} Только админ.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         winners = end_tournament(chat_id)
@@ -9229,18 +7785,14 @@ async def fishing_tournament_cmd(message: types.Message):
         medals = ["🥇", "🥈", "🥉"]
         for i, (uid, caught, prize) in enumerate(winners):
             try:
-                u = await bot.get_chat(uid)
-                name = user_link(uid, u.first_name, u.username)
+                u = await bot.get_chat(uid); name = user_link(uid, u.first_name, u.username)
             except: name = f"ID {uid}"
             text += f"{medals[i]} {name} — <b>{caught}</b> 🐟 (+{prize} 🍬)\n"
         return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     is_admin = (message.from_user.id == OWNER_ID or is_coowner(message.from_user.id)
-                or has_agent_rank(message.from_user.id, 1)
-                or await is_tg_admin(chat_id, message.from_user.id))
+                or has_agent_rank(message.from_user.id, 1) or await is_tg_admin(chat_id, message.from_user.id))
     if not is_admin:
         return await message.reply(f"{em('cross', '❌')} Только админ может запустить турнир.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     tour = get_active_tournament(chat_id)
     if tour:
         started_by, started_at, expires_at, prize = tour
@@ -9255,20 +7807,17 @@ async def fishing_tournament_cmd(message: types.Message):
             medals = ["🥇", "🥈", "🥉"]
             for i, (uid, caught) in enumerate(members):
                 try:
-                    u = await bot.get_chat(uid)
-                    name = user_link(uid, u.first_name, u.username)
+                    u = await bot.get_chat(uid); name = user_link(uid, u.first_name, u.username)
                 except: name = f"ID {uid}"
                 m = medals[i] if i < 3 else f"{i+1}."
                 text += f"{m} {name} — <b>{caught}</b> 🐟\n"
         text += f"\n📌 <code>.турнир участвовать</code>"
         return await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     create_tournament(chat_id, message.from_user.id, prize=100, duration_min=TOURNAMENT_DURATION_MIN)
     join_tournament(chat_id, message.from_user.id)
     await message.reply(
         f"🏆 <b>ТУРНИР ЗАПУЩЕН!</b>\n⏰ {TOURNAMENT_DURATION_MIN} мин.\n"
-        f"💰 Призы: <b>20–100</b> 🍬 (зависит от числа участников)\n"
-        f"📌 <code>.турнир участвовать</code>",
+        f"💰 Призы: <b>20–100</b> 🍬 (зависит от числа участников)\n📌 <code>.турнир участвовать</code>",
         parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
@@ -9299,47 +7848,35 @@ async def events_status_cmd(message: types.Message):
     if message.chat.type not in ["group", "supergroup"]: return
     enabled = is_events_enabled(message.chat.id)
     status = "🟢 включены" if enabled else "🔴 выключены"
-    await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))# ================= МРП =================
+    await message.reply(f"🌦 Уведомления о событиях: {status}\n\n<code>+событие</code> / <code>-событие</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))м# ================= МРП =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+мрп\b', m.text.strip(), re.IGNORECASE))
 async def create_rp_cmd(message: types.Message):
     if not get_vip(message.from_user.id):
         return await message.reply(f"{em('cross', '❌')} Только VIP.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     full_html = entities_to_html(message)
     body = re.sub(r'^[.\/!+-]?\s*\+мрп\s*', '', full_html, count=1, flags=re.IGNORECASE).strip()
-
     parts = body.split("/", 2)
     if len(parts) < 3:
         return await message.reply("📌 <b>Формат:</b>\n<code>+мрп ущипнуть / 🤏 / ущипнул</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     name_html = parts[0].strip()
     emoji_html = parts[1].strip()[:120]
     action_html = parts[2].strip()[:400]
-
     name_clean = re.sub(r'<[^>]+>', '', name_html).strip().lower()[:30]
     if not name_clean or not emoji_html or not action_html:
         return await message.reply("❌ Заполни все 3 поля.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     if "{actor}" not in action_html and "{target}" not in action_html:
         full_text = f"{{actor}} {action_html} {{target}}"
     else:
         full_text = action_html
-
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         try:
             c.execute("INSERT INTO rp_commands (chat_id, name, emoji, text, created_by) VALUES (?, ?, ?, ?, ?)",
                       (message.chat.id, name_clean, emoji_html, full_text, message.from_user.id))
             conn.commit()
-            await message.reply(
-                f"{em('check', '✅')} РП <b>{emoji_html} {name_clean}</b> создано!\n\n📝 Шаблон: {full_text}",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
+            await message.reply(f"{em('check', '✅')} РП <b>{emoji_html} {name_clean}</b> создано!\n\n📝 Шаблон: {full_text}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         except sqlite3.IntegrityError:
-            return await message.reply(
-                f"{em('cross', '❌')} Уже есть. Удалить: <code>-мрп {name_clean}</code>",
-                parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-            )
+            return await message.reply(f"{em('cross', '❌')} Уже есть. Удалить: <code>-мрп {name_clean}</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("мрп")
@@ -9378,27 +7915,21 @@ async def delete_rp_cmd(message: types.Message):
 async def create_global_rp_cmd(message: types.Message):
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id) and not has_agent_rank(message.from_user.id, 4):
         return
-
     full_html = entities_to_html(message)
     body = re.sub(r'^[.\/!+-]?\s*\+гмрп\s*', '', full_html, count=1, flags=re.IGNORECASE).strip()
-
     parts = body.split("/", 2)
     if len(parts) < 3:
         return await message.reply("📌 <b>Формат:</b>\n<code>+гмрп ущипнуть / 🤏 / ущипнул</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     name_html = parts[0].strip()
     emoji_html = parts[1].strip()[:120]
     action_html = parts[2].strip()[:400]
-
     name_clean = re.sub(r'<[^>]+>', '', name_html).strip().lower()[:30]
     if not name_clean or not emoji_html or not action_html:
         return await message.reply("❌ Заполни все 3 поля.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     if "{actor}" not in action_html and "{target}" not in action_html:
         full_text = f"{{actor}} {action_html} {{target}}"
     else:
         full_text = action_html
-
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         try:
@@ -9437,6 +7968,151 @@ async def list_global_rp_cmd(message: types.Message):
     for i, (rid, name, emoji) in enumerate(rows, 1):
         text += f"{i}. {emoji} <code>{name}</code>\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
+
+
+# ================= РП ХЕНДЛЕР =================
+@dp.message(lambda m: m.text and not m.text.startswith(('.', '+', '-', '!', '/'))
+    and not m.text.lower().strip().startswith("брак")
+    and not m.text.lower().strip().startswith("сетка")
+    and not m.text.lower().strip().startswith("заметка")
+    and not m.text.lower().strip().startswith("заметки")
+    and not m.text.lower().strip().startswith("мой ")
+    and not m.text.lower().strip().startswith("моя ")
+    and not m.text.lower().strip().startswith("твоя ")
+    and not m.text.lower().strip().startswith("твой ")
+    and not m.text.lower().strip().startswith("мойдр")
+    and not m.text.lower().strip().startswith("мойпол")
+    and not m.text.lower().strip().startswith("мойгород"))
+async def standard_rp_handler(message: types.Message):
+    if not message.text:
+        return
+    txt = message.text.strip()
+    if not txt:
+        return
+
+    txt_lines = txt.split("\n", 1)
+    first_line = txt_lines[0].strip()
+    first_line_lower = first_line.lower()
+    comment = txt_lines[1].strip() if len(txt_lines) > 1 else ""
+
+    # ============ 1. Пользовательские РП ============
+    rp_emoji = None
+    rp_template = None
+    matched_name = None
+    with sqlite3.connect(DATABASE_PATH) as conn:
+        c = conn.cursor()
+        c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?", (message.chat.id, first_line_lower))
+        row = c.fetchone()
+        if row:
+            rp_emoji, rp_template = row
+            matched_name = first_line_lower
+        else:
+            first_word = first_line_lower.split()[0] if first_line_lower.split() else ""
+            if first_word and first_word != first_line_lower:
+                c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?", (message.chat.id, first_word))
+                row = c.fetchone()
+                if row:
+                    rp_emoji, rp_template = row
+                    matched_name = first_word
+        if not rp_template:
+            c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (first_line_lower,))
+            row = c.fetchone()
+            if row:
+                rp_emoji, rp_template = row
+                matched_name = first_line_lower
+            else:
+                first_word = first_line_lower.split()[0] if first_line_lower.split() else ""
+                if first_word and first_word != first_line_lower:
+                    c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (first_word,))
+                    row = c.fetchone()
+                    if row:
+                        rp_emoji, rp_template = row
+                        matched_name = first_word
+
+    if rp_template:
+        actor = message.from_user
+        target = None
+        reply_to_id = None
+        if message.reply_to_message and message.reply_to_message.from_user:
+            target = message.reply_to_message.from_user
+            reply_to_id = message.reply_to_message.message_id
+        else:
+            rest_first = first_line_lower[len(matched_name):].strip() if matched_name else ""
+            for w in rest_first.split():
+                clean = w.strip().rstrip('.,;:!?')
+                if clean.startswith('@'):
+                    try:
+                        target = await bot.get_chat(clean); break
+                    except: pass
+                if clean.isdigit() and len(clean) >= 6:
+                    try:
+                        target = await bot.get_chat(int(clean)); break
+                    except: pass
+        if target and not target.is_bot and target.id != actor.id:
+            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(target))
+        else:
+            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(actor))
+            target = None
+            reply_to_id = None
+        final_text = f"{rp_emoji} {out}"
+        if comment:
+            final_text += f"\n\n{comment}"
+        send_kwargs = {"parse_mode": "HTML", "disable_web_page_preview": True}
+        if reply_to_id:
+            send_kwargs["reply_to_message_id"] = reply_to_id
+        await message.reply(final_text, **send_kwargs)
+        return
+
+    # ============ 2. Стандартные РП ============
+    rp_data = None
+    rp_name = None
+    if first_line_lower in STANDARD_RP:
+        rp_name = first_line_lower
+        rp_data = STANDARD_RP[first_line_lower]
+    else:
+        for name in sorted(STANDARD_RP.keys(), key=len, reverse=True):
+            if first_line_lower.startswith(name):
+                rest = first_line_lower[len(name):]
+                if not rest or rest[0] == ' ':
+                    rp_name = name
+                    rp_data = STANDARD_RP[name]
+                    break
+    if not rp_data:
+        return
+
+    actor = message.from_user
+    target = None
+    reply_to_id = None
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target = message.reply_to_message.from_user
+        reply_to_id = message.reply_to_message.message_id
+    else:
+        rest_first = first_line_lower[len(rp_name):].strip()
+        if rest_first:
+            try:
+                target_arg = rest_first.split()[0]
+                clean = target_arg.strip().rstrip('.,;:!?')
+                if clean.startswith('@'):
+                    target = await bot.get_chat(clean)
+                elif clean.isdigit() and len(clean) >= 6:
+                    target = await bot.get_chat(int(clean))
+            except:
+                target = None
+
+    if not target or target.id == actor.id or target.is_bot:
+        text_out = f"{rp_data['emoji']} {rp_data['self_text'].format(actor=mention(actor), target=mention(actor))}"
+        if comment:
+            text_out += f"\n\n{comment}"
+        await message.reply(text_out, parse_mode="HTML", disable_web_page_preview=True)
+        return
+
+    text_out = f"{rp_data['emoji']} {rp_data['text'].format(actor=mention(actor), target=mention(target))}"
+    if comment:
+        text_out += f"\n\n{comment}"
+    send_kwargs = {"parse_mode": "HTML", "disable_web_page_preview": True}
+    if reply_to_id:
+        send_kwargs["reply_to_message_id"] = reply_to_id
+    await message.reply(text_out, **send_kwargs)
 
 
 # ================= ПРАВИЛА =================
@@ -9484,9 +8160,7 @@ async def greeting_cmd(message: types.Message):
         if not current:
             return await message.reply(
                 "📭 <b>Приветствие не установлено</b>\n\n"
-                "📌 <b>Установить:</b>\n"
-                "<code>.приветствие установить</code>\n"
-                "<code>Твой текст приветствия</code>\n\n"
+                "📌 <b>Установить:</b>\n<code>.приветствие установить</code>\n<code>Твой текст приветствия</code>\n\n"
                 "🔹 <b>Плейсхолдеры:</b>\n"
                 "• <code>{ник}</code> — кликабельный ник (по умолчанию сверху)\n"
                 "• <code>{имя}</code> — имя без ссылки\n"
@@ -9512,10 +8186,7 @@ async def greeting_cmd(message: types.Message):
         if not raw_text_html: return
         set_greeting(message.chat.id, raw_text_html, message.from_user.id)
         preview = format_greeting(raw_text_html, message.from_user, message.chat)
-        return await message.reply(
-            f"{em('check', '✅')} Установлено!\n\n<b>Превью:</b>\n{preview}",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply(f"{em('check', '✅')} Установлено!\n\n<b>Превью:</b>\n{preview}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     if sub in ["сброс", "удалить"]:
         reset_greeting(message.chat.id)
         return await message.reply(f"{em('check', '✅')} Сброшено.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -9571,11 +8242,8 @@ async def captcha_status_cmd(message: types.Message):
     secs = timeout % 60
     human = f"{mins} мин. {secs} сек." if mins > 0 else f"{secs} сек."
     await message.reply(
-        f"🤖 <b>Капча</b>\n\n"
-        f"📊 Статус: {status}\n"
-        f"⏱ Время на прохождение: <b>{timeout} сек.</b> ({human})\n\n"
-        f"📌 <code>+капча</code> / <code>-капча</code> — вкл/выкл\n"
-        f"📌 <code>.капчавремя 180</code> — изменить время",
+        f"🤖 <b>Капча</b>\n\n📊 Статус: {status}\n⏱ Время на прохождение: <b>{timeout} сек.</b> ({human})\n\n"
+        f"📌 <code>+капча</code> / <code>-капча</code> — вкл/выкл\n📌 <code>.капчавремя 180</code> — изменить время",
         parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
@@ -9590,10 +8258,8 @@ async def captcha_time_cmd(message: types.Message):
     current = get_captcha_timeout(message.chat.id)
     if len(args) < 2:
         return await message.reply(
-            f"⏱ <b>Время прохождения капчи</b>\n\n"
-            f"🕐 Сейчас: <b>{current} сек.</b> ({current // 60} мин. {current % 60} сек.)\n\n"
-            f"📌 Установить: <code>.капчавремя 180</code>\n"
-            f"📌 Диапазон: от <b>10</b> до <b>3600</b> секунд",
+            f"⏱ <b>Время прохождения капчи</b>\n\n🕐 Сейчас: <b>{current} сек.</b> ({current // 60} мин. {current % 60} сек.)\n\n"
+            f"📌 Установить: <code>.капчавремя 180</code>\n📌 Диапазон: от <b>10</b> до <b>3600</b> секунд",
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     raw = args[1].strip()
@@ -9603,14 +8269,9 @@ async def captcha_time_cmd(message: types.Message):
     if seconds < 10 or seconds > 3600:
         return await message.reply("❌ Допустимый диапазон: <b>10</b> – <b>3600</b> секунд.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     set_captcha_timeout(message.chat.id, seconds)
-    mins = seconds // 60
-    secs = seconds % 60
+    mins = seconds // 60; secs = seconds % 60
     human = f"{mins} мин. {secs} сек." if mins > 0 else f"{secs} сек."
-    await message.reply(
-        f"{em('check', '✅')} <b>Время капчи обновлено!</b>\n\n"
-        f"⏱ Теперь: <b>{seconds} сек.</b> ({human})",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} <b>Время капчи обновлено!</b>\n\n⏱ Теперь: <b>{seconds} сек.</b> ({human})", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= ГРАЖДАНСТВО =================
@@ -9634,8 +8295,7 @@ async def citizenship_info_cmd(message: types.Message):
         return await message.reply(f"ℹ️ {mention(target)} не гражданин.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     chat_id, became_at = info
     try:
-        chat = await bot.get_chat(chat_id)
-        title = chat.title or f"Чат"
+        chat = await bot.get_chat(chat_id); title = chat.title or f"Чат"
     except: title = "Чат"
     duration = format_citizenship_duration(became_at)
     await message.reply(f"🏠 {mention(target)}\n🏠 {title}\n⏳ {duration}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -9657,8 +8317,7 @@ async def citizens_list_cmd(message: types.Message):
     text = f"🏠 <b>Граждане</b> ({len(citizens)}):\n\n"
     for i, (user_id, became_at) in enumerate(citizens, 1):
         try:
-            user = await bot.get_chat(user_id)
-            name = user_link(user_id, user.first_name, user.username)
+            user = await bot.get_chat(user_id); name = user_link(user_id, user.first_name, user.username)
         except: name = f"ID: {user_id}"
         text += f"{i}. {name} — {format_citizenship_duration(became_at)}\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -9778,11 +8437,8 @@ async def my_stats_cmd(message: types.Message):
     try: chart_buf = generate_user_activity_chart(message.from_user.id, days=30)
     except: return
     if not chart_buf: return await message.reply("📭 Нет данных.", disable_web_page_preview=True, **_reply_kwargs(message))
-    await message.reply_photo(
-        photo=types.BufferedInputFile(chart_buf.getvalue(), filename="my_stats.png"),
-        caption="📊 Статистика за 30 дней", parse_mode="HTML",
-        **_reply_kwargs(message)
-    )
+    await message.reply_photo(photo=types.BufferedInputFile(chart_buf.getvalue(), filename="my_stats.png"),
+                              caption="📊 Статистика за 30 дней", parse_mode="HTML", **_reply_kwargs(message))
 
 
 # ================= ЕЖЕДНЕВКА =================
@@ -9831,14 +8487,9 @@ async def vip_info_cmd(message: types.Message):
         InlineKeyboardButton(text=f"💎 Купить VIP на месяц ({price} 🍬)", callback_data="vip_buy_1m")
     ]])
     await message.reply(
-        f"💎 <b>VIP-статус</b>\n\n💰 Цена: <b>{price}</b> 🍬 mos-конфеток / мес\n"
-        f"💼 Баланс: <b>{balance}</b> 🍬"
-        f"{already}\n\n"
-        f"📌 <code>.вип цена 150</code> — изменить цену (ранг 4+)\n"
-        f"📌 <code>.купить вип [1-12]</code> — купить вручную\n"
-        f"📌 <code>.мой вип</code> — твой VIP",
-        parse_mode="HTML", disable_web_page_preview=True,
-        reply_markup=kb, **_reply_kwargs(message)
+        f"💎 <b>VIP-статус</b>\n\n💰 Цена: <b>{price}</b> 🍬 mos-конфеток / мес\n💼 Баланс: <b>{balance}</b> 🍬"
+        f"{already}\n\n📌 <code>.вип цена 150</code> — изменить цену (ранг 4+)\n📌 <code>.купить вип 6</code> — купить\n📌 <code>.мой вип</code> — твой VIP",
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb, **_reply_kwargs(message)
     )
 
 
@@ -9849,10 +8500,7 @@ async def vip_buy_callback(callback: types.CallbackQuery):
     price = get_vip_price(chat_id)
     balance = get_balance(user_id)
     if balance < price:
-        return await callback.answer(
-            f"❌ Недостаточно mos-конфеток.\nНужно: {price} 🍬\nУ тебя: {balance} 🍬",
-            show_alert=True
-        )
+        return await callback.answer(f"❌ Недостаточно mos-конфеток.\nНужно: {price} 🍬\nУ тебя: {balance} 🍬", show_alert=True)
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
         c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (price, user_id))
@@ -9866,20 +8514,13 @@ async def vip_buy_callback(callback: types.CallbackQuery):
     ]])
     try:
         await callback.message.edit_text(
-            f"💎 <b>VIP активирован!</b>\n\n"
-            f"👤 {mention(callback.from_user)}\n"
-            f"📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n"
-            f"⏳ Осталось: <b>{days_left} дн.</b>\n"
-            f"💰 Списано: <b>{price}</b> 🍬 mos-конфеток\n"
-            f"💼 Осталось: <b>{new_balance}</b> 🍬",
-            parse_mode="HTML", disable_web_page_preview=True,
-            reply_markup=kb
+            f"💎 <b>VIP активирован!</b>\n\n👤 {mention(callback.from_user)}\n"
+            f"📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n⏳ Осталось: <b>{days_left} дн.</b>\n"
+            f"💰 Списано: <b>{price}</b> 🍬 mos-конфеток\n💼 Осталось: <b>{new_balance}</b> 🍬",
+            parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb
         )
     except Exception:
-        await callback.message.answer(
-            f"💎 <b>VIP активирован!</b>\n\n📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n💰 Списано: <b>{price}</b> 🍬",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
+        await callback.message.answer(f"💎 <b>VIP активирован!</b>\n\n📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n💰 Списано: <b>{price}</b> 🍬", parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer("💎 VIP активирован!")
 
 
@@ -9903,10 +8544,7 @@ async def buy_vip_cmd(message: types.Message):
         c.execute("UPDATE candies SET balance = balance - ? WHERE user_id = ?", (total, message.from_user.id))
         conn.commit()
     new_exp = add_vip_months(target.id, months)
-    await message.reply(
-        f"💎 <b>VIP активирован!</b>\n\n👤 Кому: {mention(target)}\n📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n💰 -{total} 🍬",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"💎 <b>VIP активирован!</b>\n\n👤 Кому: {mention(target)}\n📅 До: <b>{new_exp.strftime('%d.%m.%Y %H:%M')}</b>\n💰 -{total} 🍬", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @cmd("мой вип")
@@ -9944,21 +8582,14 @@ async def create_note_cmd(message: types.Message):
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     name = name_raw[:60]
-
     nl_idx = message.text.find("\n")
     body_html = _extract_html_after(message, nl_idx + 1)[:3500]
-
-    cleaned_body = body_html
-    if not cleaned_body.strip():
+    if not body_html or not body_html.strip():
         return await message.reply("❌ Текст заметки пустой.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
-    note_id = add_note(message.chat.id, name, cleaned_body, message.from_user.id)
+    note_id = add_note(message.chat.id, name, body_html, message.from_user.id)
     if not note_id:
         return await message.reply(f"{em('cross', '❌')} Заметка с таким названием уже есть.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-    await message.reply(
-        f"{em('check', '✅')} Заметка <b>{html_escape_text(name)}</b> создана (ID: <code>{note_id}</code>)",
-        parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-    )
+    await message.reply(f"{em('check', '✅')} Заметка <b>{html_escape_text(name)}</b> создана (ID: <code>{note_id}</code>)", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*-заметка\s+\S+', m.text.strip(), re.IGNORECASE))
@@ -9990,26 +8621,21 @@ async def get_note_cmd(message: types.Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         return await message.reply(
-            "📌 <b>Формат:</b>\n"
-            "• <code>Заметка Название</code>\n"
-            "• <code>Заметка 1</code> — по номеру",
+            "📌 <b>Формат:</b>\n• <code>Заметка Название</code>\n• <code>Заметка 1</code> — по номеру",
             parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
         )
     arg = args[1].strip()
     note = get_note_by_number(message.chat.id, int(arg)) if arg.isdigit() else get_note_by_name(message.chat.id, arg)
     if not note:
         return await message.reply(f"{em('cross', '❌')} Заметка не найдена.", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
-
     note_id, note_name, note_text = note[0], note[1], note[2]
     out = f"📌 <b>Заметка «{html_escape_text(note_name)}»</b>\n\n{note_text}"
-
     try:
         await message.reply(out, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     except Exception as e:
-        await message.reply(
-            f"📌 Заметка «{note_name}»\n\n{re.sub(r'<[^>]+>', '', note_text)}",
-            disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        print(f"⚠️ Заметка HTML ошибка: {e}")
+        clean = re.sub(r'<[^>]+>', '', note_text)
+        await message.reply(f"📌 Заметка «{note_name}»\n\n{clean}", disable_web_page_preview=True, **_reply_kwargs(message))
 
 
 # ================= СЕТКА =================
@@ -10052,17 +8678,14 @@ async def list_grid_chats(message: types.Message):
             chat = await bot.get_chat(chat_id)
             title = chat.title or f"Чат {chat_id}"
             link = None
-            if chat.username:
-                link = f"https://t.me/{chat.username}"
+            if chat.username: link = f"https://t.me/{chat.username}"
             else:
                 try:
                     inv = await bot.create_chat_invite_link(chat_id)
                     link = inv.invite_link
                 except: link = None
-            if link:
-                text += f"{i}. <a href='{link}'>{title}</a>\n"
-            else:
-                text += f"{i}. <b>{title}</b> <i>(без ссылки)</i>\n"
+            if link: text += f"{i}. <a href='{link}'>{title}</a>\n"
+            else: text += f"{i}. <b>{title}</b> <i>(без ссылки)</i>\n"
         except Exception as e:
             text += f"{i}. <code>{chat_id}</code> <i>(нет доступа)</i>\n"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
@@ -10180,8 +8803,7 @@ async def grid_command_router(message: types.Message):
             text += "<b>Модераторы:</b>\n"
             for uid, rank, is_admin in mods[:15]:
                 try:
-                    u = await bot.get_chat(uid)
-                    name = user_link(uid, u.first_name, u.username)
+                    u = await bot.get_chat(uid); name = user_link(uid, u.first_name, u.username)
                 except: name = f"<code>{uid}</code>"
                 badge = "👑" if is_admin else "🛡"
                 text += f"{badge} {name} — ранг {rank}\n"
@@ -10237,8 +8859,7 @@ async def grid_command_router(message: types.Message):
             try:
                 await bot.send_message(cid, text_to_send, parse_mode="HTML", disable_web_page_preview=True)
                 sent += 1
-            except Exception as e:
-                pass
+            except Exception as e: pass
         return sent
 
     if action in ["+админ", "+админка", "+adm"]:
@@ -10259,13 +8880,10 @@ async def grid_command_router(message: types.Message):
         add_grid_moderator(grid_id, target.id, rank=4, is_admin=1)
         for chat_id, hidden, desc in chats:
             try: set_rank(chat_id, target.id, 4, actor_id)
-            except Exception as e:
-                pass
-        notify_text = (
-            f"🛡 <b>Назначение администратора в сетке</b>\n\n"
-            f"👤 {mention(target)} назначен <b>ТГ-админом</b> во всех чатах сетки.\n"
-            f"👮 Сделал: {mention(message.from_user)}"
-        )
+            except Exception as e: pass
+        notify_text = (f"🛡 <b>Назначение администратора в сетке</b>\n\n"
+                       f"👤 {mention(target)} назначен <b>ТГ-админом</b> во всех чатах сетки.\n"
+                       f"👮 Сделал: {mention(message.from_user)}")
         sent = await notify_all_chats(notify_text)
         return await message.reply(
             f"{em('check', '✅')} {mention(target)} — <b>ТГ-админ</b> в <b>{added_to}/{len(chats)}</b> чатах.\n"
@@ -10280,9 +8898,7 @@ async def grid_command_router(message: types.Message):
         if not target:
             return await message.reply("📌 <code>сетка -админ @user</code>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
         if target.id == OWNER_ID: return
-        removed_from = 0
-        failed = 0
-        errors_log = []
+        removed_from = 0; failed = 0; errors_log = []
         for chat_id, hidden, desc in chats:
             success_this_chat = False
             try:
@@ -10290,10 +8906,8 @@ async def grid_command_router(message: types.Message):
                 success_this_chat = True
             except Exception as e:
                 errors_log.append(f"{chat_id}: {e}")
-            if success_this_chat:
-                removed_from += 1
-            else:
-                failed += 1
+            if success_this_chat: removed_from += 1
+            else: failed += 1
             try: remove_rank(chat_id, target.id)
             except: pass
             try: unmark_bot_promoted(target.id, chat_id)
@@ -10301,22 +8915,17 @@ async def grid_command_router(message: types.Message):
         remove_grid_moderator(grid_id, target.id)
         try: remove_grid_user_rank(grid_id, target.id)
         except: pass
-        notify_text = (
-            f"❌ <b>Снятие администратора в сетке</b>\n\n"
-            f"👤 {mention(target)} снят со всех постов в чатах сетки.\n"
-            f"👮 Сделал: {mention(message.from_user)}"
-        )
+        notify_text = (f"❌ <b>Снятие администратора в сетке</b>\n\n"
+                       f"👤 {mention(target)} снят со всех постов в чатах сетки.\n"
+                       f"👮 Сделал: {mention(message.from_user)}")
         sent = await notify_all_chats(notify_text)
         result_text = (
             f"{em('check', '✅')} <b>Снято с {mention(target)}:</b>\n\n"
             f"🛡 ТГ-права: <b>{removed_from}/{len(chats)}</b>\n"
-            f"🎖 Ранг в боте: <b>сброшен</b>\n"
-            f"🕸 Ранг в сетке: <b>сброшен</b>\n"
-            f"📢 Уведомлений: <b>{sent}/{len(chats)}</b>\n"
-            f"⚠️ Ошибок: <b>{failed}</b>"
+            f"🎖 Ранг в боте: <b>сброшен</b>\n🕸 Ранг в сетке: <b>сброшен</b>\n"
+            f"📢 Уведомлений: <b>{sent}/{len(chats)}</b>\n⚠️ Ошибок: <b>{failed}</b>"
         )
-        if errors_log:
-            result_text += f"\n\n<b>Первая ошибка:</b>\n<code>{errors_log[0][:200]}</code>"
+        if errors_log: result_text += f"\n\n<b>Первая ошибка:</b>\n<code>{errors_log[0][:200]}</code>"
         return await message.reply(result_text, parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if action in ["разжаловать", "снять"]:
@@ -10331,8 +8940,7 @@ async def grid_command_router(message: types.Message):
             try:
                 await bot.promote_chat_member(chat_id=chat_id, user_id=target.id, rights=empty_admin_rights())
                 removed_from += 1
-            except Exception as e:
-                pass
+            except Exception as e: pass
             try: remove_rank(chat_id, target.id)
             except: pass
             try: unmark_bot_promoted(target.id, chat_id)
@@ -10340,11 +8948,9 @@ async def grid_command_router(message: types.Message):
         remove_grid_moderator(grid_id, target.id)
         try: remove_grid_user_rank(grid_id, target.id)
         except: pass
-        notify_text = (
-            f"📉 <b>Разжалование в сетке</b>\n\n"
-            f"👤 {mention(target)} полностью <b>разжалован</b> в сетке.\n"
-            f"👮 Сделал: {mention(message.from_user)}"
-        )
+        notify_text = (f"📉 <b>Разжалование в сетке</b>\n\n"
+                       f"👤 {mention(target)} полностью <b>разжалован</b> в сетке.\n"
+                       f"👮 Сделал: {mention(message.from_user)}")
         sent = await notify_all_chats(notify_text)
         return await message.reply(
             f"{em('cross', '❌')} {mention(target)} <b>разжалован</b> в {removed_from}/{len(chats)} чатах.\n📢 Уведомлений: {sent}/{len(chats)}",
@@ -10366,16 +8972,11 @@ async def grid_command_router(message: types.Message):
         except: pass
         add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
         set_rank_in_grid_chats(grid_id, target.id, new_rank, actor_id)
-        notify_text = (
-            f"🏆 <b>Повышение в сетке</b>\n\n"
-            f"👤 {mention(target)} повышен до ранга <b>{new_rank}</b>.\n"
-            f"👮 Сделал: {mention(message.from_user)}"
-        )
+        notify_text = (f"🏆 <b>Повышение в сетке</b>\n\n"
+                       f"👤 {mention(target)} повышен до ранга <b>{new_rank}</b>.\n"
+                       f"👮 Сделал: {mention(message.from_user)}")
         sent = await notify_all_chats(notify_text)
-        return await message.reply(
-            f"🏆 {mention(target)} повышен до ранга <b>{new_rank}</b>\n📢 Уведомлений: {sent}/{len(chats)}",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply(f"🏆 {mention(target)} повышен до ранга <b>{new_rank}</b>\n📢 Уведомлений: {sent}/{len(chats)}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if action in ["понизить"]:
         if actor_id != OWNER_ID and not is_coowner(actor_id) and not is_grid_moderator(grid_id, actor_id, 4):
@@ -10392,16 +8993,11 @@ async def grid_command_router(message: types.Message):
         except: pass
         add_grid_moderator(grid_id, target.id, rank=new_rank, is_admin=0)
         set_rank_in_grid_chats(grid_id, target.id, new_rank, actor_id)
-        notify_text = (
-            f"📉 <b>Понижение в сетке</b>\n\n"
-            f"👤 {mention(target)} понижен до ранга <b>{new_rank}</b>.\n"
-            f"👮 Сделал: {mention(message.from_user)}"
-        )
+        notify_text = (f"📉 <b>Понижение в сетке</b>\n\n"
+                       f"👤 {mention(target)} понижен до ранга <b>{new_rank}</b>.\n"
+                       f"👮 Сделал: {mention(message.from_user)}")
         sent = await notify_all_chats(notify_text)
-        return await message.reply(
-            f"📉 {mention(target)} понижен до ранга <b>{new_rank}</b>\n📢 Уведомлений: {sent}/{len(chats)}",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )
+        return await message.reply(f"📉 {mention(target)} понижен до ранга <b>{new_rank}</b>\n📢 Уведомлений: {sent}/{len(chats)}", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
 
     if action in ["-чат"]:
         is_creator_of_chat = False
@@ -10418,10 +9014,7 @@ async def grid_command_router(message: types.Message):
             grid_name = g[0] if g else f"#{grid_id}"
             c.execute("DELETE FROM grid_chats WHERE grid_id = ? AND chat_id = ?", (grid_id, message.chat.id))
             conn.commit()
-        return await message.reply(
-            f"{em('check', '✅')} <b>Чат отвязан от сетки</b>\n\n🕸 Было: <b>{grid_name}</b>",
-            parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
-        )# ================= БРАКИ =================
+        return await message.reply(f"{em('check', '✅')} <b>Чат отвязан от сетки</b>\n\n🕸 Было: <b>{grid_name}</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))# ================= БРАКИ =================
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*брак(\s|$)', m.text.strip(), re.IGNORECASE))
 async def marriage_router(message: types.Message):
     txt = message.text.strip()
@@ -10471,8 +9064,7 @@ async def marriage_router(message: types.Message):
     ]])
     await message.reply(
         f"💍 <b>Предложение!</b>\n\n{mention(message.from_user)} → {mention(target)}\n\n{mention(target)}, ты согласен(на)?",
-        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb,
-        **_reply_kwargs(message)
+        parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb, **_reply_kwargs(message)
     )
 
 
@@ -10488,8 +9080,7 @@ async def marriage_response(callback: types.CallbackQuery):
     if get_proposal(chat_id, from_id, to_id) is None:
         return await callback.answer("⚠️ Уже неактивно.", show_alert=True)
     try:
-        fu = await bot.get_chat(from_id)
-        tu = await bot.get_chat(to_id)
+        fu = await bot.get_chat(from_id); tu = await bot.get_chat(to_id)
     except:
         return await callback.answer("❌ Ошибка загрузки.", show_alert=True)
     if action == "marry_accept":
@@ -10637,9 +9228,7 @@ async def set_divorce_mode_cmd(message: types.Message):
     mode_names = {"выключить": "❌ Выключено", "один": "👤 Один", "оба": "👥 Оба"}
     await message.reply(
         f"💔 <b>Режим развода</b>\n\nТекущий: <b>{mode_names.get(current_mode, current_mode)}</b>\n\n"
-        f"<code>брак режим развода выключить</code>\n"
-        f"<code>брак режим развода один</code>\n"
-        f"<code>брак режим развода оба</code>",
+        f"<code>брак режим развода выключить</code>\n<code>брак режим развода один</code>\n<code>брак режим развода оба</code>",
         parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message)
     )
 
@@ -10796,8 +9385,7 @@ async def report_cmd(message: types.Message):
         f"🔔 <b>РЕПОРТ</b>\n\n"
         f"👤 От: {user_link(message.from_user.id, message.from_user.first_name, message.from_user.username)}\n"
         f"🎯 На: {user_link(target.id, target.first_name, target.username)}\n"
-        f"🏠 Чат: {chat_title}\n"
-        f"📝 {reason}"
+        f"🏠 Чат: {chat_title}\n📝 {reason}"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Проверен", callback_data=f"report_done:{report_id}")]])
     if report_chat_id:
@@ -10822,8 +9410,7 @@ async def report_done_handler(callback: types.CallbackQuery):
 
 @dp.message(lambda m: m.text and re.match(r'^\s*[.\/!+-]?\s*\+репорты\b', m.text.strip(), re.IGNORECASE))
 async def set_report_chat_cmd(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
+    chat_id = message.chat.id; user_id = message.from_user.id
     if user_id != OWNER_ID and not is_coowner(user_id) and not has_permission(chat_id, user_id, 3):
         return
     args = message.text.split(maxsplit=1)
@@ -10850,8 +9437,7 @@ async def backup_cmd(message: types.Message):
 
 @dp.message(lambda m: m.text and re.sub(r'^[.\/!+-]\s*', '', m.text.strip().lower()) == "импорт")
 async def import_db_cmd(message: types.Message):
-    if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        return
+    if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id): return
     if not message.reply_to_message or not message.reply_to_message.document:
         return await message.reply(f"{em('cross', '❌')} <b>Ответьте на .db файл командой .импорт</b>", parse_mode="HTML", disable_web_page_preview=True, **_reply_kwargs(message))
     doc = message.reply_to_message.document
@@ -10885,161 +9471,23 @@ async def import_db_cmd(message: types.Message):
         try: init_db()
         except: pass
         size_mb = doc.file_size / (1024 * 1024) if doc.file_size else 0
-        await status_msg.edit_text(
-            f"{em('check', '✅')} <b>База импортирована!</b>\n\n💾 Размер: <b>{size_mb:.2f} МБ</b>\n\n⚠️ <b>ПЕРЕЗАПУСТИТЕ БОТА</b>",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
+        await status_msg.edit_text(f"{em('check', '✅')} <b>База импортирована!</b>\n\n💾 Размер: <b>{size_mb:.2f} МБ</b>\n\n⚠️ <b>ПЕРЕЗАПУСТИТЕ БОТА</b>", parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
         if os.path.exists(temp_path):
             try: os.remove(temp_path)
             except: pass
-        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")
-
-# ================= РП ХЕНДЛЕР =================
-@dp.message(lambda m: m.text and not m.text.startswith(('.', '+', '-', '!', '/'))
-    and not m.text.lower().strip().startswith("брак")
-    and not m.text.lower().strip().startswith("сетка")
-    and not m.text.lower().strip().startswith("заметка")
-    and not m.text.lower().strip().startswith("заметки")
-    and not m.text.lower().strip().startswith("мой ")
-    and not m.text.lower().strip().startswith("моя ")
-    and not m.text.lower().strip().startswith("твоя ")
-    and not m.text.lower().strip().startswith("твой ")
-    and not m.text.lower().strip().startswith("мойдр")
-    and not m.text.lower().strip().startswith("мойпол")
-    and not m.text.lower().strip().startswith("мойгород"))
-async def standard_rp_handler(message: types.Message):
-    if not message.text: return
-    txt = message.text.strip()
-    if not txt: return
-    txt_lower = txt.lower()
-
-    # ===== 1. Пользовательские РП =====
-    rp_emoji = None
-    rp_template = None
-    matched_name = None
-    with sqlite3.connect(DATABASE_PATH) as conn:
-        c = conn.cursor()
-        c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?", (message.chat.id, txt_lower))
-        row = c.fetchone()
-        if row:
-            rp_emoji, rp_template = row
-            matched_name = txt_lower
-        else:
-            first = txt_lower.split()[0] if txt_lower.split() else ""
-            if first and first != txt_lower:
-                c.execute("SELECT emoji, text FROM rp_commands WHERE chat_id = ? AND LOWER(name) = ?", (message.chat.id, first))
-                row = c.fetchone()
-                if row:
-                    rp_emoji, rp_template = row
-                    matched_name = first
-        if not rp_template:
-            c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (txt_lower,))
-            row = c.fetchone()
-            if row:
-                rp_emoji, rp_template = row
-                matched_name = txt_lower
-            else:
-                first = txt_lower.split()[0] if txt_lower.split() else ""
-                if first and first != txt_lower:
-                    c.execute("SELECT emoji, text FROM global_rp_commands WHERE LOWER(name) = ? LIMIT 1", (first,))
-                    row = c.fetchone()
-                    if row:
-                        rp_emoji, rp_template = row
-                        matched_name = first
-
-    if rp_template:
-        actor = message.from_user
-        target = None
-        reply_to_id = None
-        if message.reply_to_message and message.reply_to_message.from_user:
-            target = message.reply_to_message.from_user
-            reply_to_id = message.reply_to_message.message_id
-        else:
-            rest = txt[len(matched_name):].strip() if matched_name else ""
-            for w in rest.split():
-                clean = w.strip().rstrip('.,;:!?')
-                if clean.startswith('@'):
-                    try: target = await bot.get_chat(clean); break
-                    except: pass
-                if clean.isdigit() and len(clean) >= 6:
-                    try: target = await bot.get_chat(int(clean)); break
-                    except: pass
-        if target and not target.is_bot and target.id != actor.id:
-            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(target))
-        else:
-            out = rp_template.replace("{actor}", mention(actor)).replace("{target}", mention(actor))
-            target = None
-        if target is None:
-            reply_to_id = None
-        kwargs = {"reply_to_message_id": reply_to_id} if reply_to_id else {}
-        await message.reply(f"{rp_emoji} {out}", parse_mode="HTML", disable_web_page_preview=True, **kwargs)
-        return
-
-    # ===== 2. Стандартные РП =====
-    rp_data = None
-    rp_name = None
-
-    if txt_lower in STANDARD_RP:
-        rp_name = txt_lower
-        rp_data = STANDARD_RP[txt_lower]
-    else:
-        for name in sorted(STANDARD_RP.keys(), key=len, reverse=True):
-            if txt_lower.startswith(name):
-                rest = txt_lower[len(name):]
-                if not rest or rest[0] == ' ':
-                    rp_name = name
-                    rp_data = STANDARD_RP[name]
-                    break
-
-    if not rp_data:
-        return
-
-    actor = message.from_user
-    target = None
-    reply_to_id = None
-
-    if message.reply_to_message and message.reply_to_message.from_user:
-        target = message.reply_to_message.from_user
-        reply_to_id = message.reply_to_message.message_id
-    else:
-        rest_text = txt[len(rp_name):].strip()
-        if rest_text:
-            try:
-                target_arg = rest_text.split()[0]
-                clean = target_arg.strip().rstrip('.,;:!?')
-                if clean.startswith('@'):
-                    target = await bot.get_chat(clean)
-                elif clean.isdigit() and len(clean) >= 6:
-                    target = await bot.get_chat(int(clean))
-            except:
-                target = None
-
-    if not target or target.id == actor.id or target.is_bot:
-        return await message.reply(
-            f"{rp_data['emoji']} {rp_data['self_text'].format(actor=mention(actor), target=mention(actor))}",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-
-    kwargs = {"reply_to_message_id": reply_to_id} if reply_to_id else {}
-    await message.reply(
-        f"{rp_data['emoji']} {rp_data['text'].format(actor=mention(actor), target=mention(target))}",
-        parse_mode="HTML", disable_web_page_preview=True, **kwargs
-    )
-# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
+        await status_msg.edit_text(f"{em('cross', '❌')} Ошибка: <code>{e}</code>", parse_mode="HTML")# ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
     if not message.from_user or message.from_user.is_bot: return
 
     if message.from_user.id != OWNER_ID and not is_coowner(message.from_user.id):
-        if is_bot_ignored(message.from_user.id):
-            return
+        if is_bot_ignored(message.from_user.id): return
         if is_in_antispam(message.from_user.id):
             with sqlite3.connect(DATABASE_PATH) as conn:
                 c = conn.cursor()
                 c.execute("SELECT 1 FROM ignore_list WHERE user_id = ? LIMIT 1", (message.from_user.id,))
-                if c.fetchone():
-                    return
+                if c.fetchone(): return
 
     if message.chat.type in ["group", "supergroup"]:
         if is_link_filter_enabled(message.chat.id):
@@ -11176,24 +9624,16 @@ async def on_join(event: types.ChatMemberUpdated):
             until = datetime.now() + timedelta(seconds=90)
             await bot.ban_chat_member(chat_id, user.id, until_date=until)
             add_chat_ban(chat_id, user.id, "АС: вход в чат", 0, until.isoformat(), was_antispam=1)
-
             name = html_escape_text(user.first_name or "Пользователь")
-            if getattr(user, "username", None):
-                nick = f'<a href="https://t.me/{user.username}">{name}</a>'
-            else:
-                nick = f'<a href="tg://user?id={user.id}">{name}</a>'
-
+            if getattr(user, "username", None): nick = f'<a href="https://t.me/{user.username}">{name}</a>'
+            else: nick = f'<a href="tg://user?id={user.id}">{name}</a>'
             reason = "спам"
             info = get_antispam_info(user.id)
-            if info and info[0]:
-                reason = info[0]
-
+            if info and info[0]: reason = info[0]
             await bot.send_message(
                 chat_id,
-                f"🚫 {nick} — <b>в антиспаме Mos</b>\n"
-                f"📝 Причина: <i>{reason}</i>",
-                parse_mode="HTML",
-                disable_web_page_preview=True
+                f"🚫 {nick} — <b>в антиспаме Mos</b>\n📝 Причина: <i>{reason}</i>",
+                parse_mode="HTML", disable_web_page_preview=True
             )
         except Exception as e:
             print(f"⚠️ on_join АС кик: {e}")
@@ -11214,8 +9654,7 @@ async def on_join(event: types.ChatMemberUpdated):
             try:
                 sent = await bot.send_message(chat_id, format_greeting(greeting, user, event.chat), parse_mode="HTML")
                 _schedule_greeting_delete(chat_id, sent)
-            except Exception as e:
-                pass
+            except Exception as e: pass
         await _send_short_about_if_enabled(chat_id, user)
         return
 
@@ -11295,9 +9734,7 @@ async def captcha_timeout(user_id, chat_id):
     if timeout_sec > 3600: timeout_sec = 3600
     await asyncio.sleep(timeout_sec)
     cap = get_captcha(user_id, chat_id)
-    if not cap:
-        return
-
+    if not cap: return
     user = None
     try:
         user = await bot.get_chat(user_id)
@@ -11307,39 +9744,27 @@ async def captcha_timeout(user_id, chat_id):
                 c = conn.cursor()
                 c.execute("SELECT first_name, username FROM users WHERE user_id = ?", (user_id,))
                 r = c.fetchone()
-            if r:
-                user = _FakeUser(user_id, r[0] or f"ID {user_id}", r[1])
-        except Exception:
-            user = None
-
+            if r: user = _FakeUser(user_id, r[0] or f"ID {user_id}", r[1])
+        except Exception: user = None
     try:
         await bot.ban_chat_member(chat_id, user_id)
         await bot.unban_chat_member(chat_id, user_id)
     except: pass
-
     if cap[0]:
         try: await bot.delete_message(chat_id, cap[0])
         except: pass
-
     if user is not None:
         try:
             name = html_escape_text(user.first_name or "Пользователь")
-            if getattr(user, "username", None):
-                nick = f'<a href="https://t.me/{user.username}">{name}</a>'
-            else:
-                nick = f'<a href="tg://user?id={user.id}">{name}</a>'
-
+            if getattr(user, "username", None): nick = f'<a href="https://t.me/{user.username}">{name}</a>'
+            else: nick = f'<a href="tg://user?id={user.id}">{name}</a>'
             await bot.send_message(
                 chat_id,
-                f"🔴 {nick} исключен(а) из беседы\n"
-                f"💬 Причина: ❗️Не пройдена капча\n"
-                f"👤 Модератор: <b>mos</b>",
-                parse_mode="HTML",
-                disable_web_page_preview=True
+                f"🔴 {nick} исключен(а) из беседы\n💬 Причина: ❗️Не пройдена капча\n👤 Модератор: <b>mos</b>",
+                parse_mode="HTML", disable_web_page_preview=True
             )
         except Exception as e:
             print(f"⚠️ captcha_timeout сообщение: {e}")
-
     remove_captcha(user_id, chat_id)
 
 
@@ -11358,38 +9783,28 @@ async def captcha_answer_handler(callback: types.CallbackQuery):
             await bot.ban_chat_member(chat_id, target_user_id)
             await bot.unban_chat_member(chat_id, target_user_id)
         except: pass
-
         user = callback.from_user
         name = html_escape_text(user.first_name or "Пользователь")
-        if getattr(user, "username", None):
-            nick = f'<a href="https://t.me/{user.username}">{name}</a>'
-        else:
-            nick = f'<a href="tg://user?id={user.id}">{name}</a>'
-
+        if getattr(user, "username", None): nick = f'<a href="https://t.me/{user.username}">{name}</a>'
+        else: nick = f'<a href="tg://user?id={user.id}">{name}</a>'
         remove_captcha(target_user_id, chat_id)
         try: await callback.message.delete()
         except: pass
-
         try:
             await bot.send_message(
                 chat_id,
-                f"🔴 {nick} исключен(а) из беседы\n"
-                f"💬 Причина: ❗️Не пройдена капча\n"
-                f"👤 Модератор: <b>mos</b>",
-                parse_mode="HTML",
-                disable_web_page_preview=True
+                f"🔴 {nick} исключен(а) из беседы\n💬 Причина: ❗️Не пройдена капча\n👤 Модератор: <b>mos</b>",
+                parse_mode="HTML", disable_web_page_preview=True
             )
         except Exception as e:
             print(f"⚠️ captcha неверный ответ: {e}")
-
         return await callback.answer("❌ Неверно!", show_alert=True)
 
     started_at = get_captcha_created_at(target_user_id, chat_id)
     elapsed_str = None
     if started_at:
         elapsed = (datetime.now() - started_at).total_seconds()
-        if elapsed < 0:
-            elapsed = 0
+        if elapsed < 0: elapsed = 0
         elapsed_str = f"{elapsed:.2f}"
 
     try:
@@ -11404,18 +9819,15 @@ async def captcha_answer_handler(callback: types.CallbackQuery):
 
     user = callback.from_user
     name = html_escape_text(user.first_name or "Пользователь")
-    if getattr(user, "username", None):
-        nick = f'<a href="https://t.me/{user.username}">{name}</a>'
-    else:
-        nick = f'<a href="tg://user?id={user.id}">{name}</a>'
+    if getattr(user, "username", None): nick = f'<a href="https://t.me/{user.username}">{name}</a>'
+    else: nick = f'<a href="tg://user?id={user.id}">{name}</a>'
 
     if elapsed_str is not None:
         try:
             await bot.send_message(
                 chat_id,
                 f"✅ {nick} завершил(-а) прохождение капчи за <b>{elapsed_str} секунд</b>",
-                parse_mode="HTML",
-                disable_web_page_preview=True
+                parse_mode="HTML", disable_web_page_preview=True
             )
         except: pass
 
@@ -11449,16 +9861,12 @@ async def on_join_request(request: types.ChatJoinRequest):
 
 @dp.message(Command("my_bans"))
 async def my_bans_cmd(message: types.Message):
-    # Только в личке с ботом
     if message.chat.type != "private":
         return await message.reply(
-            "🔒 Команда доступна <b>только в личных сообщениях</b> с ботом.\n"
-            "📌 Напиши мне в ЛС: <code>/my_bans</code>",
+            "🔒 Команда доступна <b>только в личных сообщениях</b> с ботом.\n📌 Напиши мне в ЛС: <code>/my_bans</code>",
             parse_mode="HTML", disable_web_page_preview=True
         )
-
-    user_id = message.from_user.id  # всегда только свои
-
+    user_id = message.from_user.id
     bans = []
     with sqlite3.connect(DATABASE_PATH) as conn:
         c = conn.cursor()
@@ -11466,7 +9874,6 @@ async def my_bans_cmd(message: types.Message):
                      FROM chat_bans WHERE user_id = ? 
                      ORDER BY banned_at DESC LIMIT 50""", (user_id,))
         rows = c.fetchall()
-
     for chat_id, reason, banned_at, until_date in rows:
         status = ""
         if until_date:
@@ -11474,44 +9881,23 @@ async def my_bans_cmd(message: types.Message):
                 until_dt = datetime.fromisoformat(until_date.replace("Z", ""))
                 if until_dt > datetime.now():
                     dur = int((until_dt - datetime.now()).total_seconds())
-                    if dur >= 86400:
-                        status = f"ещё {dur // 86400} дн."
-                    elif dur >= 3600:
-                        status = f"ещё {dur // 3600} ч."
-                    elif dur >= 60:
-                        status = f"ещё {dur // 60} мин."
-                    else:
-                        status = f"ещё {dur} сек."
-                else:
-                    status = "истёк"
-            except:
-                status = ""
-        else:
-            status = "навсегда"
-
+                    if dur >= 86400: status = f"ещё {dur // 86400} дн."
+                    elif dur >= 3600: status = f"ещё {dur // 3600} ч."
+                    elif dur >= 60: status = f"ещё {dur // 60} мин."
+                    else: status = f"ещё {dur} сек."
+                else: status = "истёк"
+            except: status = ""
+        else: status = "навсегда"
         try:
-            chat = await bot.get_chat(chat_id)
-            chat_title = chat.title or f"Чат {chat_id}"
-        except:
-            chat_title = f"Чат {chat_id}"
-
-        bans.append(
-            f"🚫 <b>{html_escape_text(chat_title)}</b>\n"
-            f"   📝 <i>{html_escape_text(reason or 'без причины')}</i>\n"
-            f"   🗓 {_fmt_added_dt(banned_at)} · ⏱ {status}"
-        )
-
+            chat = await bot.get_chat(chat_id); chat_title = chat.title or f"Чат {chat_id}"
+        except: chat_title = f"Чат {chat_id}"
+        bans.append(f"🚫 <b>{html_escape_text(chat_title)}</b>\n   📝 <i>{html_escape_text(reason or 'без причины')}</i>\n   🗓 {_fmt_added_dt(banned_at)} · ⏱ {status}")
     if is_in_antispam(user_id):
         info = get_antispam_info(user_id)
         reason = info[0] if info else "?"
         bans.append(f"\n☢️ <b>Антиспам:</b> <i>{html_escape_text(reason)}</i>")
-
     if not bans:
-        return await message.reply(
-            "✅ <b>У вас нет банов.</b>\n\n🎉 Всё чисто!",
-            parse_mode="HTML", disable_web_page_preview=True
-        )
-
+        return await message.reply("✅ <b>У вас нет банов.</b>\n\n🎉 Всё чисто!", parse_mode="HTML", disable_web_page_preview=True)
     text = f"📋 <b>Ваши наказания</b>\n\n" + "\n\n".join(bans)
     text += f"\n\n💬 <i>Если считаешь наказание несправедливым — напиши в поддержку:</i> {SUPPORT_CHAT_LINK}"
     await message.reply(text, parse_mode="HTML", disable_web_page_preview=True)
@@ -11522,32 +9908,27 @@ async def on_bot_added(event: types.ChatMemberUpdated):
     if event.new_chat_member.status not in ["member", "administrator"]: return
     chat_id = event.chat.id
     chat_type = event.chat.type
-
     try:
         admins = await bot.get_chat_administrators(chat_id)
         for admin in admins:
             u = admin.user
             register_user(u.id, u.first_name, u.username or "")
-            if admin.status == "creator":
-                set_rank(chat_id, u.id, 5, u.id)
+            if admin.status == "creator": set_rank(chat_id, u.id, 5, u.id)
             elif admin.status == "administrator":
                 if get_rank(chat_id, u.id) < 4:
                     set_rank(chat_id, u.id, 4, u.id)
                     mark_bot_promoted(u.id, chat_id, u.id)
     except Exception as e:
         print(f"⚠️ on_bot_added admins: {e}")
-
     try:
         creator = await bot.get_chat_member(chat_id, event.from_user.id)
         if creator.status == "creator":
             register_user(event.from_user.id, event.from_user.first_name, event.from_user.username or "")
             set_rank(chat_id, event.from_user.id, 5, event.from_user.id)
     except: pass
-
     if event.from_user:
         u = event.from_user
         register_user(u.id, u.first_name, u.username or "")
-
     try:
         with sqlite3.connect(DATABASE_PATH) as conn:
             c = conn.cursor()
@@ -11558,10 +9939,8 @@ async def on_bot_added(event: types.ChatMemberUpdated):
                 c2 = conn2.cursor()
                 c2.execute("SELECT first_name, username FROM users WHERE user_id = ?", (uid,))
                 r = c2.fetchone()
-            if r:
-                register_user(uid, r[0], r[1] or "")
+            if r: register_user(uid, r[0], r[1] or "")
     except: pass
-
     if chat_type in ["group", "supergroup"]:
         try:
             await bot.send_message(
@@ -11597,17 +9976,12 @@ async def auto_unban_loop():
                             )
                         )
                     except: pass
-                except Exception as e:
-                    pass
-
+                except Exception as e: pass
             expired_mutes = get_expired_mutes()
             for chat_id, user_id, reason in expired_mutes:
-                try:
-                    clear_chat_mute(chat_id, user_id)
-                except Exception as e:
-                    pass
-        except Exception as e:
-            pass
+                try: clear_chat_mute(chat_id, user_id)
+                except Exception as e: pass
+        except Exception as e: pass
         await asyncio.sleep(30)
 
 
@@ -11644,19 +10018,14 @@ async def auto_fishing_events_loop():
                     ((datetime.now().date() - timedelta(days=3)).isoformat(),))
                 chats = [r[0] for r in c.fetchall()]
             for chat_id in chats:
-                if chat_id >= 0:
-                    continue
-                if not is_events_enabled(chat_id):
-                    continue
+                if chat_id >= 0: continue
+                if not is_events_enabled(chat_id): continue
                 try:
                     chat = await bot.get_chat(chat_id)
-                    if chat.type not in ["group", "supergroup"]:
-                        continue
-                except:
-                    continue
+                    if chat.type not in ["group", "supergroup"]: continue
+                except: continue
                 current_event = get_active_event(chat_id)
-                if current_event:
-                    continue
+                if current_event: continue
                 if random.randint(1, 100) <= 40:
                     ev_key = random.choice(list(FISHING_EVENTS.keys()))
                     ev = FISHING_EVENTS[ev_key]
@@ -11665,14 +10034,10 @@ async def auto_fishing_events_loop():
                         await bot.send_message(
                             chat_id,
                             f"🌦 <b>Новое событие на рыбалке!</b>\n\n"
-                            f"{ev['name']}\n"
-                            f"📈 Бонус: ×{ev['bonus']}\n"
-                            f"⏰ Длительность: <b>1 ч 30 мин</b>",
-                            parse_mode="HTML",
-                            disable_web_page_preview=True
+                            f"{ev['name']}\n📈 Бонус: ×{ev['bonus']}\n⏰ Длительность: <b>1 ч 30 мин</b>",
+                            parse_mode="HTML", disable_web_page_preview=True
                         )
-                    except:
-                        pass
+                    except: pass
         except Exception as e:
             print(f"❌ auto_fishing_events_loop: {e}")
 
@@ -11688,7 +10053,6 @@ async def auto_holidays_loop():
                     c = conn.cursor()
                     c.execute("SELECT key FROM global_settings WHERE key LIKE 'holidays:%' AND value = '1'")
                     rows = c.fetchall()
-
                 text = get_all_holidays_text(now_msk)
                 sent = 0
                 for (key,) in rows:
@@ -11723,14 +10087,12 @@ async def auto_tournament_end_loop():
                     medals = ["🥇", "🥈", "🥉"]
                     for i, (uid, caught, prize) in enumerate(winners):
                         try:
-                            u = await bot.get_chat(uid)
-                            name = user_link(uid, u.first_name, u.username)
+                            u = await bot.get_chat(uid); name = user_link(uid, u.first_name, u.username)
                         except: name = f"ID {uid}"
                         text += f"{medals[i]} {name} — <b>{caught}</b> 🐟 (+{prize} 🍬)\n"
                     try: await bot.send_message(chat_id, text, parse_mode="HTML")
                     except: pass
-        except Exception as e:
-            pass
+        except Exception as e: pass
         await asyncio.sleep(30)
 
 
@@ -11745,8 +10107,7 @@ async def auto_marriage_divorce_loop():
             for chat_id in chats:
                 settings = get_marriage_settings(chat_id)
                 mode = settings[1]
-                if mode == "выключить":
-                    continue
+                if mode == "выключить": continue
                 pairs = get_all_marriages(chat_id)
                 for u1_id, u1_name, u2_id, u2_name, married_at, extra in pairs:
                     try:
@@ -11767,13 +10128,11 @@ async def auto_marriage_divorce_loop():
                                     parse_mode="HTML")
                             except: pass
                     except: pass
-        except Exception as e:
-            pass
+        except Exception as e: pass
         await asyncio.sleep(3600)
 
 
 async def auto_fill_users_loop():
-    """Раз в 12 часов пробегает по известным чатам и регистрирует админов."""
     while True:
         try:
             await asyncio.sleep(43200)
@@ -11790,8 +10149,7 @@ async def auto_fill_users_loop():
                         if u.is_bot: continue
                         register_user(u.id, u.first_name, u.username or "")
                         total += 1
-                except:
-                    continue
+                except: continue
             print(f"✅ auto_fill_users: обработано {total} админов")
         except Exception as e:
             print(f"❌ auto_fill_users_loop: {e}")# ================= ЗАПУСК =================
@@ -11803,401 +10161,189 @@ async def main():
 
     if get_all_holidays_count() < 300:
         STARTER_HOLIDAYS = [
-            ("01-01", "Новый год", "global"),
-            ("01-01", "Новый год", "local"),
-            ("01-01", "День былинного богатыря Ильи Муромца", "folk"),
-            ("01-02", "День научной фантастики", "fun"),
-            ("01-03", "День стереоскопического кино", "fun"),
-            ("01-04", "Всемирный день азбуки Брайля", "global"),
-            ("01-05", "День физики", "fun"),
-            ("01-06", "Сочельник", "church"),
-            ("01-07", "Рождество Христово", "church"),
-            ("01-08", "День поворачивания на правый бок", "fun"),
-            ("01-09", "День путешествия на воздушном шаре", "fun"),
-            ("01-10", "День благодарности комнатным растениям", "fun"),
-            ("01-11", "Всемирный день спасибо", "fun"),
-            ("01-12", "День работника прокуратуры РФ", "prof"),
-            ("01-13", "Старый Новый год (Васильев вечер)", "folk"),
-            ("01-13", "День российской печати", "prof"),
-            ("01-14", "Всемирный день логики", "global"),
-            ("01-14", "День защитников неба", "fun"),
-            ("01-15", "День рождения Википедии", "global"),
-            ("01-15", "Национальный день шляпы", "fun"),
-            ("01-16", "День ледовара", "fun"),
-            ("01-17", "День детских изобретений", "fun"),
-            ("01-18", "День Винни-Пуха", "fun"),
-            ("01-19", "Крещение Господне", "church"),
-            ("01-20", "День пингвина", "fun"),
-            ("01-21", "День объятий", "global"),
-            ("01-22", "День дедушки", "fun"),
-            ("01-23", "День ручного письма", "global"),
-            ("01-24", "Международный день образования", "global"),
-            ("01-24", "Международный день эскимо", "fun"),
-            ("01-25", "День российского студенчества (Татьянин день)", "prof"),
-            ("01-25", "Татьянин день", "folk"),
-            ("01-26", "Международный день таможенника", "prof"),
-            ("01-27", "Международный день памяти жертв Холокоста", "global"),
-            ("01-28", "День открытия Антарктиды", "global"),
-            ("01-28", "Международный день ЛЕГО", "fun"),
-            ("01-29", "День необъятной любви к себе", "fun"),
-            ("01-30", "День деда Мороза и Снегурочки", "folk"),
-            ("01-31", "Международный день ювелира", "prof"),
-            ("02-01", "День лифтовика", "prof"),
-            ("02-02", "День сурка", "fun"),
-            ("02-02", "День ежа", "fun"),
-            ("02-03", "Всемирный день борьбы с ненормативной лексикой", "global"),
-            ("02-04", "Всемирный день борьбы против рака", "global"),
-            ("02-04", "Праздник хорошего настроения", "fun"),
-            ("02-05", "День эрудита", "fun"),
-            ("02-06", "День бармена", "prof"),
-            ("02-07", "День балета", "global"),
-            ("02-08", "День российской науки", "prof"),
-            ("02-09", "День стоматолога", "prof"),
-            ("02-10", "День домового", "folk"),
-            ("02-11", "Всемирный день больного", "global"),
-            ("02-11", "Международный день женщин и девочек в науке", "global"),
-            ("02-12", "День Дарвина", "global"),
-            ("02-13", "Всемирный день радио", "global"),
-            ("02-14", "День всех влюблённых", "global"),
-            ("02-15", "Сретение Господне", "church"),
-            ("02-16", "День свежего ананаса", "fun"),
-            ("02-17", "День спонтанного проявления доброты", "global"),
-            ("02-18", "День пельменей", "fun"),
-            ("02-19", "Всемирный день китов", "global"),
-            ("02-20", "Всемирный день социальной справедливости", "global"),
-            ("02-21", "Международный день родного языка", "global"),
-            ("02-22", "День кошки в Японии", "fun"),
-            ("02-23", "День защитника Отечества", "global"),
-            ("02-23", "День защитника Отечества", "prof"),
-            ("02-24", "День рождения лотереи", "fun"),
-            ("02-25", "День открытия спирта", "fun"),
-            ("02-26", "День неторопливости", "fun"),
-            ("02-27", "Международный день полярного медведя", "global"),
-            ("02-28", "День общественного сна", "fun"),
-            ("02-29", "День Кащея Бессмертного", "folk"),
-            ("03-01", "Всемирный день кошек", "global"),
-            ("03-02", "День спичек", "fun"),
-            ("03-03", "Всемирный день дикой природы", "global"),
-            ("03-04", "День грамматики", "fun"),
-            ("03-05", "День выключенных гаджетов", "fun"),
-            ("03-06", "Международный день зубного врача", "prof"),
-            ("03-07", "День тюльпанов", "fun"),
-            ("03-08", "Международный женский день", "global"),
-            ("03-08", "Международный женский день", "prof"),
-            ("03-09", "День диджея", "prof"),
-            ("03-10", "День архивов", "prof"),
-            ("03-11", "День работника органов наркоконтроля", "prof"),
-            ("03-12", "День посадки деревьев", "global"),
-            ("03-13", "День рождения микрофона", "fun"),
-            ("03-14", "Международный день числа Пи", "global"),
-            ("03-15", "Всемирный день защиты прав потребителей", "global"),
-            ("03-16", "День цветных карандашей", "fun"),
-            ("03-17", "День Святого Патрика", "global"),
-            ("03-18", "День воссоединения Крыма с Россией", "global"),
-            ("03-19", "День моряка-подводника", "prof"),
-            ("03-20", "Международный день счастья", "global"),
-            ("03-21", "Всемирный день поэзии", "global"),
-            ("03-21", "Международный день Навруз", "global"),
-            ("03-22", "Всемирный день водных ресурсов", "global"),
-            ("03-23", "Всемирный метеорологический день", "global"),
-            ("03-24", "Всемирный день борьбы с туберкулёзом", "global"),
-            ("03-25", "День работника культуры РФ", "prof"),
-            ("03-26", "День фиолетового дня", "fun"),
-            ("03-27", "Всемирный день театра", "global"),
-            ("03-28", "День уважения кошек", "fun"),
-            ("03-29", "День самопознания", "fun"),
-            ("03-30", "День защиты Земли", "global"),
-            ("03-31", "Международный день бэкапа", "global"),
-            ("04-01", "День смеха", "fun"),
-            ("04-02", "Международный день детской книги", "global"),
-            ("04-03", "Всемирный день вечеринки", "fun"),
-            ("04-04", "Международный день интернета", "global"),
-            ("04-05", "Международный день супа", "fun"),
-            ("04-06", "Международный день спорта", "global"),
-            ("04-07", "Всемирный день здоровья", "global"),
-            ("04-08", "День российской анимации", "prof"),
-            ("04-09", "День финского языка", "global"),
-            ("04-10", "День братьев и сестёр", "global"),
-            ("04-11", "Международный день освобождения узников фашистских лагерей", "global"),
-            ("04-12", "День космонавтики", "global"),
-            ("04-12", "День космонавтики", "prof"),
-            ("04-13", "Всемирный день рок-н-ролла", "global"),
-            ("04-14", "День медицинской службы", "prof"),
-            ("04-15", "Всемирный день искусства", "global"),
-            ("04-16", "Всемирный день голоса", "global"),
-            ("04-17", "Всемирный день гемофилии", "global"),
-            ("04-18", "Международный день памятников и исторических мест", "global"),
-            ("04-19", "День российской полиграфии", "prof"),
-            ("04-20", "Международный день цирка", "global"),
-            ("04-21", "Всемирный день творчества", "global"),
-            ("04-22", "Международный день Матери-Земли", "global"),
-            ("04-23", "Всемирный день книги", "global"),
-            ("04-24", "Международный день солидарности молодёжи", "global"),
-            ("04-25", "Всемирный день пингвинов", "fun"),
-            ("04-26", "Международный день интеллектуальной собственности", "global"),
-            ("04-27", "Всемирный день графического дизайна", "prof"),
-            ("04-28", "Всемирный день охраны труда", "global"),
-            ("04-29", "Международный день танца", "global"),
-            ("04-30", "День пожарной охраны", "prof"),
-            ("05-01", "Праздник Весны и Труда", "global"),
-            ("05-02", "Всемирный день тунца", "fun"),
-            ("05-03", "Всемирный день свободы печати", "global"),
-            ("05-04", "День пожарных", "prof"),
-            ("05-05", "День водолаза", "prof"),
-            ("05-07", "День радио", "prof"),
-            ("05-08", "Всемирный день Красного Креста", "global"),
-            ("05-09", "День Победы", "global"),
-            ("05-10", "Всемирный день движения", "global"),
-            ("05-11", "Всемирный день борьбы с гипертонией", "global"),
-            ("05-12", "Международный день медсестры", "prof"),
-            ("05-13", "День Черноморского флота", "prof"),
-            ("05-14", "День фрилансера", "prof"),
-            ("05-15", "Международный день семьи", "global"),
-            ("05-16", "Международный день биографов", "fun"),
-            ("05-17", "Всемирный день электросвязи", "global"),
-            ("05-18", "Международный день музеев", "global"),
-            ("05-19", "День пионерии", "global"),
-            ("05-20", "Всемирный день метрологии", "global"),
-            ("05-21", "Всемирный день культурного разнообразия", "global"),
-            ("05-22", "Международный день биологического разнообразия", "global"),
-            ("05-23", "Всемирный день черепахи", "global"),
-            ("05-24", "День славянской письменности и культуры", "prof"),
-            ("05-25", "День филолога", "prof"),
-            ("05-26", "День российского предпринимательства", "prof"),
-            ("05-27", "Общероссийский день библиотек", "prof"),
-            ("05-28", "День пограничника", "prof"),
-            ("05-29", "День военного автомобилиста", "prof"),
-            ("05-30", "Всемирный день без табака", "global"),
-            ("05-31", "Всемирный день блондинок", "fun"),
-            ("06-01", "Международный день защиты детей", "global"),
-            ("06-02", "День здорового питания", "global"),
-            ("06-03", "Всемирный день велосипеда", "global"),
-            ("06-04", "Международный день невинных детей", "global"),
-            ("06-05", "Всемирный день окружающей среды", "global"),
-            ("06-06", "День русского языка (Пушкинский день)", "prof"),
-            ("06-07", "Всемирный день безопасности пищевых продуктов", "global"),
-            ("06-08", "Всемирный день океанов", "global"),
-            ("06-09", "Международный день друзей", "global"),
-            ("06-10", "Всемирный день мороженого", "fun"),
-            ("06-11", "Всемирный день куклы", "fun"),
-            ("06-12", "День России", "global"),
-            ("06-12", "День России", "prof"),
+            ("01-01", "Новый год", "global"),("01-01", "Новый год", "local"),("01-01", "День былинного богатыря Ильи Муромца", "folk"),
+            ("01-02", "День научной фантастики", "fun"),("01-03", "День стереоскопического кино", "fun"),("01-04", "Всемирный день азбуки Брайля", "global"),
+            ("01-05", "День физики", "fun"),("01-06", "Сочельник", "church"),("01-07", "Рождество Христово", "church"),
+            ("01-08", "День поворачивания на правый бок", "fun"),("01-09", "День путешествия на воздушном шаре", "fun"),
+            ("01-10", "День благодарности комнатным растениям", "fun"),("01-11", "Всемирный день спасибо", "fun"),
+            ("01-12", "День работника прокуратуры РФ", "prof"),("01-13", "Старый Новый год (Васильев вечер)", "folk"),
+            ("01-13", "День российской печати", "prof"),("01-14", "Всемирный день логики", "global"),("01-14", "День защитников неба", "fun"),
+            ("01-15", "День рождения Википедии", "global"),("01-15", "Национальный день шляпы", "fun"),("01-16", "День ледовара", "fun"),
+            ("01-17", "День детских изобретений", "fun"),("01-18", "День Винни-Пуха", "fun"),("01-19", "Крещение Господне", "church"),
+            ("01-20", "День пингвина", "fun"),("01-21", "День объятий", "global"),("01-22", "День дедушки", "fun"),
+            ("01-23", "День ручного письма", "global"),("01-24", "Международный день образования", "global"),
+            ("01-24", "Международный день эскимо", "fun"),("01-25", "День российского студенчества (Татьянин день)", "prof"),
+            ("01-25", "Татьянин день", "folk"),("01-26", "Международный день таможенника", "prof"),
+            ("01-27", "Международный день памяти жертв Холокоста", "global"),("01-28", "День открытия Антарктиды", "global"),
+            ("01-28", "Международный день ЛЕГО", "fun"),("01-29", "День необъятной любви к себе", "fun"),
+            ("01-30", "День деда Мороза и Снегурочки", "folk"),("01-31", "Международный день ювелира", "prof"),
+            ("02-01", "День лифтовика", "prof"),("02-02", "День сурка", "fun"),("02-02", "День ежа", "fun"),
+            ("02-03", "Всемирный день борьбы с ненормативной лексикой", "global"),("02-04", "Всемирный день борьбы против рака", "global"),
+            ("02-04", "Праздник хорошего настроения", "fun"),("02-05", "День эрудита", "fun"),("02-06", "День бармена", "prof"),
+            ("02-07", "День балета", "global"),("02-08", "День российской науки", "prof"),("02-09", "День стоматолога", "prof"),
+            ("02-10", "День домового", "folk"),("02-11", "Всемирный день больного", "global"),
+            ("02-11", "Международный день женщин и девочек в науке", "global"),("02-12", "День Дарвина", "global"),
+            ("02-13", "Всемирный день радио", "global"),("02-14", "День всех влюблённых", "global"),("02-15", "Сретение Господне", "church"),
+            ("02-16", "День свежего ананаса", "fun"),("02-17", "День спонтанного проявления доброты", "global"),
+            ("02-18", "День пельменей", "fun"),("02-19", "Всемирный день китов", "global"),
+            ("02-20", "Всемирный день социальной справедливости", "global"),("02-21", "Международный день родного языка", "global"),
+            ("02-22", "День кошки в Японии", "fun"),("02-23", "День защитника Отечества", "global"),
+            ("02-23", "День защитника Отечества", "prof"),("02-24", "День рождения лотереи", "fun"),
+            ("02-25", "День открытия спирта", "fun"),("02-26", "День неторопливости", "fun"),
+            ("02-27", "Международный день полярного медведя", "global"),("02-28", "День общественного сна", "fun"),
+            ("02-29", "День Кащея Бессмертного", "folk"),("03-01", "Всемирный день кошек", "global"),("03-02", "День спичек", "fun"),
+            ("03-03", "Всемирный день дикой природы", "global"),("03-04", "День грамматики", "fun"),
+            ("03-05", "День выключенных гаджетов", "fun"),("03-06", "Международный день зубного врача", "prof"),
+            ("03-07", "День тюльпанов", "fun"),("03-08", "Международный женский день", "global"),
+            ("03-08", "Международный женский день", "prof"),("03-09", "День диджея", "prof"),("03-10", "День архивов", "prof"),
+            ("03-11", "День работника органов наркоконтроля", "prof"),("03-12", "День посадки деревьев", "global"),
+            ("03-13", "День рождения микрофона", "fun"),("03-14", "Международный день числа Пи", "global"),
+            ("03-15", "Всемирный день защиты прав потребителей", "global"),("03-16", "День цветных карандашей", "fun"),
+            ("03-17", "День Святого Патрика", "global"),("03-18", "День воссоединения Крыма с Россией", "global"),
+            ("03-19", "День моряка-подводника", "prof"),("03-20", "Международный день счастья", "global"),
+            ("03-21", "Всемирный день поэзии", "global"),("03-21", "Международный день Навруз", "global"),
+            ("03-22", "Всемирный день водных ресурсов", "global"),("03-23", "Всемирный метеорологический день", "global"),
+            ("03-24", "Всемирный день борьбы с туберкулёзом", "global"),("03-25", "День работника культуры РФ", "prof"),
+            ("03-26", "День фиолетового дня", "fun"),("03-27", "Всемирный день театра", "global"),
+            ("03-28", "День уважения кошек", "fun"),("03-29", "День самопознания", "fun"),("03-30", "День защиты Земли", "global"),
+            ("03-31", "Международный день бэкапа", "global"),("04-01", "День смеха", "fun"),
+            ("04-02", "Международный день детской книги", "global"),("04-03", "Всемирный день вечеринки", "fun"),
+            ("04-04", "Международный день интернета", "global"),("04-05", "Международный день супа", "fun"),
+            ("04-06", "Международный день спорта", "global"),("04-07", "Всемирный день здоровья", "global"),
+            ("04-08", "День российской анимации", "prof"),("04-09", "День финского языка", "global"),
+            ("04-10", "День братьев и сестёр", "global"),("04-11", "Международный день освобождения узников фашистских лагерей", "global"),
+            ("04-12", "День космонавтики", "global"),("04-12", "День космонавтики", "prof"),("04-13", "Всемирный день рок-н-ролла", "global"),
+            ("04-14", "День медицинской службы", "prof"),("04-15", "Всемирный день искусства", "global"),
+            ("04-16", "Всемирный день голоса", "global"),("04-17", "Всемирный день гемофилии", "global"),
+            ("04-18", "Международный день памятников и исторических мест", "global"),("04-19", "День российской полиграфии", "prof"),
+            ("04-20", "Международный день цирка", "global"),("04-21", "Всемирный день творчества", "global"),
+            ("04-22", "Международный день Матери-Земли", "global"),("04-23", "Всемирный день книги", "global"),
+            ("04-24", "Международный день солидарности молодёжи", "global"),("04-25", "Всемирный день пингвинов", "fun"),
+            ("04-26", "Международный день интеллектуальной собственности", "global"),("04-27", "Всемирный день графического дизайна", "prof"),
+            ("04-28", "Всемирный день охраны труда", "global"),("04-29", "Международный день танца", "global"),
+            ("04-30", "День пожарной охраны", "prof"),("05-01", "Праздник Весны и Труда", "global"),
+            ("05-02", "Всемирный день тунца", "fun"),("05-03", "Всемирный день свободы печати", "global"),
+            ("05-04", "День пожарных", "prof"),("05-05", "День водолаза", "prof"),("05-07", "День радио", "prof"),
+            ("05-08", "Всемирный день Красного Креста", "global"),("05-09", "День Победы", "global"),
+            ("05-10", "Всемирный день движения", "global"),("05-11", "Всемирный день борьбы с гипертонией", "global"),
+            ("05-12", "Международный день медсестры", "prof"),("05-13", "День Черноморского флота", "prof"),
+            ("05-14", "День фрилансера", "prof"),("05-15", "Международный день семьи", "global"),
+            ("05-16", "Международный день биографов", "fun"),("05-17", "Всемирный день электросвязи", "global"),
+            ("05-18", "Международный день музеев", "global"),("05-19", "День пионерии", "global"),
+            ("05-20", "Всемирный день метрологии", "global"),("05-21", "Всемирный день культурного разнообразия", "global"),
+            ("05-22", "Международный день биологического разнообразия", "global"),("05-23", "Всемирный день черепахи", "global"),
+            ("05-24", "День славянской письменности и культуры", "prof"),("05-25", "День филолога", "prof"),
+            ("05-26", "День российского предпринимательства", "prof"),("05-27", "Общероссийский день библиотек", "prof"),
+            ("05-28", "День пограничника", "prof"),("05-29", "День военного автомобилиста", "prof"),
+            ("05-30", "Всемирный день без табака", "global"),("05-31", "Всемирный день блондинок", "fun"),
+            ("06-01", "Международный день защиты детей", "global"),("06-02", "День здорового питания", "global"),
+            ("06-03", "Всемирный день велосипеда", "global"),("06-04", "Международный день невинных детей", "global"),
+            ("06-05", "Всемирный день окружающей среды", "global"),("06-06", "День русского языка (Пушкинский день)", "prof"),
+            ("06-07", "Всемирный день безопасности пищевых продуктов", "global"),("06-08", "Всемирный день океанов", "global"),
+            ("06-09", "Международный день друзей", "global"),("06-10", "Всемирный день мороженого", "fun"),
+            ("06-11", "Всемирный день куклы", "fun"),("06-12", "День России", "global"),("06-12", "День России", "prof"),
             ("06-13", "Международный день распространения информации об альбинизме", "global"),
-            ("06-14", "Всемирный день донора крови", "global"),
-            ("06-15", "Всемирный день ветра", "global"),
-            ("06-16", "Международный день отца", "global"),
-            ("06-17", "Всемирный день борьбы с опустыниванием", "global"),
-            ("06-18", "Международный день пикника", "fun"),
-            ("06-19", "Всемирный день неспешной прогулки", "fun"),
-            ("06-20", "Всемирный день беженцев", "global"),
-            ("06-21", "Международный день йоги", "global"),
-            ("06-22", "День памяти и скорби", "global"),
-            ("06-23", "Международный Олимпийский день", "global"),
-            ("06-24", "День парада Победы", "global"),
-            ("06-25", "День дружбы и единения славян", "global"),
-            ("06-26", "Международный день борьбы с наркоманией", "global"),
-            ("06-27", "День молодёжи России", "prof"),
-            ("06-28", "День украинской Конституции", "global"),
-            ("06-29", "Международный день тропиков", "global"),
-            ("06-30", "Всемирный день астероида", "global"),
-            ("07-01", "Всемирный день архитектуры", "prof"),
-            ("07-02", "Всемирный день НЛО", "fun"),
-            ("07-03", "День ГИБДД", "prof"),
-            ("07-04", "День независимости США", "global"),
-            ("07-05", "Всемирный день поцелуя", "fun"),
-            ("07-06", "Всемирный день кардиолога", "prof"),
-            ("07-07", "Иван Купала", "folk"),
-            ("07-08", "День семьи, любви и верности", "global"),
-            ("07-08", "День семьи, любви и верности", "prof"),
-            ("07-09", "Всемирный день веры в единорогов", "fun"),
-            ("07-10", "День рыбака", "prof"),
-            ("07-11", "Всемирный день шоколада", "fun"),
-            ("07-12", "Всемирный день бортпроводника", "prof"),
-            ("07-13", "Международный день головоломки", "fun"),
-            ("07-14", "День взятия Бастилии", "global"),
-            ("07-15", "Всемирный день навыков молодёжи", "global"),
-            ("07-16", "Международный день змеи", "global"),
-            ("07-17", "Всемирный день эмодзи", "fun"),
-            ("07-18", "Международный день Нельсона Манделы", "global"),
-            ("07-19", "Всемирный день фотографии", "fun"),
-            ("07-20", "Международный день шахмат", "global"),
-            ("07-21", "День металлурга", "prof"),
-            ("07-22", "Всемирный день мозга", "global"),
-            ("07-23", "Всемирный день китов и дельфинов", "global"),
-            ("07-24", "День флориста", "prof"),
-            ("07-25", "День системного администратора", "prof"),
-            ("07-26", "День парашютиста", "prof"),
-            ("07-27", "День работников торговли", "prof"),
-            ("07-28", "Всемирный день борьбы с гепатитом", "global"),
-            ("07-29", "Международный день тигра", "global"),
-            ("07-30", "Международный день дружбы", "global"),
-            ("07-31", "День военно-морского флота", "prof"),
-            ("08-01", "Всемирный день матери-кормилицы", "global"),
-            ("08-02", "День Воздушно-десантных войск", "prof"),
-            ("08-03", "День арбуза", "fun"),
-            ("08-04", "День одиноких работающих женщин", "fun"),
-            ("08-05", "Международный день светофора", "fun"),
-            ("08-06", "День железнодорожника", "prof"),
-            ("08-07", "День холостяка", "fun"),
-            ("08-08", "Всемирный день кошек", "global"),
-            ("08-09", "День физкультурника", "prof"),
-            ("08-10", "День строителя", "prof"),
-            ("08-12", "Международный день молодёжи", "global"),
-            ("08-13", "День левшей", "fun"),
-            ("08-15", "День археолога", "prof"),
-            ("08-16", "День малинового варенья", "fun"),
-            ("08-17", "День рождения русской тельняшки", "fun"),
-            ("08-18", "День географа", "prof"),
-            ("08-19", "Всемирный день фотографии", "global"),
-            ("08-20", "Всемирный день лени", "fun"),
-            ("08-21", "День офицера России", "prof"),
-            ("08-22", "День Государственного флага РФ", "global"),
-            ("08-22", "День Государственного флага РФ", "prof"),
-            ("08-23", "День разгрома немецко-фашистских войск в Курской битве", "global"),
-            ("08-24", "День рождения картофельных чипсов", "fun"),
-            ("08-25", "День шахтёра", "prof"),
-            ("08-26", "День благодарности собаке", "fun"),
-            ("08-27", "День российского кино", "prof"),
-            ("08-28", "День мечты", "fun"),
-            ("08-29", "День спецназа", "prof"),
-            ("08-30", "День кино", "prof"),
-            ("08-31", "День блога", "fun"),
-            ("09-01", "День знаний", "global"),
-            ("09-01", "День знаний", "prof"),
-            ("09-02", "День окончания Второй мировой войны", "global"),
-            ("09-03", "День солидарности в борьбе с терроризмом", "global"),
-            ("09-04", "День специалиста по ядерному обеспечению", "prof"),
-            ("09-05", "День благотворительности", "global"),
-            ("09-06", "День чтения книг", "fun"),
-            ("09-07", "День барабанщика", "fun"),
-            ("09-08", "Международный день грамотности", "global"),
-            ("09-09", "Всемирный день красоты", "global"),
-            ("09-10", "Всемирный день предотвращения самоубийств", "global"),
-            ("09-11", "Всемирный день трезвости", "global"),
-            ("09-12", "День программиста", "prof"),
-            ("09-13", "День парикмахера", "prof"),
-            ("09-14", "День слушания шорохов", "fun"),
-            ("09-15", "Международный день демократии", "global"),
-            ("09-16", "День рождения Джульетты", "fun"),
-            ("09-17", "Всемирный день безопасности пациентов", "global"),
-            ("09-18", "Всемирный день мониторинга качества воды", "global"),
-            ("09-19", "День смайлика", "fun"),
-            ("09-20", "Всемирный день благодарности", "fun"),
-            ("09-21", "Международный день мира", "global"),
-            ("09-22", "Всемирный день без автомобиля", "global"),
-            ("09-23", "День осеннего равноденствия", "global"),
-            ("09-24", "Международный день караванщика", "prof"),
-            ("09-25", "Всемирный день фармацевта", "prof"),
-            ("09-26", "Всемирный день контрацепции", "global"),
-            ("09-27", "Всемирный день туризма", "global"),
-            ("09-27", "День воспитателя и всех дошкольных работников", "prof"),
-            ("09-28", "Всемирный день борьбы против бешенства", "global"),
-            ("09-29", "Всемирный день сердца", "global"),
-            ("09-30", "Международный день переводчика", "prof"),
-            ("10-01", "Международный день пожилых людей", "global"),
-            ("10-01", "Международный день музыки", "global"),
-            ("10-01", "Международный день кофе", "global"),
-            ("10-02", "Международный день ненасилия", "global"),
-            ("10-03", "Всемирный день трезвости и борьбы с алкоголизмом", "global"),
-            ("10-04", "День защиты животных", "global"),
-            ("10-05", "День учителя", "global"),
-            ("10-05", "День учителя", "prof"),
-            ("10-06", "Всемирный день охраны мест обитания", "global"),
-            ("10-07", "Всемирный день улыбки", "fun"),
-            ("10-08", "Всемирный день осьминога", "fun"),
-            ("10-09", "Всемирный день почты", "global"),
-            ("10-10", "Всемирный день психического здоровья", "global"),
-            ("10-11", "Международный день девочек", "global"),
-            ("10-12", "Всемирный день борьбы с артритом", "global"),
-            ("10-13", "Международный день по снижению риска бедствий", "global"),
-            ("10-13", "Всемирный день борьбы с тромбозом", "global"),
-            ("10-13", "День гидрографической службы ВМФ РФ", "prof"),
-            ("10-13", "День инфобизнесмена", "prof"),
-            ("10-13", "Международный день костюма", "fun"),
-            ("10-13", "День «Побалуйте себя»", "fun"),
-            ("10-13", "Международный день неудач", "fun"),
-            ("10-13", "Михаил Соломенный (народный)", "folk"),
-            ("10-14", "Всемирный день зрения", "global"),
-            ("10-15", "Всемирный день мытья рук", "global"),
-            ("10-16", "Всемирный день продовольствия", "global"),
-            ("10-17", "Международный день борьбы за ликвидацию нищеты", "global"),
-            ("10-18", "Всемирный день конфет", "fun"),
-            ("10-19", "Всемирный день детского церебрального паралича", "global"),
-            ("10-20", "Всемирный день статистики", "global"),
-            ("10-21", "День яблока", "fun"),
-            ("10-22", "День белых журавлей", "global"),
-            ("10-23", "День работников рекламы", "prof"),
-            ("10-24", "День Организации Объединённых Наций", "global"),
-            ("10-25", "День маркетолога", "prof"),
-            ("10-26", "День приятных неожиданностей", "fun"),
-            ("10-27", "Всемирный день аудиовизуального наследия", "global"),
-            ("10-28", "День бабушек и дедушек", "fun"),
-            ("10-29", "Всемирный день борьбы с инсультом", "global"),
-            ("10-30", "День памяти жертв политических репрессий", "global"),
-            ("10-31", "Хэллоуин", "fun"),
-            ("11-01", "День менеджера", "prof"),
-            ("11-02", "День международного признания Санкт-Петербурга", "local"),
-            ("11-03", "День рождения паровоза", "fun"),
-            ("11-04", "День народного единства", "global"),
-            ("11-04", "День народного единства", "prof"),
-            ("11-05", "День военного разведчика", "prof"),
-            ("11-06", "День саамского народа", "folk"),
-            ("11-07", "День Октябрьской революции", "global"),
-            ("11-08", "День пианиста", "prof"),
-            ("11-09", "День качества", "global"),
-            ("11-10", "День сотрудника органов внутренних дел РФ", "prof"),
-            ("11-11", "День холостяка (11.11)", "fun"),
-            ("11-12", "День специалиста по безопасности", "prof"),
-            ("11-13", "Всемирный день доброты", "global"),
-            ("11-14", "День социолога", "prof"),
-            ("11-15", "Всемирный день вторичной переработки", "global"),
-            ("11-16", "Международный день толерантности", "global"),
-            ("11-17", "Международный день студентов", "global"),
-            ("11-18", "День рождения Деда Мороза", "fun"),
-            ("11-19", "Международный день мужчин", "global"),
-            ("11-20", "Всемирный день ребёнка", "global"),
-            ("11-21", "Всемирный день приветствий", "global"),
-            ("11-22", "День психолога", "prof"),
-            ("11-23", "День благодарения", "global"),
-            ("11-24", "День моржа", "fun"),
+            ("06-14", "Всемирный день донора крови", "global"),("06-15", "Всемирный день ветра", "global"),
+            ("06-16", "Международный день отца", "global"),("06-17", "Всемирный день борьбы с опустыниванием", "global"),
+            ("06-18", "Международный день пикника", "fun"),("06-19", "Всемирный день неспешной прогулки", "fun"),
+            ("06-20", "Всемирный день беженцев", "global"),("06-21", "Международный день йоги", "global"),
+            ("06-22", "День памяти и скорби", "global"),("06-23", "Международный Олимпийский день", "global"),
+            ("06-24", "День парада Победы", "global"),("06-25", "День дружбы и единения славян", "global"),
+            ("06-26", "Международный день борьбы с наркоманией", "global"),("06-27", "День молодёжи России", "prof"),
+            ("06-28", "День украинской Конституции", "global"),("06-29", "Международный день тропиков", "global"),
+            ("06-30", "Всемирный день астероида", "global"),("07-01", "Всемирный день архитектуры", "prof"),
+            ("07-02", "Всемирный день НЛО", "fun"),("07-03", "День ГИБДД", "prof"),("07-04", "День независимости США", "global"),
+            ("07-05", "Всемирный день поцелуя", "fun"),("07-06", "Всемирный день кардиолога", "prof"),("07-07", "Иван Купала", "folk"),
+            ("07-08", "День семьи, любви и верности", "global"),("07-08", "День семьи, любви и верности", "prof"),
+            ("07-09", "Всемирный день веры в единорогов", "fun"),("07-10", "День рыбака", "prof"),
+            ("07-11", "Всемирный день шоколада", "fun"),("07-12", "Всемирный день бортпроводника", "prof"),
+            ("07-13", "Международный день головоломки", "fun"),("07-14", "День взятия Бастилии", "global"),
+            ("07-15", "Всемирный день навыков молодёжи", "global"),("07-16", "Международный день змеи", "global"),
+            ("07-17", "Всемирный день эмодзи", "fun"),("07-18", "Международный день Нельсона Манделы", "global"),
+            ("07-19", "Всемирный день фотографии", "fun"),("07-20", "Международный день шахмат", "global"),
+            ("07-21", "День металлурга", "prof"),("07-22", "Всемирный день мозга", "global"),
+            ("07-23", "Всемирный день китов и дельфинов", "global"),("07-24", "День флориста", "prof"),
+            ("07-25", "День системного администратора", "prof"),("07-26", "День парашютиста", "prof"),
+            ("07-27", "День работников торговли", "prof"),("07-28", "Всемирный день борьбы с гепатитом", "global"),
+            ("07-29", "Международный день тигра", "global"),("07-30", "Международный день дружбы", "global"),
+            ("07-31", "День военно-морского флота", "prof"),("08-01", "Всемирный день матери-кормилицы", "global"),
+            ("08-02", "День Воздушно-десантных войск", "prof"),("08-03", "День арбуза", "fun"),
+            ("08-04", "День одиноких работающих женщин", "fun"),("08-05", "Международный день светофора", "fun"),
+            ("08-06", "День железнодорожника", "prof"),("08-07", "День холостяка", "fun"),
+            ("08-08", "Всемирный день кошек", "global"),("08-09", "День физкультурника", "prof"),
+            ("08-10", "День строителя", "prof"),("08-12", "Международный день молодёжи", "global"),
+            ("08-13", "День левшей", "fun"),("08-15", "День археолога", "prof"),("08-16", "День малинового варенья", "fun"),
+            ("08-17", "День рождения русской тельняшки", "fun"),("08-18", "День географа", "prof"),
+            ("08-19", "Всемирный день фотографии", "global"),("08-20", "Всемирный день лени", "fun"),
+            ("08-21", "День офицера России", "prof"),("08-22", "День Государственного флага РФ", "global"),
+            ("08-22", "День Государственного флага РФ", "prof"),("08-23", "День разгрома немецко-фашистских войск в Курской битве", "global"),
+            ("08-24", "День рождения картофельных чипсов", "fun"),("08-25", "День шахтёра", "prof"),
+            ("08-26", "День благодарности собаке", "fun"),("08-27", "День российского кино", "prof"),
+            ("08-28", "День мечты", "fun"),("08-29", "День спецназа", "prof"),("08-30", "День кино", "prof"),
+            ("08-31", "День блога", "fun"),("09-01", "День знаний", "global"),("09-01", "День знаний", "prof"),
+            ("09-02", "День окончания Второй мировой войны", "global"),("09-03", "День солидарности в борьбе с терроризмом", "global"),
+            ("09-04", "День специалиста по ядерному обеспечению", "prof"),("09-05", "День благотворительности", "global"),
+            ("09-06", "День чтения книг", "fun"),("09-07", "День барабанщика", "fun"),
+            ("09-08", "Международный день грамотности", "global"),("09-09", "Всемирный день красоты", "global"),
+            ("09-10", "Всемирный день предотвращения самоубийств", "global"),("09-11", "Всемирный день трезвости", "global"),
+            ("09-12", "День программиста", "prof"),("09-13", "День парикмахера", "prof"),
+            ("09-14", "День слушания шорохов", "fun"),("09-15", "Международный день демократии", "global"),
+            ("09-16", "День рождения Джульетты", "fun"),("09-17", "Всемирный день безопасности пациентов", "global"),
+            ("09-18", "Всемирный день мониторинга качества воды", "global"),("09-19", "День смайлика", "fun"),
+            ("09-20", "Всемирный день благодарности", "fun"),("09-21", "Международный день мира", "global"),
+            ("09-22", "Всемирный день без автомобиля", "global"),("09-23", "День осеннего равноденствия", "global"),
+            ("09-24", "Международный день караванщика", "prof"),("09-25", "Всемирный день фармацевта", "prof"),
+            ("09-26", "Всемирный день контрацепции", "global"),("09-27", "Всемирный день туризма", "global"),
+            ("09-27", "День воспитателя и всех дошкольных работников", "prof"),("09-28", "Всемирный день борьбы против бешенства", "global"),
+            ("09-29", "Всемирный день сердца", "global"),("09-30", "Международный день переводчика", "prof"),
+            ("10-01", "Международный день пожилых людей", "global"),("10-01", "Международный день музыки", "global"),
+            ("10-01", "Международный день кофе", "global"),("10-02", "Международный день ненасилия", "global"),
+            ("10-03", "Всемирный день трезвости и борьбы с алкоголизмом", "global"),("10-04", "День защиты животных", "global"),
+            ("10-05", "День учителя", "global"),("10-05", "День учителя", "prof"),("10-06", "Всемирный день охраны мест обитания", "global"),
+            ("10-07", "Всемирный день улыбки", "fun"),("10-08", "Всемирный день осьминога", "fun"),("10-09", "Всемирный день почты", "global"),
+            ("10-10", "Всемирный день психического здоровья", "global"),("10-11", "Международный день девочек", "global"),
+            ("10-12", "Всемирный день борьбы с артритом", "global"),("10-13", "Международный день по снижению риска бедствий", "global"),
+            ("10-13", "Всемирный день борьбы с тромбозом", "global"),("10-13", "День гидрографической службы ВМФ РФ", "prof"),
+            ("10-13", "День инфобизнесмена", "prof"),("10-13", "Международный день костюма", "fun"),
+            ("10-13", "День «Побалуйте себя»", "fun"),("10-13", "Международный день неудач", "fun"),
+            ("10-13", "Михаил Соломенный (народный)", "folk"),("10-14", "Всемирный день зрения", "global"),
+            ("10-15", "Всемирный день мытья рук", "global"),("10-16", "Всемирный день продовольствия", "global"),
+            ("10-17", "Международный день борьбы за ликвидацию нищеты", "global"),("10-18", "Всемирный день конфет", "fun"),
+            ("10-19", "Всемирный день детского церебрального паралича", "global"),("10-20", "Всемирный день статистики", "global"),
+            ("10-21", "День яблока", "fun"),("10-22", "День белых журавлей", "global"),("10-23", "День работников рекламы", "prof"),
+            ("10-24", "День Организации Объединённых Наций", "global"),("10-25", "День маркетолога", "prof"),
+            ("10-26", "День приятных неожиданностей", "fun"),("10-27", "Всемирный день аудиовизуального наследия", "global"),
+            ("10-28", "День бабушек и дедушек", "fun"),("10-29", "Всемирный день борьбы с инсультом", "global"),
+            ("10-30", "День памяти жертв политических репрессий", "global"),("10-31", "Хэллоуин", "fun"),
+            ("11-01", "День менеджера", "prof"),("11-02", "День международного признания Санкт-Петербурга", "local"),
+            ("11-03", "День рождения паровоза", "fun"),("11-04", "День народного единства", "global"),
+            ("11-04", "День народного единства", "prof"),("11-05", "День военного разведчика", "prof"),
+            ("11-06", "День саамского народа", "folk"),("11-07", "День Октябрьской революции", "global"),
+            ("11-08", "День пианиста", "prof"),("11-09", "День качества", "global"),
+            ("11-10", "День сотрудника органов внутренних дел РФ", "prof"),("11-11", "День холостяка (11.11)", "fun"),
+            ("11-12", "День специалиста по безопасности", "prof"),("11-13", "Всемирный день доброты", "global"),
+            ("11-14", "День социолога", "prof"),("11-15", "Всемирный день вторичной переработки", "global"),
+            ("11-16", "Международный день толерантности", "global"),("11-17", "Международный день студентов", "global"),
+            ("11-18", "День рождения Деда Мороза", "fun"),("11-19", "Международный день мужчин", "global"),
+            ("11-20", "Всемирный день ребёнка", "global"),("11-21", "Всемирный день приветствий", "global"),
+            ("11-22", "День психолога", "prof"),("11-23", "День благодарения", "global"),("11-24", "День моржа", "fun"),
             ("11-25", "Международный день борьбы за ликвидацию насилия в отношении женщин", "global"),
-            ("11-26", "Всемирный день информации", "global"),
-            ("11-27", "День матери", "prof"),
-            ("11-28", "День бухгалтера", "prof"),
-            ("11-29", "День буквы Ё", "fun"),
-            ("11-30", "День домашних животных", "fun"),
-            ("12-01", "Всемирный день борьбы со СПИДом", "global"),
-            ("12-02", "День банковского работника", "prof"),
-            ("12-03", "Международный день инвалидов", "global"),
-            ("12-03", "День юриста", "prof"),
-            ("12-04", "День информатики", "prof"),
-            ("12-05", "День добровольца", "global"),
-            ("12-06", "День рождения микроволновой печи", "fun"),
-            ("12-07", "День гражданской авиации", "prof"),
-            ("12-08", "День художника", "prof"),
-            ("12-09", "День героев Отечества", "global"),
-            ("12-10", "День прав человека", "global"),
-            ("12-11", "Международный день гор", "global"),
-            ("12-12", "День Конституции РФ", "global"),
-            ("12-12", "День Конституции РФ", "prof"),
-            ("12-13", "День медведя", "fun"),
-            ("12-14", "День обезьян", "fun"),
-            ("12-15", "День чая", "fun"),
-            ("12-16", "День покорения вершин", "fun"),
-            ("12-17", "День ракетных войск", "prof"),
-            ("12-18", "День работников ЗАГС", "prof"),
-            ("12-19", "День вечнозелёных растений", "fun"),
-            ("12-20", "День рождения ёлочной гирлянды", "fun"),
-            ("12-21", "День зимнего солнцестояния", "global"),
-            ("12-22", "День энергетика", "prof"),
-            ("12-23", "День дальней авиации", "prof"),
-            ("12-24", "Католический сочельник", "church"),
-            ("12-25", "Католическое Рождество", "church"),
-            ("12-26", "День подарков", "fun"),
-            ("12-27", "День спасателя", "prof"),
-            ("12-28", "День кино", "prof"),
-            ("12-29", "День конституции Ирландии", "global"),
-            ("12-30", "День заворачивания подарков", "fun"),
+            ("11-26", "Всемирный день информации", "global"),("11-27", "День матери", "prof"),
+            ("11-28", "День бухгалтера", "prof"),("11-29", "День буквы Ё", "fun"),("11-30", "День домашних животных", "fun"),
+            ("12-01", "Всемирный день борьбы со СПИДом", "global"),("12-02", "День банковского работника", "prof"),
+            ("12-03", "Международный день инвалидов", "global"),("12-03", "День юриста", "prof"),
+            ("12-04", "День информатики", "prof"),("12-05", "День добровольца", "global"),
+            ("12-06", "День рождения микроволновой печи", "fun"),("12-07", "День гражданской авиации", "prof"),
+            ("12-08", "День художника", "prof"),("12-09", "День героев Отечества", "global"),("12-10", "День прав человека", "global"),
+            ("12-11", "Международный день гор", "global"),("12-12", "День Конституции РФ", "global"),
+            ("12-12", "День Конституции РФ", "prof"),("12-13", "День медведя", "fun"),("12-14", "День обезьян", "fun"),
+            ("12-15", "День чая", "fun"),("12-16", "День покорения вершин", "fun"),("12-17", "День ракетных войск", "prof"),
+            ("12-18", "День работников ЗАГС", "prof"),("12-19", "День вечнозелёных растений", "fun"),
+            ("12-20", "День рождения ёлочной гирлянды", "fun"),("12-21", "День зимнего солнцестояния", "global"),
+            ("12-22", "День энергетика", "prof"),("12-23", "День дальней авиации", "prof"),
+            ("12-24", "Католический сочельник", "church"),("12-25", "Католическое Рождество", "church"),
+            ("12-26", "День подарков", "fun"),("12-27", "День спасателя", "prof"),("12-28", "День кино", "prof"),
+            ("12-29", "День конституции Ирландии", "global"),("12-30", "День заворачивания подарков", "fun"),
             ("12-31", "Новогодний вечер", "fun"),
         ]
         with sqlite3.connect(DATABASE_PATH) as conn:
