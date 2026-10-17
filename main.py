@@ -9962,12 +9962,95 @@ async def all_messages(message: types.Message):
     except Exception as e:
         print(f"⚠️ auto_react: {e}")
 
-    # ================= ИИ =================
+   import logging  # добавь наверху, если нет
+
+def _should_ai_reply(message: types.Message) -> bool:
+    global _last_ai_reply_time
+    
+    # Для теста: если написать "тест ии", бот ответит 100%
+    if message.text and "тест ии" in message.text.lower():
+        logging.info("🚀 AI: Принудительный тест!")
+        return True
+
+    logging.info(f"🔍 AI check: chat={message.chat.id} type={message.chat.type}")
+    
+    if not ai_client:
+        logging.info("🔍 AI: ai_client=None (ключ не загружен)")
+        return False
+    if not message.from_user or message.from_user.is_bot:
+        return False
+    if message.chat.type not in ["group", "supergroup"]:
+        return False
+    if message.chat.id in _ai_disabled_chats:
+        logging.info("🔍 AI: выключен в этом чате")
+        return False
+
+    txt = (message.text or message.caption or "").strip()
+    if not txt or len(txt) < AI_REPLY_MIN_LEN:
+        return False
+    if txt[0] in ".!/+-":
+        return False
+    if has_link(txt):
+        return False
+
+    first_line_lower = txt.split("\n", 1)[0].strip().lower()
+    if first_line_lower in STANDARD_RP:
+        return False
+    for rp_name in STANDARD_RP.keys():
+        if first_line_lower.startswith(rp_name + " ") or first_line_lower == rp_name:
+            return False
+
+    now = datetime.now().timestamp()
+    uid = message.from_user.id
+    if now - _last_ai_reply_time < AI_REPLY_COOLDOWN:
+        logging.info(f"🔍 AI: глобальный кулдаун")
+        return False
+    if now - _user_last_ai_reply.get(uid, 0) < AI_REPLY_PER_USER:
+        logging.info(f"🔍 AI: кулдаун юзера")
+        return False
+
+    chance = AI_REPLY_CHANCE_QUESTION if "?" in txt else AI_REPLY_CHANCE
+    r = random.randint(1, 100)
+    logging.info(f"🔍 AI: шанс {chance}%, выпало {r} -> {'ОТВЕЧАЮ' if r <= chance else 'МОЛЧУ'}")
+    return r <= chance
+
+
+async def _ai_reply(message: types.Message):
+    global _last_ai_reply_time
+    chat_id = message.chat.id
+    uid = message.from_user.id
+    txt = (message.text or message.caption or "").strip()
+
+    history = _chat_history.get(chat_id, [])
+    history.append({"role": "user", "content": txt})
+    history = history[-AI_MAX_HISTORY * 2:]
+    _chat_history[chat_id] = history
+
     try:
-        if _should_ai_reply(message):
-            asyncio.create_task(_ai_reply(message))
+        logging.info(f"🚀 AI: Отправляю запрос в ZvenoAI ({ZVENOAI_MODEL})...")
+        response = await ai_client.chat.completions.create(
+            model=ZVENOAI_MODEL,
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
+            max_tokens=150,
+            temperature=1.3,
+        )
+        reply_text = response.choices[0].message.content.strip()
+        logging.info(f"✅ AI: Получен ответ: {reply_text[:50]}")
+        
+        if not reply_text: 
+            logging.info("❌ AI: Пустой ответ от модели")
+            return
+
+        history.append({"role": "assistant", "content": reply_text})
+        _chat_history[chat_id] = history[-AI_MAX_HISTORY * 2:]
+
+        await message.reply(reply_text)
+        _last_ai_reply_time = datetime.now().timestamp()
+        _user_last_ai_reply[uid] = _last_ai_reply_time
+    except APIError as e:
+        logging.error(f"❌ AI APIError: {e}")
     except Exception as e:
-        print(f"⚠️ ai check: {e}")
+        logging.error(f"❌ AI Exception: {type(e).__name__}: {e}")
 
 
 # ================= ВХОД В ЧАТ =================
