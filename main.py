@@ -3993,29 +3993,53 @@ SYSTEM_PROMPT = (
 
 def _should_ai_reply(message: types.Message) -> bool:
     global _last_ai_reply_time
-    if not ai_client: return False
-    if not message.from_user or message.from_user.is_bot: return False
-    if message.chat.type not in ["group", "supergroup"]: return False
-    if message.chat.id in _ai_disabled_chats: return False
+    print(f"🔍 AI check: chat={message.chat.id} type={message.chat.type}")
+    if not ai_client:
+        print("🔍 AI: ai_client=None")
+        return False
+    if not message.from_user or message.from_user.is_bot:
+        print("🔍 AI: no user or bot")
+        return False
+    if message.chat.type not in ["group", "supergroup"]:
+        print("🔍 AI: not group")
+        return False
+    if message.chat.id in _ai_disabled_chats:
+        print("🔍 AI: disabled")
+        return False
 
     txt = (message.text or message.caption or "").strip()
-    if not txt or len(txt) < AI_REPLY_MIN_LEN: return False
-    if txt[0] in ".!/+-": return False
-    if has_link(txt): return False
+    if not txt or len(txt) < AI_REPLY_MIN_LEN:
+        print(f"🔍 AI: short text ({len(txt)})")
+        return False
+    if txt[0] in ".!/+-":
+        print("🔍 AI: command")
+        return False
+    if has_link(txt):
+        print("🔍 AI: link")
+        return False
 
     first_line_lower = txt.split("\n", 1)[0].strip().lower()
-    if first_line_lower in STANDARD_RP: return False
+    if first_line_lower in STANDARD_RP:
+        print(f"🔍 AI: RP exact '{first_line_lower}'")
+        return False
     for rp_name in STANDARD_RP.keys():
         if first_line_lower.startswith(rp_name + " ") or first_line_lower == rp_name:
+            print(f"🔍 AI: RP startswith '{rp_name}'")
             return False
 
     now = datetime.now().timestamp()
     uid = message.from_user.id
-    if now - _last_ai_reply_time < AI_REPLY_COOLDOWN: return False
-    if now - _user_last_ai_reply.get(uid, 0) < AI_REPLY_PER_USER: return False
+    if now - _last_ai_reply_time < AI_REPLY_COOLDOWN:
+        print(f"🔍 AI: global cd {int(now - _last_ai_reply_time)}/{AI_REPLY_COOLDOWN}")
+        return False
+    if now - _user_last_ai_reply.get(uid, 0) < AI_REPLY_PER_USER:
+        print(f"🔍 AI: user cd {int(now - _user_last_ai_reply.get(uid, 0))}/{AI_REPLY_PER_USER}")
+        return False
 
     chance = AI_REPLY_CHANCE_QUESTION if "?" in txt else AI_REPLY_CHANCE
-    return random.randint(1, 100) <= chance
+    r = random.randint(1, 100)
+    print(f"🔍 AI: chance={chance}% rolled={r} -> {'PASS' if r <= chance else 'FAIL'}")
+    return r <= chance
 
 
 async def _ai_reply(message: types.Message):
@@ -4030,6 +4054,7 @@ async def _ai_reply(message: types.Message):
     _chat_history[chat_id] = history
 
     try:
+        print(f"🚀 AI: request → {ZVENOAI_MODEL}")
         response = await ai_client.chat.completions.create(
             model=ZVENOAI_MODEL,
             messages=[{"role": "system", "content": SYSTEM_PROMPT}] + history,
@@ -4037,6 +4062,7 @@ async def _ai_reply(message: types.Message):
             temperature=1.3,
         )
         reply_text = response.choices[0].message.content.strip()
+        print(f"🚀 AI: response → {reply_text[:80]}")
         if not reply_text: return
 
         history.append({"role": "assistant", "content": reply_text})
@@ -4046,9 +4072,11 @@ async def _ai_reply(message: types.Message):
         _last_ai_reply_time = datetime.now().timestamp()
         _user_last_ai_reply[uid] = _last_ai_reply_time
     except APIError as e:
-        print(f"⚠️ ZvenoAI API: {e}")
+        print(f"❌ AI APIError: {e}")
     except Exception as e:
-        print(f"⚠️ ai_reply: {e}")
+        print(f"❌ AI Exception: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @dp.message(lambda m: m.text and m.text.lower().strip() in ["+ии", "+ии ответы"])
