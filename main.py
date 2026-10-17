@@ -9809,7 +9809,22 @@ async def _auto_react(message: types.Message):
     except Exception as e:
         print(f"⚠️ Авто-реакция: {e}")
 
-
+@dp.message(lambda m: m.text and m.text.lower().strip() == "тест ии")
+async def force_test_ai(message: types.Message):
+    if not ai_client:
+        return await message.reply("❌ AI клиент не создан (нет ключа)!")
+    await message.reply("⏳ Отправляю запрос в ZvenoAI...")
+    try:
+        response = await ai_client.chat.completions.create(
+            model=ZVENOAI_MODEL,
+            messages=[{"role": "user", "content": "Привет! Напиши слово 'РАБОТАЕТ'"}],
+            max_tokens=50,
+        )
+        reply_text = response.choices[0].message.content.strip()
+        await message.reply(f"✅ Успех! Ответ: {reply_text}")
+    except Exception as e:
+        await message.reply(f"❌ Ошибка API: {e}")
+      
 # ================= ОБРАБОТКА ВСЕХ СООБЩЕНИЙ =================
 @dp.message()
 async def all_messages(message: types.Message):
