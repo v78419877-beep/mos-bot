@@ -229,15 +229,28 @@ def html_escape_text(text: str) -> str:
     if not text: return ""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
+# ================= РЕНДЕР ENTITIES → HTML =================
+class _SimpleEntity:
+    """Заглушка вместо types.MessageEntity — тот ломается в новых aiogram."""
+    __slots__ = ("type", "offset", "length", "url", "language", "custom_emoji_id")
+    def __init__(self, type, offset, length, url=None, language=None, custom_emoji_id=None):
+        self.type = type
+        self.offset = offset
+        self.length = length
+        self.url = url
+        self.language = language
+        self.custom_emoji_id = custom_emoji_id
 
-def entities_to_html(message: types.Message) -> str:
-    if not message.text: return ""
-    text = message.text
-    entities = message.entities or []
-    if not entities: return html_escape_text(text)
+
+def _render_entities_html(text: str, entities: list) -> str:
+    if not text:
+        return ""
+    if not entities:
+        return html_escape_text(text)
+
     sorted_ents = sorted(entities, key=lambda e: (e.offset, -e.length))
 
-    def render_range(start: int, end: int, ent_list) -> str:
+    def render_range(start, end, ent_list):
         result = []
         pos = start
         inner = [e for e in ent_list if e.offset >= start and e.offset + e.length <= end]
@@ -250,36 +263,56 @@ def entities_to_html(message: types.Message) -> str:
                 result.append(html_escape_text(text[pos:e.offset]))
             raw = text[e.offset:e.offset + e.length]
             inner_text = render_range(e.offset, e.offset + e.length, [x for x in inner if x is not e])
-            if e.type == "bold": result.append(f"<b>{inner_text}</b>")
-            elif e.type == "italic": result.append(f"<i>{inner_text}</i>")
-            elif e.type == "underline": result.append(f"<u>{inner_text}</u>")
-            elif e.type == "strikethrough": result.append(f"<s>{inner_text}</s>")
-            elif e.type == "spoiler": result.append(f"<tg-spoiler>{inner_text}</tg-spoiler>")
-            elif e.type == "code": result.append(f"<code>{html_escape_text(raw)}</code>")
-            elif e.type == "pre":
+            etype = e.type
+            if etype == "bold":
+                result.append(f"<b>{inner_text}</b>")
+            elif etype == "italic":
+                result.append(f"<i>{inner_text}</i>")
+            elif etype == "underline":
+                result.append(f"<u>{inner_text}</u>")
+            elif etype == "strikethrough":
+                result.append(f"<s>{inner_text}</s>")
+            elif etype == "spoiler":
+                result.append(f"<tg-spoiler>{inner_text}</tg-spoiler>")
+            elif etype == "code":
+                result.append(f"<code>{html_escape_text(raw)}</code>")
+            elif etype == "pre":
                 lang = getattr(e, "language", None)
-                if lang: result.append(f'<pre><code class="language-{lang}">{html_escape_text(raw)}</code></pre>')
-                else: result.append(f"<pre>{html_escape_text(raw)}</pre>")
-            elif e.type == "blockquote": result.append(f"<blockquote>{inner_text}</blockquote>")
-            elif e.type == "expandable_blockquote": result.append(f"<blockquote expandable>{inner_text}</blockquote>")
-            elif e.type == "text_link":
+                if lang:
+                    result.append(f'<pre><code class="language-{lang}">{html_escape_text(raw)}</code></pre>')
+                else:
+                    result.append(f"<pre>{html_escape_text(raw)}</pre>")
+            elif etype == "blockquote":
+                result.append(f"<blockquote>{inner_text}</blockquote>")
+            elif etype == "expandable_blockquote":
+                result.append(f"<blockquote expandable>{inner_text}</blockquote>")
+            elif etype == "text_link":
                 url = getattr(e, "url", "") or ""
                 result.append(f'<a href="{url}">{inner_text}</a>')
-            elif e.type == "url":
+            elif etype == "url":
                 url = text[e.offset:e.offset + e.length]
                 result.append(f'<a href="{url}">{html_escape_text(url)}</a>')
-            elif e.type == "custom_emoji":
+            elif etype == "custom_emoji":
                 emoji_id = getattr(e, "custom_emoji_id", None) or ""
                 if emoji_id and raw:
                     register_premium_emoji(emoji_id, raw)
                     result.append(f'<tg-emoji emoji-id="{emoji_id}">{raw}</tg-emoji>')
                 else:
                     result.append(raw if raw else "")
-            else: result.append(inner_text)
+            else:
+                result.append(inner_text)
             pos = e.offset + e.length
-        if pos < end: result.append(html_escape_text(text[pos:end]))
+        if pos < end:
+            result.append(html_escape_text(text[pos:end]))
         return "".join(result)
+
     return render_range(0, len(text), sorted_ents).strip()
+
+
+def entities_to_html(message: types.Message) -> str:
+    if not message.text:
+        return ""
+    return _render_entities_html(message.text, message.entities or [])
 
 
 def entities_to_html_from(message: types.Message, char_index: int) -> str:
@@ -287,6 +320,11 @@ def entities_to_html_from(message: types.Message, char_index: int) -> str:
         return ""
     text = message.text
     entities = message.entities or []
+    if not entities:
+        return html_escape_text(text[char_index:])
+
+    fragment = text[char_index:]
+    frag_len = len(fragment)
     shifted = []
     for e in entities:
         if e.offset + e.length <= char_index:
@@ -296,26 +334,23 @@ def entities_to_html_from(message: types.Message, char_index: int) -> str:
             new_len = e.offset + e.length - char_index
         else:
             new_len = e.length
-        try:
-            clone = types.MessageEntity(
-                type=e.type, offset=new_off, length=new_len,
-                url=getattr(e, "url", None),
-                language=getattr(e, "language", None),
-                custom_emoji_id=getattr(e, "custom_emoji_id", None),
-            )
-            shifted.append(clone)
-        except Exception:
+        if new_off + new_len > frag_len:
+            new_len = frag_len - new_off
+        if new_len <= 0:
             continue
-    fragment = text[char_index:]
-    fake = types.Message(
-        message_id=0, date=message.date, chat=message.chat,
-        from_user=message.from_user, text=fragment, entities=shifted
-    )
-    return entities_to_html(fake).strip()
+        shifted.append(_SimpleEntity(
+            type=e.type, offset=new_off, length=new_len,
+            url=getattr(e, "url", None),
+            language=getattr(e, "language", None),
+            custom_emoji_id=getattr(e, "custom_emoji_id", None),
+        ))
+    return _render_entities_html(fragment, shifted)
 
 
 def _extract_html_after(message: types.Message, char_index: int) -> str:
-    return entities_to_html_from(message, char_index)# ================= РАНГИ =================
+    return entities_to_html_from(message, char_index)
+
+# ================= РАНГИ =================
 RANK_NAMES = {0: "👤 Участник", 1: "🛡️ Мл. Модератор", 2: "🛡️ Ст. Модератор",
               3: "👑 Мл. Админ", 4: "👑 Ст. Админ", 5: "⚜️ Владелец"}
 
