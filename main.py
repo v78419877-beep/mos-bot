@@ -9962,7 +9962,6 @@ async def all_messages(message: types.Message):
     except Exception as e:
         print(f"⚠️ auto_react: {e}")
 
-   import logging  # добавь наверху, если нет
 
 def _should_ai_reply(message: types.Message) -> bool:
     global _last_ai_reply_time
