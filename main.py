@@ -1,4 +1,5 @@
 import asyncio
+from aiogram.dispatcher.event.bases import SkipHandler
 import sqlite3
 import random
 import string
