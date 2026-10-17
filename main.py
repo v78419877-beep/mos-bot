@@ -9585,11 +9585,7 @@ async def remove_marriage_from_top_cmd(message: types.Message):
     and not m.text.lower().strip().startswith("мойпол")
     and not m.text.lower().strip().startswith("мойгород"))
 async def standard_rp_handler(message: types.Message):
-         if not rp_data:
-        raise SkipHandler
 
-    if target is None:
-        rest_first = first_line_lower[len(rp_name):].strip()
 
     txt_lines = txt.split("\n", 1)
     first_line = txt_lines[0].strip()
@@ -9700,7 +9696,7 @@ async def standard_rp_handler(message: types.Message):
                     rp_data = STANDARD_RP[name]
                     break
     if not rp_data:
-        return
+        raise SkipHandler
 
     # Если цели из reply нет — ищем @user / ID
     if target is None:
